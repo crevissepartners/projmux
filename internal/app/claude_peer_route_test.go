@@ -175,9 +175,10 @@ func TestClaudeHelperHandoffNamesUnprovenSource(t *testing.T) {
 		name   string
 		source coremessage.Route
 		peer   diagnostics.ClaudeHandoffPeer
+		stage  diagnostics.ClaudeHandoffRouteStage
 	}{
-		{"absent-agent", unknown, diagnostics.ClaudeHandoffPeerUnknown},
-		{"stale-process-codex", foreign, diagnostics.ClaudeHandoffPeerProcessCodex},
+		{"absent-agent", unknown, diagnostics.ClaudeHandoffPeerUnknown, diagnostics.ClaudeHandoffStageRouteUnresolved},
+		{"stale-process-codex", foreign, diagnostics.ClaudeHandoffPeerProcessCodex, diagnostics.ClaudeHandoffStageRouteFenceMismatch},
 	} {
 		broker, err := newLiveClaudeDialogueBroker(f.codex.path)
 		if err != nil {
@@ -195,7 +196,7 @@ func TestClaudeHelperHandoffNamesUnprovenSource(t *testing.T) {
 		if delivery.State != agentdelivery.StateFailed || delivery.Reason != "broker-handoff-persist-failed" || delivery.Ambiguous || poster.calls != 0 {
 			t.Fatalf("%s: receipt %+v provider calls=%d", test.name, delivery, poster.calls)
 		}
-		want := diagnostics.ClaudeHandoffRouteRecord{Side: diagnostics.ClaudeHandoffSourceUnproven, Peer: test.peer, AgentUID: test.source.AgentUID}
+		want := diagnostics.ClaudeHandoffRouteRecord{Side: diagnostics.ClaudeHandoffSourceUnproven, Peer: test.peer, AgentUID: test.source.AgentUID, Stage: test.stage}
 		if len(refused) != 1 || refused[0] != want {
 			t.Fatalf("%s: journal %+v, want %+v", test.name, refused, want)
 		}
@@ -216,9 +217,10 @@ func TestClaudeProcessHelperReservationNamesUnprovenSource(t *testing.T) {
 		name   string
 		source coremessage.Route
 		peer   diagnostics.ClaudeHandoffPeer
+		stage  diagnostics.ClaudeHandoffRouteStage
 	}{
-		{"absent-agent", unknown, diagnostics.ClaudeHandoffPeerUnknown},
-		{"stale-process-codex", foreign, diagnostics.ClaudeHandoffPeerProcessCodex},
+		{"absent-agent", unknown, diagnostics.ClaudeHandoffPeerUnknown, diagnostics.ClaudeHandoffStageRouteUnresolved},
+		{"stale-process-codex", foreign, diagnostics.ClaudeHandoffPeerProcessCodex, diagnostics.ClaudeHandoffStageRouteFenceMismatch},
 	} {
 		broker, err := newLiveClaudeDialogueBroker(f.codex.path)
 		if err != nil {
@@ -241,7 +243,7 @@ func TestClaudeProcessHelperReservationNamesUnprovenSource(t *testing.T) {
 		if after, _ := f.claude.handle.Observe(f.claude.binding); after.MessageReservation != "" || after.Sequence != before.Sequence {
 			t.Fatalf("%s: refused proof reached the host: %+v", test.name, after)
 		}
-		want := diagnostics.ClaudeHandoffRouteRecord{Side: diagnostics.ClaudeHandoffSourceUnproven, Peer: test.peer, AgentUID: test.source.AgentUID}
+		want := diagnostics.ClaudeHandoffRouteRecord{Side: diagnostics.ClaudeHandoffSourceUnproven, Peer: test.peer, AgentUID: test.source.AgentUID, Stage: test.stage}
 		if len(refused) != 1 || refused[0] != want {
 			t.Fatalf("%s: journal %+v, want %+v", test.name, refused, want)
 		}

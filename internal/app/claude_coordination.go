@@ -234,14 +234,18 @@ func (b *liveClaudeDialogueBroker) Current(envelope coremessage.Envelope) bool {
 	return ok
 }
 
-// claudeUnprovenRoute is the envelope end Current could not prove.
+// claudeUnprovenRoute is the envelope end Current could not prove and the
+// proof step that refused it.
 type claudeUnprovenRoute struct {
 	agentUID string
 	side     diagnostics.ClaudeHandoffRouteSide
+	stage    diagnostics.ClaudeHandoffRouteStage
 }
 
 // current is Current that also names the envelope end which failed to prove,
-// with the Registry it read. Before the Registry is read neither is set.
+// with the Registry it read and the refusing step. Before the Registry is read
+// none is set. Naming the step reuses each check's own result; it adds no
+// read, probe, or wait.
 func (b *liveClaudeDialogueBroker) current(envelope coremessage.Envelope) (coremetadata.Registry, *claudeUnprovenRoute, bool) {
 	if b == nil || envelope.Validate() != nil {
 		return coremetadata.Registry{}, nil, false
@@ -254,11 +258,11 @@ func (b *liveClaudeDialogueBroker) current(envelope coremessage.Envelope) (corem
 	if envelope.Operator() {
 		routes = routes[1:]
 	}
-	unproven := func(i int) *claudeUnprovenRoute {
+	unproven := func(i int, stage diagnostics.ClaudeHandoffRouteStage) *claudeUnprovenRoute {
 		if i == len(routes)-1 {
-			return &claudeUnprovenRoute{agentUID: routes[i].AgentUID, side: diagnostics.ClaudeHandoffTargetUnproven}
+			return &claudeUnprovenRoute{agentUID: routes[i].AgentUID, side: diagnostics.ClaudeHandoffTargetUnproven, stage: stage}
 		}
-		return &claudeUnprovenRoute{agentUID: routes[i].AgentUID, side: diagnostics.ClaudeHandoffSourceUnproven}
+		return &claudeUnprovenRoute{agentUID: routes[i].AgentUID, side: diagnostics.ClaudeHandoffSourceUnproven, stage: stage}
 	}
 	for i, expected := range routes {
 		resolve := b.resolveRoute
@@ -269,25 +273,36 @@ func (b *liveClaudeDialogueBroker) current(envelope coremessage.Envelope) (corem
 		if reason != "" && i == len(routes)-1 && !envelope.Operator() && envelope.ReplyTo != "" && deferredReplyTargetCurrent(b.registryPath, registry, expected) {
 			continue
 		}
-		if reason != "" || !messageRouteAccepts(route, expected) {
-			return registry, unproven(i), false
+		if reason != "" {
+			return registry, unproven(i, diagnostics.ClaudeHandoffStageRouteUnresolved), false
+		}
+		if !messageRouteAccepts(route, expected) {
+			return registry, unproven(i, diagnostics.ClaudeHandoffStageRouteFenceMismatch), false
 		}
 		if authority, ok := route.Authority().(coremetadata.CodexRouteAuthority); ok {
 			if !probeCodexMessageAuthority(filepath.Dir(filepath.Dir(b.registryPath)), authority) {
-				return registry, unproven(i), false
+				return registry, unproven(i, diagnostics.ClaudeHandoffStageCodexAuthorityUnproven), false
 			}
 		}
 		if authority, ok := route.Authority().(coremetadata.ClaudeAuthorityRef); ok {
-			for _, process := range []coremetadata.ProcessIdentity{authority.Process, authority.LeaseProcess} {
-				actual, _, err := localipc.Process(process.PID)
-				if err != nil || actual != process {
-					return registry, unproven(i), false
+			for _, process := range []struct {
+				identity coremetadata.ProcessIdentity
+				stage    diagnostics.ClaudeHandoffRouteStage
+			}{
+				{authority.Process, diagnostics.ClaudeHandoffStageProviderProcessMismatch},
+				{authority.LeaseProcess, diagnostics.ClaudeHandoffStageLeaseHelperProcessMismatch},
+			} {
+				actual, _, err := localipc.Process(process.identity.PID)
+				if err != nil || actual != process.identity {
+					return registry, unproven(i, process.stage), false
 				}
 			}
 			// Avoid probing this helper recursively. Its poster owns the target
 			// lease/socket check, including the source==target case.
-			if expected == envelope.Source && expected != envelope.Target && !probeClaudeRegistrationLease(b.registryPath, route) {
-				return registry, unproven(i), false
+			if expected == envelope.Source && expected != envelope.Target {
+				if outcome, step := classifyClaudeRegistrationLeaseStep(b.registryPath, route); outcome != claudeProbeReady {
+					return registry, unproven(i, claudeHandoffLeaseStage(outcome, step)), false
+				}
 			}
 		}
 	}
@@ -344,7 +359,45 @@ func (b *liveClaudeDialogueBroker) recordHandoffRoute(registry coremetadata.Regi
 	if b == nil || b.handoffRoute == nil || unproven == nil {
 		return
 	}
-	b.handoffRoute(diagnostics.ClaudeHandoffRouteRecord{Side: unproven.side, Peer: claudeHandoffPeer(registry, unproven.agentUID), AgentUID: unproven.agentUID})
+	b.handoffRoute(diagnostics.ClaudeHandoffRouteRecord{Side: unproven.side, Peer: claudeHandoffPeer(registry, unproven.agentUID),
+		AgentUID: unproven.agentUID, Stage: unproven.stage})
+}
+
+// claudeHandoffLeaseStage names a failed source lease probe by the step that
+// decided it and whether that step refused or its client bound expired.
+func claudeHandoffLeaseStage(outcome claudeProbeOutcome, step claudeadapter.LeaseStep) diagnostics.ClaudeHandoffRouteStage {
+	unanswered := outcome == claudeProbeUnanswered
+	switch {
+	case outcome == claudeProbeReady:
+		return ""
+	case step == claudeadapter.LeaseStepAuthority:
+		return diagnostics.ClaudeHandoffStageLeaseAuthorityInvalid
+	case step == claudeadapter.LeaseStepProcess:
+		return diagnostics.ClaudeHandoffStageLeaseProcessMismatch
+	case step == claudeadapter.LeaseStepSocket:
+		return diagnostics.ClaudeHandoffStageLeaseSocketUnavailable
+	case step == claudeadapter.LeaseStepDial && unanswered:
+		return diagnostics.ClaudeHandoffStageLeaseDialUnanswered
+	case step == claudeadapter.LeaseStepDial:
+		return diagnostics.ClaudeHandoffStageLeaseDialStale
+	case step == claudeadapter.LeaseStepPeer:
+		return diagnostics.ClaudeHandoffStageLeasePeerMismatch
+	case step == claudeadapter.LeaseStepReadiness && unanswered:
+		return diagnostics.ClaudeHandoffStageLeaseReadinessUnanswered
+	case step == claudeadapter.LeaseStepReadiness:
+		return diagnostics.ClaudeHandoffStageLeaseReadinessStale
+	case step == claudeadapter.LeaseStepNotReady:
+		return diagnostics.ClaudeHandoffStageLeaseNotReady
+	case step == claudeadapter.LeaseStepTarget:
+		return diagnostics.ClaudeHandoffStageLeaseTargetInvalid
+	case step == claudeadapter.LeaseStepCoordination && unanswered:
+		return diagnostics.ClaudeHandoffStageLeaseProbeUnanswered
+	case step == claudeadapter.LeaseStepCoordination:
+		return diagnostics.ClaudeHandoffStageLeaseProbeStale
+	case step == claudeadapter.LeaseStepCoordinationNotReady:
+		return diagnostics.ClaudeHandoffStageLeaseProbeNotReady
+	}
+	return diagnostics.ClaudeHandoffStageLeaseUnclassified
 }
 
 // claudeHandoffPeer names the unproved Agent's host and provider from the

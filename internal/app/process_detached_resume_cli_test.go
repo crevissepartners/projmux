@@ -564,8 +564,9 @@ func TestDetachedProcessResumeClaimPeerOrderCLI(t *testing.T) {
 					}
 					poll.Stage = "terminal-check"
 					if terminal := delivery["state"]; terminal != "held" && terminal != "accepted" && terminal != state {
-						if provider == "claude" && ref == "detached-second" {
-							logDetachedPeerPrewriteFailure(t, f, raw, strings.TrimPrefix(source.ref, "uid:"), strings.TrimPrefix(first.ref, "uid:"), next.Binding.PaneUID)
+						// Every peer ref has the same source, target, and target pane.
+						if provider == "claude" {
+							logDetachedPeerPrewriteFailure(t, f, raw, ref, strings.TrimPrefix(source.ref, "uid:"), strings.TrimPrefix(first.ref, "uid:"), next.Binding.PaneUID)
 						}
 						t.Fatalf("unexpected terminal state want %s: %s", state, raw)
 					}
@@ -916,10 +917,53 @@ func TestDetachedProcessResumeStaleClaimStopCLI(t *testing.T) {
 	released = true
 }
 
+// detachedPeerRef admits only the fixed peer messages PeerOrder sends.
+func detachedPeerRef(ref string) bool {
+	switch ref {
+	case "detached-first", "detached-second", "detached-third":
+		return true
+	}
+	return false
+}
+
+// detachedPeerReceiptRef reports whether the original receipt bytes are the
+// receipt of the admitted failed peer ref, so the evidence never compares one
+// peer's receipt with another peer's durable record.
+func detachedPeerReceiptRef(ref string, primary []byte) bool {
+	var receipt struct {
+		MessageRef string `json:"messageRef"`
+	}
+	return detachedPeerRef(ref) && json.Unmarshal(primary, &receipt) == nil && receipt.MessageRef == ref
+}
+
+// The PeerOrder failure evidence admits each fixed peer ref with its own
+// receipt only: never another peer's receipt, and never a ref outside the set.
+func TestDetachedPeerFailureEvidenceMatchesItsOwnRef(t *testing.T) {
+	t.Parallel()
+	refs := []string{"detached-first", "detached-second", "detached-third"}
+	for _, ref := range refs {
+		for _, other := range refs {
+			primary := []byte(`{"messageRef":"` + other + `"}`)
+			if got := detachedPeerReceiptRef(ref, primary); got != (ref == other) {
+				t.Fatalf("ref %s with %s receipt admitted=%v", ref, other, got)
+			}
+		}
+	}
+	for _, ref := range []string{"", "detached-fourth", "Detached-second", "detached-second ", "message-peer"} {
+		if detachedPeerRef(ref) || detachedPeerReceiptRef(ref, []byte(`{"messageRef":"`+ref+`"}`)) {
+			t.Fatalf("ref %q admitted", ref)
+		}
+	}
+	if detachedPeerReceiptRef("detached-second", []byte("not json")) {
+		t.Fatal("undecodable receipt admitted")
+	}
+}
+
 // This evidence is a new, potentially delayed observation after the original
 // terminal assertion, before its Fatal and resource cleanup. It cannot restore
-// primary-time state or identify the writer of a later durable record.
-func logDetachedPeerPrewriteFailure(t *testing.T, f processCreateCLI, primary []byte, source, target, pane string) {
+// primary-time state or identify the writer of a later durable record. ref is
+// the failed peer message; the receipt check and the durable Get both use it.
+func logDetachedPeerPrewriteFailure(t *testing.T, f processCreateCLI, primary []byte, ref, source, target, pane string) {
 	t.Helper()
 	type getEvidence struct {
 		Started, Finished                                                                   time.Time
@@ -928,19 +972,24 @@ func logDetachedPeerPrewriteFailure(t *testing.T, f processCreateCLI, primary []
 		StateMatches, ReasonMatches, UnknownMatches                                         bool
 		MessageMatches, ConversationMatches, SourceRouteSame, TargetRouteSame, DeadlineSame bool
 	}
+	// Stage is the refusing proof step a handoff record names, "absent" when
+	// it names none, and empty for registration records.
 	type eventEvidence struct {
-		Event, Source, Code, Result, At, RunSHA256, Phase string
-		AgentIsSource, AgentIsTarget, PaneMatchesTarget   bool
+		Event, Source, Code, Stage, Result, At, RunSHA256, Phase string
+		AgentIsSource, AgentIsTarget, PaneMatchesTarget          bool
 	}
 	type evidence struct {
-		Phase                      string
+		Phase, Ref                 string
 		PrimaryAt, JournalFinished time.Time
 		Get                        getEvidence
 		Journal                    string
 		Records, Matched           int
 		Events                     []eventEvidence
 	}
-	result := evidence{Phase: "post-primary-pre-cleanup", PrimaryAt: time.Now(), Journal: "read-unconfirmed"}
+	result := evidence{Phase: "post-primary-pre-cleanup", Ref: "refused", PrimaryAt: time.Now(), Journal: "read-unconfirmed"}
+	if detachedPeerRef(ref) {
+		result.Ref = ref
+	}
 	result.Get.Read, result.Get.Handoff = "error", "unconfirmed"
 	// Cache only the original receipt bytes. No new status command or IPC.
 	var receipt struct {
@@ -951,14 +1000,18 @@ func logDetachedPeerPrewriteFailure(t *testing.T, f processCreateCLI, primary []
 		Deadline        time.Time            `json:"deadline"`
 		Delivery        coremessage.Delivery `json:"delivery"`
 	}
-	primaryValid := json.Unmarshal(primary, &receipt) == nil && receipt.MessageRef == "detached-second" && receipt.Source.Valid() && receipt.Target.Valid() && receipt.Source.Provider == "claude" && receipt.Target.Provider == "claude" && receipt.Source.AgentUID == source && receipt.Target.AgentUID == target && receipt.Target.PaneUID == pane && !receipt.Deadline.IsZero()
+	primaryValid := detachedPeerReceiptRef(ref, primary) && json.Unmarshal(primary, &receipt) == nil && receipt.Source.Valid() && receipt.Target.Valid() && receipt.Source.Provider == "claude" && receipt.Target.Provider == "claude" && receipt.Source.AgentUID == source && receipt.Target.AgentUID == target && receipt.Target.PaneUID == pane && !receipt.Deadline.IsZero()
 	stateDir := filepath.Dir(filepath.Dir(f.store.Path()))
 	journal := filepath.Join(stateDir, "logs", "operations.jsonl")
 	initial, initialErr := os.Lstat(journal)
 	result.Get.Started = time.Now()
 	// This existing bounded store may ensure its directory and create/open
 	// messages.json.flock. It waits at most two seconds; it does not Apply.
-	record, found, getErr := messagestore.NewBoundedWaitStore(stateDir).Get("detached-second")
+	if !detachedPeerRef(ref) {
+		t.Log("detached prewrite evidence: ref-refused")
+		return
+	}
+	record, found, getErr := messagestore.NewBoundedWaitStore(stateDir).Get(ref)
 	result.Get.Finished = time.Now()
 	g := &result.Get
 	g.Found, g.Error = found, getErr != nil
@@ -1125,7 +1178,10 @@ func logDetachedPeerPrewriteFailure(t *testing.T, f processCreateCLI, primary []
 		}
 		result.Records++
 		handoff := event.Event == "agent.message.claude-handoff-route" && (event.AgentUID == source || event.AgentUID == target)
-		registration := event.Event == "agent.claude.registration" && event.AgentUID == target && event.PaneUID == pane
+		// The source's own helper records sit in the same journal already read;
+		// the source pane is not known here, so only the target matches a pane.
+		targetRegistration := event.Event == "agent.claude.registration" && event.AgentUID == target && event.PaneUID == pane
+		registration := targetRegistration || event.Event == "agent.claude.registration" && event.AgentUID == source
 		if !handoff && !registration {
 			continue
 		}
@@ -1136,6 +1192,8 @@ func logDetachedPeerPrewriteFailure(t *testing.T, f processCreateCLI, primary []
 		for key := range keys {
 			switch key {
 			case "at", "level", "component", "event", "result", "duration_ms", "run_id", "version", "mux_backend", "source", "code", "agent_uid", "pane_uid", "kind":
+			case "classification":
+				shape = shape && handoff
 			default:
 				shape = false
 			}
@@ -1147,6 +1205,20 @@ func logDetachedPeerPrewriteFailure(t *testing.T, f processCreateCLI, primary []
 			shape = shape && (event.Code == "claude.handoff.source-route-unproven" || event.Code == "claude.handoff.target-route-unproven")
 			switch event.Source {
 			case "tmux-claude", "tmux-codex", "process-claude", "process-codex", "unknown":
+			default:
+				shape = false
+			}
+			switch diagnostics.ClaudeHandoffRouteStage(event.Classification) {
+			case "", diagnostics.ClaudeHandoffStageRouteUnresolved, diagnostics.ClaudeHandoffStageRouteFenceMismatch,
+				diagnostics.ClaudeHandoffStageCodexAuthorityUnproven, diagnostics.ClaudeHandoffStageProviderProcessMismatch,
+				diagnostics.ClaudeHandoffStageLeaseHelperProcessMismatch, diagnostics.ClaudeHandoffStageLeaseAuthorityInvalid,
+				diagnostics.ClaudeHandoffStageLeaseProcessMismatch, diagnostics.ClaudeHandoffStageLeaseSocketUnavailable,
+				diagnostics.ClaudeHandoffStageLeaseDialStale, diagnostics.ClaudeHandoffStageLeaseDialUnanswered,
+				diagnostics.ClaudeHandoffStageLeasePeerMismatch, diagnostics.ClaudeHandoffStageLeaseReadinessStale,
+				diagnostics.ClaudeHandoffStageLeaseReadinessUnanswered, diagnostics.ClaudeHandoffStageLeaseNotReady,
+				diagnostics.ClaudeHandoffStageLeaseTargetInvalid, diagnostics.ClaudeHandoffStageLeaseProbeStale,
+				diagnostics.ClaudeHandoffStageLeaseProbeUnanswered, diagnostics.ClaudeHandoffStageLeaseProbeNotReady,
+				diagnostics.ClaudeHandoffStageLeaseUnclassified:
 			default:
 				shape = false
 			}
@@ -1169,7 +1241,14 @@ func logDetachedPeerPrewriteFailure(t *testing.T, f processCreateCLI, primary []
 			if !at.Before(result.PrimaryAt) {
 				phase = "timestamp-at-or-after-primary"
 			}
-			rows = append(rows, eventEvidence{Event: event.Event, Source: event.Source, Code: event.Code, Result: event.Result, At: at.UTC().Format(time.RFC3339Nano), RunSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(event.RunID))), Phase: phase, AgentIsSource: event.AgentUID == source, AgentIsTarget: event.AgentUID == target, PaneMatchesTarget: registration})
+			stage := ""
+			if handoff {
+				stage = event.Classification
+				if stage == "" {
+					stage = "absent"
+				}
+			}
+			rows = append(rows, eventEvidence{Event: event.Event, Source: event.Source, Code: event.Code, Stage: stage, Result: event.Result, At: at.UTC().Format(time.RFC3339Nano), RunSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(event.RunID))), Phase: phase, AgentIsSource: event.AgentUID == source, AgentIsTarget: event.AgentUID == target, PaneMatchesTarget: targetRegistration})
 		}
 	}
 	result.Journal, result.Events = "complete", rows

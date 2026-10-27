@@ -367,6 +367,21 @@ zero write into an outcome-unknown failure. The record carries only:
   provider never chooses it.
 - `agent_uid` (`agent-…`): the unproved Agent, omitted when not strictly
   shaped.
+- `classification`: the proof step that refused that end. `route-unresolved`
+  (the Registry resolves no current route), `route-fence-mismatch` (the
+  resolved route does not accept the stored route fence),
+  `codex-authority-unproven`, `provider-process-mismatch` or
+  `lease-helper-process-mismatch` (the live process is not the recorded
+  birth), or, for a Claude source, the registration lease probe step:
+  `lease-authority-invalid`, `lease-process-mismatch`,
+  `lease-socket-unavailable`, `lease-dial-stale`, `lease-dial-unanswered`,
+  `lease-peer-mismatch`, `lease-readiness-stale`,
+  `lease-readiness-unanswered`, `lease-not-ready`, `lease-target-invalid`,
+  `lease-probe-stale`, `lease-probe-unanswered`, `lease-probe-not-ready`, or
+  `lease-unclassified`. `unanswered` means that step's client bound expired;
+  `stale` means it was refused. Each name is the result of a check the proof
+  already ran; recording it adds no read, probe, or wait. Records written by
+  older versions omit it.
 
 Message refs, payloads, provider sessions, process identities, sockets, and
 error text are never recorded. Like the registration records, it is best
