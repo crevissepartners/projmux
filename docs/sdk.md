@@ -290,6 +290,37 @@ An activation timeout or failure after commit preserves the Agent and Pane.
 Context cancellation prevents admission only. The tmux server owns an admitted
 provider's lifetime, and cancelling the caller does not stop it.
 
+`Client.CreateWindowFromIntent(ctx, intent)` creates a new Window in an explicit
+Project from one `core.WindowCreateIntent`, with either its shell Pane (`Agent`
+nil) or a new Agent, in one transaction. A tmux Agent commits the shape
+`projmux create window --provider` commits: the Agent's Pane splits off the
+Window's initial shell, the shell is retired, and the Window holds only the
+Agent Pane. A failure on the way leaves neither the Window nor the Agent. A
+process Agent requires `Detach` and goes through the process creator, which
+reserves and rolls back the Window together with the Agent. `Host` defaults to
+tmux; no host is inferred from the config. `Name` and `Labels` are the
+Window's, and the Agent takes a generated name and its own `Agent.Labels`.
+
+The Agent half is checked by the validator `CreateAgent` runs, so its refusals
+keep `CreateAgent`'s `Code` and words, and `Creator` and `Operator` follow
+`CreateAgent`'s precedence. `Agent.CwdFrom` `pane` with an exact `uid:`
+`Agent.CwdPane` of the same Project starts the Agent in that Pane's directory
+under the split rule: inside the Project tree it is used, otherwise the Agent
+starts in the Project root and `Notices` carries the fallback line. A tmux
+create always refuses a provider the providers setting has switched off;
+`RequireEnabledProvider` asks the same of a process intent, in the preflight
+and again in the create. `Agent.Resume` is reserved and refused before any
+effect. `Client.PreflightWindowIntent(ctx, intent)` runs every check the
+create runs before its first effect and returns `core.WindowIntentPreview`
+(shell, host, provider, profile, cwd source); like `PreflightCreateAgent` it
+writes nothing and does not authorize the create.
+
+`core.WindowIntentResult` carries the Window, the Agent, the `create.window`
+receipt with the Agent row, the remaining PaneID and, for process, the
+`Binding`. An unconfirmed tmux activation returns them together with
+`CodeCreateActivationUnconfirmed`; a process startup failure returns a
+`Refusal` whose `CreateProcessError` keeps the exact recovery references.
+
 `Client.ResumeAgent(ctx, core.ResumeAgentRequest{Ref: "uid:..."})` rebinds an
 Offline or Failed Claude, Antigravity or native Codex tmux Agent to a new Pane, preserving its
 Agent UID and provider conversation. Project and Window optionally scope Ref;

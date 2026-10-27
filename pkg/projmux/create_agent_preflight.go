@@ -42,7 +42,7 @@ func (c *Client) preflightCreateAgent(ctx context.Context, req core.CreateAgentR
 	} else if (req.Host != "" && req.Host != "tmux") || req.Detach {
 		return result, &Refusal{Code: CodeCreateRequestInvalid, message: "CreateAgentRequest requires tmux or explicit process with Detach"}
 	}
-	checked, err := c.checkCreateAgent(ctx, req, runner, process)
+	checked, err := c.checkCreateAgent(ctx, req, runner, process, false)
 	if err != nil {
 		return result, err
 	}
