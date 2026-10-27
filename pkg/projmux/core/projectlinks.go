@@ -44,3 +44,25 @@ type ProjectLinkVariable struct {
 	Placeholder string `json:"placeholder"`
 	Value       string `json:"value"`
 }
+
+// FileIdentity is the stat identity of one regular file. Writers that replace
+// a file atomically change at least one field. Compare whole values; no single
+// field is an identity on its own, and an identity says nothing about the
+// file's content, its Project or who may read it.
+type FileIdentity struct {
+	Device                uint64
+	Inode                 uint64
+	Size                  int64
+	ModTimeNanoseconds    int64
+	ChangeTimeSeconds     int64
+	ChangeTimeNanoseconds int64
+}
+
+// ProjectLinkRulesRead is one Project's stored link rules with the identity
+// of the file they were read from. FileIdentity is set only when the stats
+// taken immediately before and after the read succeed, find a regular file and
+// agree; otherwise, including for a missing file, it is nil.
+type ProjectLinkRulesRead struct {
+	Rules        ProjectLinkRules
+	FileIdentity *FileIdentity
+}

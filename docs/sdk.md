@@ -54,6 +54,20 @@ The function accesses no environment, files, Registry, tmux or providers and
 creates nothing, including when the directories are missing. It does not check
 existence or access permissions or make paths absolute.
 
+`SettingsInputPaths(configDir, projectUID)` returns
+`core.SettingsInputPaths` beneath the same resolved configuration directory,
+with the same lexical cleaning and the same absence of effects: the agent
+guidance file (`GuidanceFile`), its policy (`GuidancePolicyFile`), its
+fragments directory (`GuidanceFragmentsDir`, whose `.md` files are read), the
+one-time migration receipt (`GuidanceMigrationReceiptFile`) and its backup
+(`GuidanceMigrationBackupFile`), and, for a bare Project UID, that Project's
+guidance (`ProjectGuidanceFile`) and label link rules (`ProjectLinkRulesFile`).
+An empty `projectUID` returns the five global paths and leaves the Project
+fields empty; any other value that is not a bare Project UID is a
+`CodeSelectorInvalid` refusal with the zero result. Nothing says a path exists
+or can be read. The directory's entries and each fragment are for the caller to
+observe.
+
 ## Host-global Agent guidance
 
 `ReadAgentGuidance(ctx)` returns `core.AgentGuidanceFile`: user-file presence,
@@ -1362,6 +1376,28 @@ no rollback or concurrency guarantee. CLI bootstrap, diagnostics journaling, and
 legacy migration retain their existing policy; the CLI does not promise an
 unchanged entire HOME directory.
 
+### Project link rules by UID
+
+`Client.ReadProjectLinkRulesByUID(ctx, projectUID)` returns
+`core.ProjectLinkRulesRead`: the stored `Rules` of the bare Project UID and the
+`*core.FileIdentity` of the file they were read from. It reads no Registry and
+does not check that the Project exists, so a missing or malformed Registry does
+not affect it; `ReadProjectLinkRules` keeps its selector, Registry admission and
+result. The file is read with the same bounded, validating, symlink-confined
+read: a missing file or directory is the zero rules with a nil identity and no
+error, and nothing is created, locked or repaired; a malformed, invalid,
+unreadable, non-regular, escaping or oversized file is a
+`CodeLinkRulesUnreadable` refusal whose `errors.Is` and `errors.As` reach the
+read's cause. An empty, `uid:`-prefixed or otherwise non-UID value is a
+`CodeSelectorInvalid` refusal.
+
+`FileIdentity` (device, inode, size, modification time and change time) is set
+only when the stats taken immediately before and after the read find the same
+regular file; compare whole values. It is not a content digest and proves
+nothing about the Project or permissions. Cancellation is checked on entry and
+before returning success, and a read failure takes precedence over it. The
+result belongs to the caller.
+
 ### Agent deletion protection label
 
 `SetAgentProtection` changes only `projmux.io/protected` on one existing Agent.
@@ -1695,6 +1731,55 @@ for _, agent := range read.Agents {
     }
     current, _ := json.Marshal(agent.Current) // the CLI's currentSettings JSON
     fmt.Println(agent.AgentUID, string(current), agent.Reasons)
+}
+```
+
+### Display settings from a held snapshot
+
+`Client.ReadAgentDisplaySettingsFromSnapshot(ctx, snapshot, request)` resolves
+the same settings for the Agent rows of a `core.RegistrySnapshot` the caller
+holds, without reading the Registry. `ReadAgentSettings` and its results,
+including their JSON, are unchanged.
+
+- An empty `AgentUIDs` selects every row; otherwise only rows with those bare
+  UIDs, with request duplicates ignored and the same `CodeSelectorInvalid`
+  refusal. Results follow snapshot row order and keep duplicate UID rows, each
+  resolved from its own annotations. Requested UIDs without a row follow in UID
+  order with `Unavailable` `resource-not-found`.
+- A row's inputs are its UID, owner Window, provider (its declared one, else
+  its conversation's), annotations and `PaneRef`; the host is `process` when
+  that Pane is a process Pane, else `tmux`; its Project is the Project owning
+  that Window, read by UID, name and labels. Nothing else in the snapshot is
+  read: other rows, other Window fields, `UpdatedAt` and the remaining
+  resources cannot change a result. Unselected rows and unknown UIDs plan and
+  resolve nothing.
+- The request is built with the code `ReadAgentSettings` uses. A Window or
+  Project missing from the snapshot omits only the Project's prompt parts, and
+  instructions that cannot be read now keep the settings; neither makes the row
+  `Unavailable`. `Unavailable` is set only when the recorded profile cannot be
+  resolved, with the same tokens, and for unknown UIDs.
+- `Cacheable` (`json:"cacheable,omitempty"`) is true when the row was planned
+  and resolved without an observed failure, and false when a prompt part could
+  not be read, snapshotted or migrated, the instructions could not be read, or
+  `Unavailable` is set. An off part, or one omitted for a missing Project, is
+  not a failure. It describes this call only; do not cache a false result.
+  `ReadAgentSettings` leaves it false.
+- A result also depends on the files `SettingsInputPaths` names, the profiles
+  and personas the annotations name, the built-in guidance of this build and
+  the captured state directory. Planning writes what every launch plan writes,
+  content-addressed snapshots and the guidance's one-time first-use migration,
+  and shares the agent guidance per provider and host and the label link rules
+  per provider and Project among the selected rows only.
+
+```go
+read, err := client.ReadAgentDisplaySettingsFromSnapshot(ctx, held.Snapshot, core.ReadAgentSettingsRequest{AgentUIDs: uids})
+if err != nil {
+    return err
+}
+for _, agent := range read.Agents {
+    if agent.Cacheable {
+        cache[agent.AgentUID] = agent
+    }
 }
 ```
 

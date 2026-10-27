@@ -28,6 +28,14 @@ type ReadAgentSettingsResult struct {
 // (relaunch-no-conversation, or the profile's own token), or
 // resource-not-found for a requested UID the Registry does not hold. The other
 // settings fields are then zero.
+//
+// Cacheable is set only by ReadAgentDisplaySettingsFromSnapshot: true when the
+// row was planned and resolved without a failure this call observed, false
+// when a prompt part could not be read, snapshotted or migrated, the
+// instructions could not be read, or Unavailable is set. A prompt part that is
+// off or omitted for a missing Project is not a failure. It describes this
+// call only and promises nothing about later reads. ReadAgentSettings leaves
+// it false, so its JSON is unchanged.
 type AgentSettingsResolution struct {
 	AgentUID     string
 	Provider     string
@@ -36,6 +44,7 @@ type AgentSettingsResolution struct {
 	Current, New AgentLaunchSettings
 	Reasons      []string
 	Unavailable  string
+	Cacheable    bool `json:"cacheable,omitempty"`
 }
 
 // AgentLaunchSettings are an Agent's layered settings on one side of a
@@ -63,4 +72,21 @@ type AgentLaunchSetting struct {
 	Source       string `json:"source"`
 	ProfileValue string `json:"profileValue"`
 	Override     bool   `json:"override"`
+}
+
+// SettingsInputPaths are the configuration files and directory, beneath one
+// resolved configuration directory, whose content the agent guidance and one
+// Project's prompt parts are read from: the user guidance, its policy, its
+// fragments directory (whose .md files are read), the one-time migration
+// receipt and its backup, and the Project's guidance and label link rules.
+// The Project fields are empty when no Project is named. Nothing says the
+// paths exist or can be read.
+type SettingsInputPaths struct {
+	GuidanceFile                 string
+	GuidancePolicyFile           string
+	GuidanceFragmentsDir         string
+	GuidanceMigrationReceiptFile string
+	GuidanceMigrationBackupFile  string
+	ProjectGuidanceFile          string
+	ProjectLinkRulesFile         string
 }

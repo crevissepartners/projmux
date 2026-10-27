@@ -43,6 +43,11 @@
 // process inventory without reading the Registry or observing process hosts.
 // ReadAgentSettings resolves from one Registry read the settings each Agent's
 // plain relaunch would run with, without admitting that relaunch.
+// ReadAgentDisplaySettingsFromSnapshot resolves them for display from a held
+// snapshot's rows without reading the Registry, and reports per row whether
+// the result may be cached. SettingsInputPaths names the configuration inputs
+// that planning reads, and ReadProjectLinkRulesByUID reads one Project's link
+// rules and their file identity without the Registry.
 //
 // GetAISplitMode and SetAISplitMode preserve the synchronous legacy settings contract and take no context; they do not observe cancellation.
 // SetAISplitMode uses a non-atomic plain write (0644 on creation, subject to umask; existing file mode preserved).

@@ -114,11 +114,7 @@ func (r agentSettingsReader) resolve(uid string) core.AgentSettingsResolution {
 	request, _, _ := runtime.RelaunchSettingsRequest(runtime.AgentSettingsRequest{Source: metadata.SettingSourceRelaunch}, target, r.planner)
 	launch, err := runtime.ResolveAgentSettingsWithPaths(r.paths, out.Provider, agent.Metadata.Annotations, request)
 	if err != nil {
-		var profileErr *runtime.RelaunchProfileError
-		if errors.As(err, &profileErr) {
-			return unavailable(profileErr.Reason)
-		}
-		return unavailable(string(CodeRelaunchNoConversation))
+		return unavailable(agentSettingsUnavailableReason(err))
 	}
 	// A process Claude relaunch refuses instructions it cannot read now.
 	if out.Host == "process" && out.Provider != "codex" && launch.InstructionsErr != nil {
@@ -128,6 +124,16 @@ func (r agentSettingsReader) resolve(uid string) core.AgentSettingsResolution {
 	out.Current, out.New = publicAgentLaunchSettings(launch.Resolution.Current), publicAgentLaunchSettings(launch.Resolution.New)
 	out.Reasons = append([]string{}, launch.Resolution.Reasons...)
 	return out
+}
+
+// agentSettingsUnavailableReason is the refusal token the CLI relaunch
+// refuses a settings resolution failure with.
+func agentSettingsUnavailableReason(err error) string {
+	var profileErr *runtime.RelaunchProfileError
+	if errors.As(err, &profileErr) {
+		return profileErr.Reason
+	}
+	return string(CodeRelaunchNoConversation)
 }
 
 func publicAgentLaunchSettings(s agentsettings.Settings) core.AgentLaunchSettings {
