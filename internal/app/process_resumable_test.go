@@ -155,7 +155,7 @@ func TestProcessResumeRecordEqualIgnoresOnlyStopRequested(t *testing.T) {
 		t.Fatal("nil equivalence changed")
 	}
 	for _, tc := range []struct {
-		name string
+		name   string
 		change func(*coremetadata.ProcessSessionRecord)
 	}{
 		{"host", func(r *coremetadata.ProcessSessionRecord) { r.Binding.HostInstanceID += "-changed" }},

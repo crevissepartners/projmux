@@ -175,8 +175,13 @@ func TestDetachedProcessResumeClaimStopWithoutChildCLI(t *testing.T) {
 				after, _ = f.store.LoadReadOnly()
 				current, _ = after.Pane(p.Metadata.UID)
 				target, _ := after.Agent(a.Metadata.UID)
-				if !reflect.DeepEqual(current.Status, p.Status) || !reflect.DeepEqual(target.Status, a.Status) {
-					t.Fatal("claim stop invented Wait or changed conversation")
+				if current.Status.ProcessSession == nil || !current.Status.ProcessSession.StopRequested {
+					t.Fatal("claim stop lost explicit request mark")
+				}
+				expected := p.Clone().Status
+				expected.ProcessSession.StopRequested = true
+				if !reflect.DeepEqual(current.Status, expected) || !reflect.DeepEqual(target.Status, a.Status) {
+					t.Fatal("claim stop changed status beyond the explicit request mark")
 				}
 			}
 		})
