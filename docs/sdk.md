@@ -60,13 +60,26 @@ with the same lexical cleaning and the same absence of effects: the agent
 guidance file (`GuidanceFile`), its policy (`GuidancePolicyFile`), its
 fragments directory (`GuidanceFragmentsDir`, whose `.md` files are read), the
 one-time migration receipt (`GuidanceMigrationReceiptFile`) and its backup
-(`GuidanceMigrationBackupFile`), and, for a bare Project UID, that Project's
-guidance (`ProjectGuidanceFile`) and label link rules (`ProjectLinkRulesFile`).
-An empty `projectUID` returns the five global paths and leaves the Project
-fields empty; any other value that is not a bare Project UID is a
+(`GuidanceMigrationBackupFile`), the directory holding every Project's label
+link rules (`ProjectLinkRulesDir`), and, for a bare Project UID, that
+Project's guidance (`ProjectGuidanceFile`) and label link rules
+(`ProjectLinkRulesFile`, inside `ProjectLinkRulesDir`). An empty `projectUID`
+returns the five global paths and `ProjectLinkRulesDir` and leaves the two
+Project file fields empty; any other value that is not a bare Project UID is a
 `CodeSelectorInvalid` refusal with the zero result. Nothing says a path exists
-or can be read. The directory's entries and each fragment are for the caller to
-observe.
+or can be read. The directories' entries and each fragment are for the caller
+to observe.
+
+`MaxProjectLinkRulesBytes` and `MaxAgentGuidanceBytes` are the byte limits the
+SDK's own validators enforce, defined by them rather than copied. A stored
+link rules file larger than `MaxProjectLinkRulesBytes` is a
+`CodeLinkRulesUnreadable` read refusal, and rules whose stored encoding would
+be larger are a `CodeInvalidLinkRules` write refusal on field `links`. Host-global
+or Project guidance larger than `MaxAgentGuidanceBytes` is a
+`CodeAgentGuidanceTooLarge` refusal. An input of exactly the limit is accepted.
+A caller that bounds a JSON request body before decoding it should leave room
+for escaping, at most six bytes per input byte, so that one byte past the limit
+still reaches the validator and gets its refusal rather than a transport error.
 
 ## Host-global Agent guidance
 

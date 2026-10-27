@@ -23,9 +23,10 @@ func SettingsDirectories(configDir string) (profilesDir, personasDir string) {
 // SettingsInputPaths returns the guidance and Project prompt input paths
 // beneath configDir, the already resolved projmux configuration directory,
 // with the same lexical cleaning as SettingsDirectories. An empty projectUID
-// returns the five global paths and leaves the two Project paths empty;
-// otherwise projectUID must be a bare Project UID, and one that is not is a
-// CodeSelectorInvalid refusal with the zero result. Like SettingsDirectories
+// returns the five global paths and the link rules directory and leaves the
+// two Project file paths empty; otherwise projectUID must be a bare Project
+// UID, and one that is not is a CodeSelectorInvalid refusal with the zero
+// result. Like SettingsDirectories
 // it accesses no environment, filesystem, tmux or Registry and does not
 // guarantee that any path exists or is readable.
 func SettingsInputPaths(configDir, projectUID string) (core.SettingsInputPaths, error) {
@@ -39,10 +40,11 @@ func SettingsInputPaths(configDir, projectUID string) (core.SettingsInputPaths, 
 		GuidanceFragmentsDir:         filepath.Join(configDir, agentguidance.FragmentsDirName),
 		GuidanceMigrationReceiptFile: filepath.Join(configDir, agentguidance.MigrationFileName),
 		GuidanceMigrationBackupFile:  guidance + ".bak",
+		ProjectLinkRulesDir:          filepath.Join(configDir, projectlinks.DirName),
 	}
 	if projectUID != "" {
 		out.ProjectGuidanceFile = filepath.Join(configDir, agentguidance.ProjectDirName, projectUID+".md")
-		out.ProjectLinkRulesFile = filepath.Join(configDir, projectlinks.DirName, projectUID+projectlinks.FileExt)
+		out.ProjectLinkRulesFile = filepath.Join(out.ProjectLinkRulesDir, projectUID+projectlinks.FileExt)
 	}
 	return out, nil
 }
