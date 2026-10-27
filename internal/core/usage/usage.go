@@ -112,6 +112,9 @@ const (
 type SnapshotReason string
 
 const (
+	// ReasonUnknown records a confirmed refresh failure without evidence for a
+	// known category. It is not used for an absent observation or a successful native row.
+	ReasonUnknown               SnapshotReason = "unknown"
 	ReasonAppServerUnavailable  SnapshotReason = "app-server-unavailable"
 	ReasonAppServerUnsupported  SnapshotReason = "app-server-unsupported"
 	ReasonAccountUnsupported    SnapshotReason = "account-unsupported"

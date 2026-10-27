@@ -177,7 +177,7 @@ func nativeReasonFromError(err error) usage.SnapshotReason {
 	case errors.Is(err, codexappserver.ErrDisconnected):
 		return usage.ReasonAppServerDisconnected
 	default:
-		return usage.ReasonAppServerUnavailable
+		return usage.ReasonUnknown
 	}
 }
 
