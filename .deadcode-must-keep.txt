@@ -95,6 +95,7 @@ Client.PreflightDelete	Public v0 deletion-protection preflight for external fron
 Client.PrepareAgentResume	Public process Claude child-free preparation entrypoint; external consumer and same-fixture prepared lifecycle tests preserve frozen proof without claim or provider.
 Client.PreviewClaudeHooks	Public v0 Claude hook integration SDK entrypoint or its adapter (PreviewClaudeHooks, ApplyClaudeHooks); reachable from external consumers rather than the CLI binary; covered by CLI plan and install parity, writes-nothing, stale-base refusal and GOWORK=off consumer tests.
 Client.PreviewProfile	Public write-free profile preview SDK entrypoint, covered by no-effects, cancellation, parity and external consumer tests.
+Client.ReadAgentDisplaySettingsFromSnapshot	Public v0 snapshot display settings SDK entrypoint or its adapter (ReadAgentDisplaySettingsFromSnapshot); reachable from external consumers rather than the CLI binary; covered by ReadAgentSettings parity, zero Registry read, row/filter planner count, unrelated-input independence, Cacheable failure/recovery and GOWORK=off consumer tests.
 Client.ReadAgentGuidance	Public v0 global guidance editing SDK entrypoint or adapter; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
 Client.ReadAgentSettings	Public v0 admission-free Agent settings SDK entrypoint or its adapter (ReadAgentSettings); reachable from external consumers rather than the CLI binary; covered by CLI relaunch dry-run parity, single-read, admission-free, field coverage and GOWORK=off consumer tests.
 Client.ReadInstructions	Public v0 instruction SDK entrypoint or its typed-refusal adapter, retained for external modules; exercised by test/sdk/consumer with GOWORK=off.
@@ -102,6 +103,7 @@ Client.ReadMessageArchive	Public SDK entrypoint for read-only retained live and 
 Client.ReadProfile	Public v0 profile SDK entrypoint or refusal adapter; exercised by CLI parity and GOWORK=off external consumer tests.
 Client.ReadProjectGuidance	Public v0 Project guidance SDK entrypoint; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
 Client.ReadProjectLinkRules	Public v0 Project link rules SDK entrypoint or its adapter; retained for external consumers and exercised by CLI/SDK parity, typed refusals, field coverage, and GOWORK=off consumer tests.
+Client.ReadProjectLinkRulesByUID	Public v0 Project link rules by UID SDK entrypoint or its adapter (ReadProjectLinkRulesByUID); reachable from external consumers rather than the CLI binary; covered by Registry-free read, file identity stability/replacement, cause-preserving unreadable refusal, cancellation order and GOWORK=off consumer tests.
 Client.ReadProjectLinkRulesWithOptions	Public per-call degraded Registry link rules SDK entrypoint; covered by strict parity, raw target uniqueness, no-effects admission, and external consumer tests.
 Client.ReadRegistryFileIdentity	Public v0 coherent resource graph SDK entrypoint or its adapter (ObserveResourceGraph/ReadRegistryFileIdentity); reachable from external consumers rather than the CLI binary; covered by resourcegraph JSON parity, single-read, identity, field coverage and GOWORK=off consumer tests.
 Client.ReadRegistrySnapshot	Public v0 effect-free Registry snapshot entrypoint; covered by duplicate-row parity, ownership, zero-effect, single-read and external consumer tests.
@@ -503,6 +505,7 @@ Service.pushProcessCodex	Client.SendMessage dispatches an existing exact process
 Service.terminal	Client.SendMessage preserves known and uncertain terminal receipt projections when transport or persistence fails.
 SettingItems	Read-only projection of the settings layer declaration retained as the test seam the settings layer guard seeds every front file from.
 SettingsDirectories	Public v0 pure profile/persona directory paths; retained for external SDK consumers and covered by input, no-effect and external consumer tests.
+SettingsInputPaths	Public v0 pure settings input paths (SettingsInputPaths); retained for external SDK consumers and covered by input, store path parity, no-effect and external consumer tests.
 SharedOutputModes	Closed shared -o catalog retained as the test seam that pins catalog closure and contract ordering.
 SkipIfReplacementCollapses	Test-only host probe retained: socket-replacement tests skip only where a same-path replacement shares the original socket identity.
 SmokeRoot	Test-only installed qualification API retained for canonical isolated root validation.
@@ -628,6 +631,7 @@ agentCommand.callProcessUserInput	Existing typed process foreground caller retai
 agentCommand.prepareOwnedClaudeResume	Private S568 no-first-input Claude Resume producer retained for Prepared-to-actual-first-input ownership proofs and the planned web consumer; frozen recipe validation and CLI peer Wait remain unchanged.
 agentCommand.runOwnedProcessRelaunch	Private S568 typed samehost settings producer retained for Preview/Unchanged/Owned/Prepared ownership proofs and the planned web consumer; independent Cancel and exact Wait preserve CLI foreground lifetime.
 agentSettingsReader.resolve	Public v0 admission-free Agent settings SDK entrypoint or its adapter (ReadAgentSettings); reachable from external consumers rather than the CLI binary; covered by CLI relaunch dry-run parity, single-read, admission-free, field coverage and GOWORK=off consumer tests.
+agentSettingsUnavailableReason	Shared refusal token of the public v0 Agent settings SDK entrypoints (ReadAgentSettings, ReadAgentDisplaySettingsFromSnapshot); reachable from external consumers rather than the CLI binary; covered by their CLI relaunch parity and display tests.
 aiCommand.withProcessTarget	Internal process terminal invocation binding through existing AI transport seams; retained until foreground activation supplies its caller.
 aiSummaryForKind	Fallback-locale entry point of aiSummaryForKindLocale retained as the AI notification label seam.
 applyCodexForeground	Internal foreground process control retained for exact per-user IPC and provider fixture proof before public activation.
@@ -688,6 +692,7 @@ deleteRefusal	Public v0 Window, Pane and Agent deletion SDK entrypoint or its ex
 deleteTmuxOnly	Public v0 Window, Pane and Agent deletion SDK entrypoint or its exact selection/refusal adapter; verified by SDK/CLI parity, injected guards/rollback, public field coverage and external consumer tests.
 desktopNotifyConfigValue	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 desktopNotifyModeFromConfig	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+displaySettingsReader.resolve	Public v0 snapshot display settings SDK entrypoint or its adapter (ReadAgentDisplaySettingsFromSnapshot); reachable from external consumers rather than the CLI binary; covered by ReadAgentSettings parity, zero Registry read, row/filter planner count, unrelated-input independence, Cacheable failure/recovery and GOWORK=off consumer tests.
 effectiveThemeFromConfigNoting	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 equalArgv	Test-only installed qualification helper retained for closed command-shape classification.
 exchangeCodex	Client.SendMessage and MessageStatus validate or dispatch through the exact owned process Codex peer socket.
@@ -718,6 +723,7 @@ keySequenceRetireCommandsWithPrefix	Original app rendering adapter retained for 
 keySequenceTableName	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 legacyDesktopAppID	The retired desktop application identifier remains required to recognize and clean legacy integration state.
 legacyWindowAttentionRows	Legacy attention rows remain required while older persisted window attention state is readable.
+linkRulesFileIdentity	Public v0 Project link rules by UID SDK entrypoint or its adapter (ReadProjectLinkRulesByUID); reachable from external consumers rather than the CLI binary; covered by Registry-free read, file identity stability/replacement, cause-preserving unreadable refusal, cancellation order and GOWORK=off consumer tests.
 linkRulesRefusal	Public v0 Project link rules SDK entrypoint or its adapter; retained for external consumers and exercised by CLI/SDK parity, typed refusals, field coverage, and GOWORK=off consumer tests.
 loadAIBadgeStyle	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 loadCentralAINewWindowMode	Legacy app central AI mode loader proof seam; retained for missing-home and central file error regression tests after shared TUI execution extraction.
@@ -754,6 +760,7 @@ nativeSelectedContent	Default-theme entry point over SelectedContent retained as
 nativeTruncateANSI	Default entry point over projmuxpicker.TruncateANSI retained as the ANSI cut-before-reset seam.
 nativeVisibleLen	Default entry point over projmuxpicker.VisibleLen retained as the visible width seam.
 newClientWithEnv	Environment injection constructor retained as the only seam that pins tmux client attach and switch routing without a live tmux server.
+newDisplaySnapshotIndex	Public v0 snapshot display settings SDK entrypoint or its adapter (ReadAgentDisplaySettingsFromSnapshot); reachable from external consumers rather than the CLI binary; covered by ReadAgentSettings parity, zero Registry read, row/filter planner count, unrelated-input independence, Cacheable failure/recovery and GOWORK=off consumer tests.
 newFixture	Test-only installed qualification helper retained as the common clean/existing fixture constructor.
 newLedger	Test-only installed qualification helper retained for canonical semantic command evidence.
 newMemoPromptPlanner	Public v0 admission-free Agent settings SDK entrypoint or its adapter (ReadAgentSettings); reachable from external consumers rather than the CLI binary; covered by CLI relaunch dry-run parity, single-read, admission-free, field coverage and GOWORK=off consumer tests.

@@ -310,6 +310,11 @@ var rootKindProjectionSites = []rootKindProjectionSite{
 		Source: "Graph", Verdict: rootKindBoth,
 		Why: "indexes both graph roots so a managed Home session resolves to its ControlSession identity",
 	},
+	{
+		File: "pkg/projmux/agent_settings_display.go", Func: "newDisplaySnapshotIndex",
+		Source: "Snapshot", Verdict: rootKindProjectOnly,
+		Why: "finds the Project whose prompt parts (Project guidance, label link rules) a Window's Agents plan; a ControlSession-owned Window has neither, so its Agents plan only the agent guidance",
+	},
 }
 
 // phase4Boundary is the exact product surface this slice may edit. A gap inside
@@ -444,14 +449,14 @@ func TestRootKindProjectionSweepTableIsPrintable(t *testing.T) {
 	for verdict, want := range map[rootKindVerdict]int{
 		rootKindBoth:        20,
 		rootKindPaired:      2,
-		rootKindProjectOnly: 27,
+		rootKindProjectOnly: 28,
 		rootKindGap:         0,
 	} {
 		if counts[verdict] != want {
 			t.Errorf("%s rows = %d, want %d; update the count with the table and say why in the commit", verdict, counts[verdict], want)
 		}
 	}
-	if got, want := len(rootKindProjectionSites), 49; got != want {
+	if got, want := len(rootKindProjectionSites), 50; got != want {
 		t.Errorf("sweep rows = %d, want %d", got, want)
 	}
 	for _, want := range []string{"SITE", "SOURCE", "KIND HANDLING", "NOTE"} {

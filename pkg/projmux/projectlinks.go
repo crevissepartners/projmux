@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"maps"
+	"os"
 	"strings"
+	"syscall"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	links "github.com/crevissepartners/projmux/internal/core/projectlinks"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	service "github.com/crevissepartners/projmux/internal/services/projectlinks"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
 )
@@ -33,6 +37,76 @@ func (c *Client) ReadProjectLinkRules(ctx context.Context, projectRef string) (c
 func (c *Client) ReadProjectLinkRulesWithOptions(ctx context.Context, projectRef string, options core.ProjectLinkRulesOptions) (core.ProjectLinkRulesResult, error) {
 	out, err := c.linkRulesService().ReadWithOptions(ctx, projectRef, service.Options{AllowDegradedRegistry: options.AllowDegradedRegistry})
 	return publicLinkRules(out), linkRulesRefusal(err, "ReadProjectLinkRules projectRef")
+}
+
+// statLinkRulesFile is replaced only by package tests.
+var statLinkRulesFile = linkRulesFileIdentity
+
+// ReadProjectLinkRulesByUID reads the stored link rules of the bare Project UID
+// projectUID from the captured configuration directory, with the identity of
+// the file they were read from. It reads no Registry and does not check that
+// the Project exists, so a missing or malformed Registry does not affect it.
+//
+// The file is read as ReadProjectLinkRules reads it: a missing file (or
+// directory) is the zero rules with a nil identity and no error, and nothing
+// is created, locked or repaired. A malformed, unreadable, non-regular,
+// symlinked-away or oversized file is a CodeLinkRulesUnreadable refusal whose
+// errors.Is and errors.As reach the read's cause. An empty or prefixed UID, or
+// one that is not Project UID shaped, is a CodeSelectorInvalid refusal.
+// FileIdentity is set only when the stats taken immediately before and after
+// the read find the same regular file. Cancellation is checked on entry and
+// before returning success; a read failure takes precedence over it. The
+// rules belong to the caller.
+func (c *Client) ReadProjectLinkRulesByUID(ctx context.Context, projectUID string) (core.ProjectLinkRulesRead, error) {
+	if err := ctx.Err(); err != nil {
+		return core.ProjectLinkRulesRead{}, err
+	}
+	if !metadata.IsProjectUIDShaped(projectUID) {
+		return core.ProjectLinkRulesRead{}, &Refusal{Code: CodeSelectorInvalid, message: "ReadProjectLinkRulesByUID projectUID must be a bare Project UID"}
+	}
+	paths, err := c.instructions.Paths()
+	if err != nil {
+		return core.ProjectLinkRulesRead{}, err
+	}
+	store := links.NewDefaultStore(paths)
+	path, err := store.Path(projectUID)
+	if err != nil {
+		return core.ProjectLinkRulesRead{}, err
+	}
+	before, stable := statLinkRulesFile(path)
+	rules, err := store.Load(projectUID)
+	if err != nil {
+		refusal := &service.Refusal{Code: service.CodeUnreadable, Reason: err.Error(), Cause: err}
+		return core.ProjectLinkRulesRead{}, &Refusal{Code: CodeLinkRulesUnreadable, Reason: refusal.Reason, message: refusal.Error(), cause: err}
+	}
+	var identity *core.FileIdentity
+	if after, ok := statLinkRulesFile(path); stable && ok && after == before {
+		identity = &after
+	}
+	if err := ctx.Err(); err != nil {
+		return core.ProjectLinkRulesRead{}, err
+	}
+	out := core.ProjectLinkRulesRead{Rules: core.ProjectLinkRules{Jira: rules.Jira, Repo: rules.Repo, URLs: rules.URLs}, FileIdentity: identity}
+	for _, link := range rules.Links {
+		out.Rules.Links = append(out.Rules.Links, core.ProjectLink{LabelKey: link.LabelKey, Template: link.Template})
+	}
+	return out, nil
+}
+
+// linkRulesFileIdentity is the stat identity of the regular file at path
+// itself; ok is false when it cannot be stat'ed or is not a regular file.
+func linkRulesFileIdentity(path string) (core.FileIdentity, bool) {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return core.FileIdentity{}, false
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return core.FileIdentity{}, false
+	}
+	seconds, nanoseconds := localipc.StatChangeTime(stat)
+	return core.FileIdentity{Device: uint64(stat.Dev), Inode: stat.Ino, Size: info.Size(),
+		ModTimeNanoseconds: info.ModTime().UnixNano(), ChangeTimeSeconds: seconds, ChangeTimeNanoseconds: nanoseconds}, true
 }
 
 // WriteProjectLinkRules replaces the whole file atomically, or validates and
