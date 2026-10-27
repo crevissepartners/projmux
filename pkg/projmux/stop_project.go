@@ -109,7 +109,7 @@ func (c *Client) stopProjectWithRunner(ctx context.Context, req core.StopProject
 			return stopErr
 		}
 	}
-	executor := mutationruntime.ProjectProcessStopExecutor{RegistryPath: store.PathFor(c.paths.StateDir), Load: storage.LoadReadOnly}
+	executor := mutationruntime.ProjectProcessStopExecutor{RegistryPath: store.PathFor(c.paths.StateDir), Load: storage.LoadReadOnly, Update: storage.UpdateConvergentContext}
 	stopped, tmuxStopped, err := mutationruntime.ExecuteProjectStop(ctx, func(execution context.Context) ([]receipt.ReceiptResource, error) {
 		return executor.Stop(execution, project.Metadata.UID)
 	}, stopTmux)

@@ -49,7 +49,7 @@ func (e *ProjectProcessStopFailure) Error() string { return e.message }
 func (e *ProjectProcessStopFailure) Unwrap() error { return e.Cause }
 
 type ProjectProcessStopExecutor struct {
-	Update       func(func(*metadata.Registry) error) (metadata.Registry, bool, error)
+	Update       func(context.Context, func(*metadata.Registry) error) (metadata.Registry, bool, error)
 	RegistryPath string
 	Load         func() (metadata.Registry, error)
 	ReadIdentity ProcessIdentityReader

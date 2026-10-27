@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"bufio"
 	"encoding/json"
 	"errors"
@@ -40,6 +41,7 @@ type resourceStore struct {
 	snapshot         func() (coremetadata.Registry, error)
 	update           func(func(*coremetadata.Registry) error) (coremetadata.Registry, error)
 	updateConvergent func(func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error)
+	updateConvergentContext func(context.Context, func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error)
 	mutator          func() coremetadata.Mutator
 	// stateDir is the state root the Registry above lives under. Explicit
 	// deletions append their deletion record there, next to the Registry they
@@ -62,6 +64,13 @@ func newResourceStore() *resourceStore {
 			}
 			return mutations.NewStore(intmetadata.PathFor(paths.StateDir)).UpdateConvergent(fn)
 		},
+		updateConvergentContext: func(ctx context.Context, fn func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
+			paths, err := config.DefaultPathsFromEnv()
+			if err != nil {
+				return coremetadata.Registry{}, false, fmt.Errorf("resolve projmux state paths: %w", err)
+			}
+			return mutations.NewStore(intmetadata.PathFor(paths.StateDir)).UpdateConvergentContext(ctx, fn)
+		},
 	}
 }
 
@@ -73,6 +82,7 @@ func resourceStoreAtPath(path string) *resourceStore {
 	store := mutations.NewStore(path)
 	return &resourceStore{
 		updateConvergent: store.UpdateConvergent,
+		updateConvergentContext: store.UpdateConvergentContext,
 	}
 }
 

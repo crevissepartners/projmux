@@ -14,9 +14,9 @@ import (
 func (s *ProcessAgentStopper) recordStopRequested(ctx context.Context, retired coremetadata.Pane) error {
 	update := s.Update
 	if update == nil {
-		update = intmetadata.NewStore(s.RegistryPath).UpdateConvergent
+		update = intmetadata.NewStore(s.RegistryPath).UpdateConvergentContext
 	}
-	_, _, err := update(func(reg *coremetadata.Registry) error {
+	_, _, err := update(ctx, func(reg *coremetadata.Registry) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}

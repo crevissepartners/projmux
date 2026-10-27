@@ -19,12 +19,13 @@ import (
 type Store struct {
 	Update           func(func(*coremetadata.Registry) error) (coremetadata.Registry, error)
 	UpdateConvergent func(func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error)
+	UpdateConvergentContext func(context.Context, func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error)
 	Mutator          func() coremetadata.Mutator
 }
 
 func NewStore(path string) Store {
 	s := store.NewStore(path)
-	return Store{Update: s.Update, UpdateConvergent: s.UpdateConvergent, Mutator: store.DefaultMutator}
+	return Store{Update: s.Update, UpdateConvergent: s.UpdateConvergent, UpdateConvergentContext: s.UpdateConvergentContext, Mutator: store.DefaultMutator}
 }
 
 // Failure preserves the CLI cause and input/runtime classification.

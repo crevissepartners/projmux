@@ -72,6 +72,7 @@ func stopProcessFixture(t *testing.T, failure string) projectProcessStopper {
 		root := t.TempDir()
 		copied.stateDir = func() (string, error) { return root, nil }
 		originalLoad, originalUpdate, originalConvergent := store.load, store.update, store.updateConvergent
+		originalContext := store.updateConvergentContext
 		copied.load = func() (coremetadata.Registry, error) {
 			mutation.Lock()
 			defer mutation.Unlock()
@@ -89,6 +90,15 @@ func stopProcessFixture(t *testing.T, failure string) projectProcessStopper {
 				mutation.Lock()
 				defer mutation.Unlock()
 				reg, changed, err := originalConvergent(apply)
+				return reg.Clone(), changed, err
+			}
+		}
+		if originalContext != nil {
+			copied.updateConvergentContext = func(ctx context.Context, apply func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
+				mutation.Lock()
+				defer mutation.Unlock()
+				if err := ctx.Err(); err != nil { return coremetadata.Registry{}, false, err }
+				reg, changed, err := originalContext(ctx, apply)
 				return reg.Clone(), changed, err
 			}
 		}
@@ -195,7 +205,9 @@ func stopProcessFixture(t *testing.T, failure string) projectProcessStopper {
 		}
 		for _, r := range prepared {
 			pane, ok := latest.Pane(r.pane.Metadata.UID)
-			if !ok || pane.Status.ProcessSession == nil || pane.Status.ProcessSession.StopRequested != r.published {
+			// Actual Wait can succeed while final context admission fails.
+			marked := r.published && failure != "missing-context"
+			if !ok || pane.Status.ProcessSession == nil || pane.Status.ProcessSession.StopRequested != marked {
 				t.Fatalf("explicit stop mark disagrees with confirmed retirement: %+v", pane)
 			}
 		}
@@ -671,13 +683,13 @@ func TestProjectStopReceiptOutcomesAndProjections(t *testing.T) {
 }
 
 func TestProjectStopExplicitMarkUsesSameStore(t *testing.T) {
-	for _, mode := range []string{"convergent", "update-only"} {
+	for _, mode := range []string{"convergent", "context-without-legacy-convergent"} {
 		t.Run(mode, func(t *testing.T) {
 			backing := freshStartFixtureStore(t)
 			activateRuntimeStopAgent(t, backing, "gen-tmux")
 			agentUID, paneUID := addProjectStopProcessFixture(t, backing)
 			store := backing.store()
-			if mode == "update-only" {
+			if mode == "context-without-legacy-convergent" {
 				store.updateConvergent = nil
 			}
 			stopped, err := stopProcessFixture(t, "")(context.Background(), store, "prj-alpha")
@@ -689,5 +701,22 @@ func TestProjectStopExplicitMarkUsesSameStore(t *testing.T) {
 				t.Fatal("final metadata write bypassed the caller's Registry")
 			}
 		})
+	}
+}
+
+func TestProjectStopContextWriterDoesNotFallBack(t *testing.T) {
+	backing := freshStartFixtureStore(t)
+	activateRuntimeStopAgent(t, backing, "gen-tmux")
+	agentUID, paneUID := addProjectStopProcessFixture(t, backing)
+	store := backing.store()
+	store.updateConvergentContext = nil
+	_, err := stopProcessFixture(t, "missing-context")(context.Background(), store, "prj-alpha")
+	if err == nil || !strings.Contains(err.Error(), "context write store is not configured") {
+		t.Fatalf("context-free writer accepted: %v", err)
+	}
+	pane, _ := backing.registry.Pane(paneUID)
+	agent, _ := backing.registry.Agent(agentUID)
+	if pane.Status.ProcessSession.StopRequested || agent.Status.Phase != coremetadata.PhaseOffline || !coremetadata.MatchesProcessWait(pane.Status.ProcessSession.Binding, pane.Status.LastTermination) {
+		t.Fatal("failed final writer changed intent or lost actual retirement")
 	}
 }

@@ -58,7 +58,7 @@ func (c *createCommand) bindProcessCreateContext(frozen mutationruntime.ProcessC
 	c.store = &resourceStore{load: storage.LoadReadOnly, snapshot: storage.LoadReadOnly, update: func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
 		reg, _, err := storage.UpdateConvergent(fn)
 		return reg, err
-	}, updateConvergent: storage.UpdateConvergent, mutator: intmetadata.DefaultMutator, stateDir: func() (string, error) { return frozen.Paths.StateDir, nil }}
+	}, updateConvergent: storage.UpdateConvergent, updateConvergentContext: storage.UpdateConvergentContext, mutator: intmetadata.DefaultMutator, stateDir: func() (string, error) { return frozen.Paths.StateDir, nil }}
 	ai, ok := c.agents.(*aiCommand)
 	if !ok {
 		return errors.New("process-detached-launch-adapter-unavailable")

@@ -72,7 +72,7 @@ func (c *Client) StopAgent(ctx context.Context, req core.StopAgentRequest) (core
 	}
 	registryPath := store.PathFor(c.paths.StateDir)
 	storage := store.NewStore(registryPath)
-	stopper := mutationruntime.ProcessAgentStopper{RegistryPath: registryPath, Load: storage.LoadReadOnly}
+	stopper := mutationruntime.ProcessAgentStopper{RegistryPath: registryPath, Load: storage.LoadReadOnly, Update: storage.UpdateConvergentContext}
 	err = stopper.StopExplicit(ctx, reg, agent.Clone(), pane.Clone())
 	if copyErr := unregisterCopy(stopper.Termination, &result.Termination); copyErr != nil {
 		return result, errors.Join(err, copyErr)

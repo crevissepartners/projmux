@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"bytes"
 	"fmt"
 	"io"
@@ -265,27 +266,32 @@ func (s *fakeResourceStore) store() *resourceStore {
 		s.writes++
 		return working, nil
 	}
+	convergent := func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
+		s.transactions++
+		before := s.registry.Clone().Normalize()
+		working := s.registry.Clone()
+		if err := fn(&working); err != nil {
+			return coremetadata.Registry{}, false, err
+		}
+		working = working.Normalize()
+		if err := working.Validate(); err != nil {
+			return coremetadata.Registry{}, false, err
+		}
+		if reflect.DeepEqual(before, working) {
+			return working, false, nil
+		}
+		s.registry = working
+		s.writes++
+		return working, true, nil
+	}
 	return &resourceStore{
 		load:     func() (coremetadata.Registry, error) { s.reads++; return s.registry.Clone(), nil },
 		snapshot: func() (coremetadata.Registry, error) { s.reads++; return s.registry.Clone(), nil },
 		update:   update,
-		updateConvergent: func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
-			s.transactions++
-			before := s.registry.Clone().Normalize()
-			working := s.registry.Clone()
-			if err := fn(&working); err != nil {
-				return coremetadata.Registry{}, false, err
-			}
-			working = working.Normalize()
-			if err := working.Validate(); err != nil {
-				return coremetadata.Registry{}, false, err
-			}
-			if reflect.DeepEqual(before, working) {
-				return working, false, nil
-			}
-			s.registry = working
-			s.writes++
-			return working, true, nil
+		updateConvergent: convergent,
+		updateConvergentContext: func(ctx context.Context, fn func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
+			if err := ctx.Err(); err != nil { return coremetadata.Registry{}, false, err }
+			return convergent(fn)
 		},
 		mutator: s.mutator,
 	}
