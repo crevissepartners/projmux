@@ -138,6 +138,10 @@ func TestDetachedProcessResumeClaimStopWithoutChildCLI(t *testing.T) {
 			c := &agentCommand{messagePaths: agentMessagePaths{registryPath: f.store.Path()}}
 			path := c.deferredClaimPath(a.Metadata.UID)
 			cleanupDetachedResume(t, f, first.ref)
+			expected := p.Clone().Status
+			if expected.ProcessSession == nil || expected.ProcessSession.StopRequested {
+				t.Fatal("initial natural retirement must have no explicit stop mark")
+			}
 			for _, mode := range []string{"default", "uid", "json", "receipt", "none"} {
 				args := []string{"agent", "resume", first.ref, "--wait-for-peer", "--detach"}
 				if mode != "default" {
@@ -156,7 +160,7 @@ func TestDetachedProcessResumeClaimStopWithoutChildCLI(t *testing.T) {
 				}
 				after, _ := f.store.LoadReadOnly()
 				current, _ := after.Pane(p.Metadata.UID)
-				if !reflect.DeepEqual(current.Status, p.Status) {
+				if !reflect.DeepEqual(current.Status, expected) {
 					t.Fatal("claim invented child/generation/Wait")
 				}
 				for _, args := range [][]string{{"agent", "resume", first.ref, "--wait-for-peer", "--detach"}, {"agent", "resume", first.ref, "--detach", "--", "other"}} {
@@ -178,7 +182,6 @@ func TestDetachedProcessResumeClaimStopWithoutChildCLI(t *testing.T) {
 				if current.Status.ProcessSession == nil || !current.Status.ProcessSession.StopRequested {
 					t.Fatal("claim stop lost explicit request mark")
 				}
-				expected := p.Clone().Status
 				expected.ProcessSession.StopRequested = true
 				if !reflect.DeepEqual(current.Status, expected) || !reflect.DeepEqual(target.Status, a.Status) {
 					t.Fatal("claim stop changed status beyond the explicit request mark")
