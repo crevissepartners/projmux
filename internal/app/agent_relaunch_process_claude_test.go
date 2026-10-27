@@ -478,7 +478,7 @@ func TestProcessClaudeRelaunchFailureRecoveryRequiresOffline(t *testing.T) {
 				t.Fatal(message)
 			}
 			if phase != coremetadata.PhaseOffline {
-				if !strings.Contains(message, "inspect with: projmux describe agent uid:"+agent.Metadata.UID) || !strings.Contains(message, "only then recover with:") || !strings.Contains(message, "exact Wait") {
+				if !strings.Contains(message, "inspect with: projmux describe agent uid:"+agent.Metadata.UID) || !strings.Contains(message, "only then recover with:") || !strings.Contains(message, "exact Wait") || !strings.Contains(message, "lost-host retirement of the same binding is committed") || !strings.Contains(message, "the Agent is Offline and either") {
 					t.Fatal(message)
 				}
 			} else if strings.Contains(message, "inspect with:") {

@@ -511,7 +511,7 @@ func (c *agentCommand) processRelaunchFailureRecovery(reg coremetadata.Registry,
 			}
 		}
 	}
-	return fmt.Sprintf("inspect with: projmux describe agent uid:%s; relaunch remains refused until the owned child has an exact Wait and the Agent is Offline; only then recover with: %s", target.Metadata.UID, command)
+	return fmt.Sprintf("inspect with: projmux describe agent uid:%s; relaunch remains refused until the Agent is Offline and either the owned child has an exact Wait or lost-host retirement of the same binding is committed; only then recover with: %s", target.Metadata.UID, command)
 }
 
 // Only the owner's exact durable supervisor Wait, or the committed lost-host
@@ -530,7 +530,7 @@ func (c *agentCommand) awaitProcessRelaunchRetirement(ctx context.Context, targe
 				return processResumeCandidate{}, processhost.ErrStale
 			}
 			if !coremetadata.MatchesProcessWait(candidate.Record.Binding, candidate.Pane.Status.LastTermination) && !coremetadata.ProcessHostLostRetired(candidate.Record.Binding, candidate.Pane, candidate.Agent) {
-				return processResumeCandidate{}, errors.New("exact old child Wait is unavailable")
+				return processResumeCandidate{}, errors.New("exact old child Wait is unavailable and lost-host retirement of the same binding is not committed")
 			}
 			return candidate, nil
 		}
