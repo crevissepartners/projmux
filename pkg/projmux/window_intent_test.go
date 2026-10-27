@@ -168,6 +168,20 @@ func TestWindowIntentCLIParity(t *testing.T) {
 	f := newWindowIntentFixture(t)
 	ctx := context.Background()
 
+	t.Run("shell-absent-project", func(t *testing.T) {
+		// The preflight runs the Project checks CreateWindow's transaction
+		// runs, so both refuse with one Code and one message.
+		before := f.registry(t)
+		_, created := f.c.CreateWindow(ctx, core.CreateWindowRequest{Project: "uid:proj-absent"})
+		_, previewed := f.c.PreflightWindowIntent(ctx, core.WindowCreateIntent{Project: "uid:proj-absent"})
+		var want, got *Refusal
+		if !errors.As(created, &want) || !errors.As(previewed, &got) || want.Code != CodeResourceNotFound || got.Code != want.Code || got.Error() != want.Error() || !strings.Contains(got.Error(), "uid:proj-absent matched no projects") {
+			t.Fatalf("CreateWindow %v, preflight %v", created, previewed)
+		}
+		if after := f.registry(t); len(after.Windows) != len(before.Windows) {
+			t.Fatal("refused shell create changed the Registry")
+		}
+	})
 	t.Run("shell", func(t *testing.T) {
 		preview, err := f.c.PreflightWindowIntent(ctx, f.intent(nil))
 		if err != nil || !preview.Shell || preview.Host != "tmux" {
@@ -419,7 +433,7 @@ func TestWindowIntentProcessReceipt(t *testing.T) {
 	for _, resource := range got.AffectedUIDs {
 		ops = append(ops, resource.Kind+"/"+resource.UID+"/"+string(resource.Action))
 	}
-	if string(got.Operation) != "create.window" || strings.Join(ops, " ") != "window/win-a/created agent/agent-a/created" || strings.Join(got.SelectedWindowUIDs, " ") != "win-a" || got.Profile == nil || got.Profile.Name != "coder" {
+	if string(got.Operation) != "create.window" || strings.Join(ops, " ") != "Window/win-a/created agent/agent-a/created" || strings.Join(got.SelectedWindowUIDs, " ") != "win-a" || got.Profile == nil || got.Profile.Name != "coder" {
 		t.Fatalf("receipt %s %v %v %+v", got.Operation, ops, got.SelectedWindowUIDs, got.Profile)
 	}
 }

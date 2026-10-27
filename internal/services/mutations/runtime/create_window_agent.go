@@ -37,11 +37,8 @@ type WindowAgentResult struct {
 func (c *AgentCreation) WindowOperation(scope CreateScope, req WindowAgentRequest, spelling string, out *WindowAgentResult) CreateOperation {
 	return func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *RuntimeLedger) error {
 		*out = WindowAgentResult{}
-		project, err := c.Execution.ResolveProject(*working, scope)
+		project, err := c.Execution.ResolveWindowProject(*working, scope)
 		if err != nil {
-			return err
-		}
-		if err := c.Execution.RefuseMissingRoot(project); err != nil {
 			return err
 		}
 		windowReq := req.Window

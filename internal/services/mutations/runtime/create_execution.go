@@ -365,6 +365,17 @@ func (c *CreateExecution) ResolveProject(registry coremetadata.Registry, scope C
 	return *project, nil
 }
 
+// ResolveWindowProject resolves the Project a new Window is created in and
+// refuses one whose root is missing: the checks a Window create runs first,
+// shared with its preflight.
+func (c *CreateExecution) ResolveWindowProject(registry coremetadata.Registry, scope CreateScope) (coremetadata.Project, error) {
+	project, err := c.ResolveProject(registry, scope)
+	if err != nil {
+		return coremetadata.Project{}, err
+	}
+	return project, c.RefuseMissingRoot(project)
+}
+
 // refuseMissingRoot rejects a Project whose spec.root has disappeared.
 //
 // A MissingRoot Project is preserved rather than deleted, so it still resolves

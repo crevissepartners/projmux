@@ -121,11 +121,7 @@ func (c *Client) checkWindowIntent(ctx context.Context, intent core.WindowCreate
 			return checked, resourceRefusal(err)
 		}
 		execution, _ := mutationruntime.NewSDKCreate(c.paths, socket, c.projectShell, c.projmuxExecutable, c.projectSessionName, runner, c.createDiscoveryRoots)
-		project, err := execution.ResolveProject(reg, scope)
-		if err == nil {
-			err = execution.RefuseMissingRoot(project)
-		}
-		if err != nil {
+		if _, err := execution.ResolveWindowProject(reg, scope); err != nil {
 			return checked, createRefusal(err, "CreateWindowRequest")
 		}
 		return checked, ctx.Err()

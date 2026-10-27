@@ -247,11 +247,8 @@ func (c *CreateExecution) MaterializeVirtualPane(ctx context.Context, reg *corem
 
 func (c *CreateExecution) WindowOperation(scope CreateScope, req WindowRequest, out *ShellCreateResult) CreateOperation {
 	return func(ctx context.Context, reg *coremetadata.Registry, mut coremetadata.Mutator, op string, ledger *RuntimeLedger) error {
-		project, err := c.ResolveProject(*reg, scope)
+		project, err := c.ResolveWindowProject(*reg, scope)
 		if err != nil {
-			return err
-		}
-		if err = c.RefuseMissingRoot(project); err != nil {
 			return err
 		}
 		req.OperationID = op
