@@ -891,6 +891,20 @@ later caller cancellation. The Agent UID and provider conversation are preserved
 a committed tmux rebind creates a new Pane/generation. Success acknowledges the
 commit, not provider activation, a model response or terminal rendering.
 
+For a tmux Claude Agent that records reply-only dialogue mode, both relaunch
+prediction and the resume execution preserve that record. The fixed reply-only
+launcher and activation flag are retained; ordinary guidance and project-link
+prompt additions are not introduced by the relaunch plan. The existing fixed
+launch restrictions on profiles, instructions, model and effort still apply.
+
+`Capabilities` reports the five Codex process controls (`turn.start`,
+`turn.steer`, `turn.deliver`, `turn.interrupt`, `approval.review`) from the
+current owned process activation and matching durable thread, without requiring
+tmux broker epochs. Stale, retired or mismatched process identities are not
+eligible. Provider support and tmux authority checks are unchanged. This remains
+Registry evidence, not a live execution guarantee: `LiveVerified` stays false,
+and mutations revalidate the actual provider authority at execution time.
+
 `CurrentModel` and `CurrentEffort` are the model and effort the Agent records,
 the CLI's `currentModel` and `currentEffort`; they can differ from
 `CurrentSettings`, which holds what the layers resolve to now.

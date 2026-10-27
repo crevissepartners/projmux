@@ -281,6 +281,18 @@ func ControlReason(registry coremetadata.Registry, agent coremetadata.Agent) str
 		return reason
 	}
 	pane, _ := registry.Pane(agent.Status.PaneRef)
+	if pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess {
+		// Process controls use the current owned process binding, not tmux's
+		// broker epochs. This is Registry eligibility only; execution still
+		// revalidates the live process authority.
+		if agent.Spec.Provider != string(aiprovider.Codex) || !currentProcessActivation(registry, agent, *pane) {
+			return "current process activation identity is unavailable"
+		}
+		if pane.Status.ProcessSession.ThreadID != agent.Status.SessionRef.Codex.ThreadID {
+			return "process thread does not match the durable Agent thread"
+		}
+		return ""
+	}
 	if pane.Status.Activation.Codex == nil || pane.Status.Activation.Codex.Authority == nil || !pane.Status.Activation.Codex.Authority.Valid() {
 		return "exact Codex connection and binding epoch is unavailable"
 	}

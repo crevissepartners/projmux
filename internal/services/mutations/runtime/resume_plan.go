@@ -135,20 +135,21 @@ func BuildAgentResumePlan(spelling string, registry coremetadata.Registry, agent
 	}
 
 	return AgentResumePlan{
-		AgentUID:       agent.Metadata.UID,
-		AgentName:      Name,
-		Provider:       Provider,
-		ConversationID: ConversationID,
-		Ref:            Ref.Clone(),
-		ProjectUID:     Project.Metadata.UID,
-		ProjectRoot:    Project.Spec.Root,
-		Project:        Project.Clone(),
-		Workspace:      agent.Spec.Workspace,
-		Topic:          agent.Metadata.Annotations[coremetadata.AnnotationAgentTopic],
-		WindowUID:      window.Metadata.UID,
-		AnchorUID:      AnchorUID,
-		Shared:         SharedConversationAgents(registry, agent.Metadata.UID, Ref),
-		Annotations:    agent.Metadata.Annotations,
+		DialogueReplyOnly: coremetadata.RecordsDialogueReplyOnly(agent.Metadata.Annotations),
+		AgentUID:          agent.Metadata.UID,
+		AgentName:         Name,
+		Provider:          Provider,
+		ConversationID:    ConversationID,
+		Ref:               Ref.Clone(),
+		ProjectUID:        Project.Metadata.UID,
+		ProjectRoot:       Project.Spec.Root,
+		Project:           Project.Clone(),
+		Workspace:         agent.Spec.Workspace,
+		Topic:             agent.Metadata.Annotations[coremetadata.AnnotationAgentTopic],
+		WindowUID:         window.Metadata.UID,
+		AnchorUID:         AnchorUID,
+		Shared:            SharedConversationAgents(registry, agent.Metadata.UID, Ref),
+		Annotations:       agent.Metadata.Annotations,
 	}, nil
 }
 
