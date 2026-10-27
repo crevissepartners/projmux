@@ -967,6 +967,7 @@ waitForProcessExit	Test-only installed qualification helper retained for indepen
 waitForRetirement	Test-only installed qualification helper retained for bounded PID/socket retirement proof.
 waitGroupAbsent	Darwin owned-group absence requires ESRCH after bounded observation, retained with processhost lifecycle proof.
 windowDisplayNotConvergedNotice	CLI notice compatibility adapter to the shared rename service; retained for generated/control-root rename byte parity proofs.
+windowIntentReceipt	Public v0 Window create intent SDK closure for external frontends: one transaction for a Window and its new Agent with CreateAgent's validator; covered by TestWindowIntentCLIParity, TestWindowIntentCreatorProvenance, TestWindowIntentRollbackAndActivationUnknown and TestWindowIntentPublicPreflight.
 windowIntentRefusal	Public v0 Window create intent SDK closure for external frontends: one transaction for a Window and its new Agent with CreateAgent's validator; covered by TestWindowIntentCLIParity, TestWindowIntentCreatorProvenance, TestWindowIntentRollbackAndActivationUnknown and TestWindowIntentPublicPreflight.
 withTmuxConfigDigest	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 writeLedgerShim	Test-only installed qualification helper retained for complete semantic command observation.

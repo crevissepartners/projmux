@@ -114,7 +114,21 @@ func (c *Client) checkWindowIntent(ctx context.Context, intent core.WindowCreate
 	checked.scope, checked.labels, checked.socket = scope, labels, socket
 	checked.preview = core.WindowIntentPreview{Shell: agent == nil, Host: host}
 	if agent == nil {
-		return checked, nil
+		// The Project checks the shell transaction runs first, so a preview
+		// is refused exactly where CreateWindow would be.
+		reg, err := resources.Load(c.paths)
+		if err != nil {
+			return checked, resourceRefusal(err)
+		}
+		execution, _ := mutationruntime.NewSDKCreate(c.paths, socket, c.projectShell, c.projmuxExecutable, c.projectSessionName, runner, c.createDiscoveryRoots)
+		project, err := execution.ResolveProject(reg, scope)
+		if err == nil {
+			err = execution.RefuseMissingRoot(project)
+		}
+		if err != nil {
+			return checked, createRefusal(err, "CreateWindowRequest")
+		}
+		return checked, ctx.Err()
 	}
 	req := core.CreateAgentRequest{Host: intent.Host, Detach: intent.Detach, Project: intent.Project, Provider: agent.Provider, Profile: agent.Profile, Instructions: agent.Instructions, Model: agent.Model, Effort: agent.Effort, Labels: agent.Labels, CwdFrom: agent.CwdFrom, Payload: agent.Payload, Creator: agent.Creator, SocketPath: intent.SocketPath, Operator: agent.Operator}
 	process := host == "process"
@@ -221,11 +235,7 @@ func (c *Client) createTmuxWindowFromIntent(ctx context.Context, intent core.Win
 	if declined != "" {
 		notices = append(notices, declined)
 	}
-	// The receipt records what the operation did: the Window row alone would
-	// report a create.window that opened no Agent.
-	rcpt := createReceipt(metadata.KindWindow, []mutationruntime.ShellCreateResource{out.Window}, []string{out.Window.UID})
-	rcpt.Add(strings.ToLower(string(metadata.KindAgent)), agentRow.UID, agentRow.Name, receipt.ActionCreated)
-	rcpt.Profile = planner.ProfileReceipt()
+	rcpt := windowIntentReceipt(out.Window, agentRow.UID, agentRow.Name, planner.ProfileReceipt())
 	if err := c.windowIntentProjection(&result, out.Window.UID, agentRow.UID, rcpt); err != nil {
 		return result, err
 	}
@@ -256,10 +266,33 @@ func (c *Client) createProcessWindowFromIntent(ctx context.Context, intent core.
 	if stored, ok := reg.Agent(created.Agent.Metadata.UID); ok && stored.Metadata.OwnerRef != nil {
 		windowUID = stored.Metadata.OwnerRef.UID
 	}
-	if projErr := c.windowIntentProjection(&result, windowUID, created.Agent.Metadata.UID, created.Receipt); projErr != nil && err == nil {
+	// The tmux route's receipt, not the process creator's create.agent one.
+	windowRow := mutationruntime.ShellCreateResource{Kind: metadata.KindWindow, UID: windowUID}
+	if stored, ok := reg.Window(windowUID); ok {
+		windowRow.Name = stored.Metadata.Name
+	}
+	var profile *receipt.ReceiptProfile
+	if created.Receipt.Profile != nil {
+		profile = &receipt.ReceiptProfile{}
+		if copyErr := unregisterCopy(created.Receipt.Profile, profile); copyErr != nil && err == nil {
+			err = copyErr
+		}
+	}
+	rcpt := windowIntentReceipt(windowRow, created.Agent.Metadata.UID, created.Agent.Metadata.Name, profile)
+	if projErr := c.windowIntentProjection(&result, windowUID, created.Agent.Metadata.UID, rcpt); projErr != nil && err == nil {
 		err = projErr
 	}
 	return result, err
+}
+
+// windowIntentReceipt is the create.window receipt of an Agent intent on
+// either host. The receipt records what the operation did: the Window row
+// alone would report a create.window that opened no Agent.
+func windowIntentReceipt(window mutationruntime.ShellCreateResource, agentUID, agentName string, profile *receipt.ReceiptProfile) receipt.OperationReceipt {
+	rcpt := createReceipt(metadata.KindWindow, []mutationruntime.ShellCreateResource{window}, []string{window.UID})
+	rcpt.Add(strings.ToLower(string(metadata.KindAgent)), agentUID, agentName, receipt.ActionCreated)
+	rcpt.Profile = profile
+	return rcpt
 }
 
 // windowIntentProjection fills result with the committed Window and Agent as

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/receipt"
 	store "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmux"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
@@ -403,4 +404,22 @@ func TestWindowIntentRollbackAndActivationUnknown(t *testing.T) {
 			t.Fatal("refused process intent changed the Registry")
 		}
 	})
+}
+
+// TestWindowIntentProcessReceipt pins the receipt a process intent returns to
+// the tmux route's create.window shape with its Agent row, from the rows the
+// process creator's commit names.
+func TestWindowIntentProcessReceipt(t *testing.T) {
+	window := mutationruntime.ShellCreateResource{Kind: metadata.KindWindow, UID: "win-a", Name: "work"}
+	var got core.OperationReceipt
+	if err := unregisterCopy(windowIntentReceipt(window, "agent-a", "agent-1", &receipt.ReceiptProfile{Name: "coder"}), &got); err != nil {
+		t.Fatal(err)
+	}
+	ops := []string{}
+	for _, resource := range got.AffectedUIDs {
+		ops = append(ops, resource.Kind+"/"+resource.UID+"/"+string(resource.Action))
+	}
+	if string(got.Operation) != "create.window" || strings.Join(ops, " ") != "window/win-a/created agent/agent-a/created" || strings.Join(got.SelectedWindowUIDs, " ") != "win-a" || got.Profile == nil || got.Profile.Name != "coder" {
+		t.Fatalf("receipt %s %v %v %+v", got.Operation, ops, got.SelectedWindowUIDs, got.Profile)
+	}
 }

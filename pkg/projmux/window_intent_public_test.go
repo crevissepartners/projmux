@@ -42,6 +42,22 @@ func TestWindowIntentPublicPreflight(t *testing.T) {
 		t.Fatalf("process preview %+v %v", preview, err)
 	}
 
+	// A shell intent resolves its Project in preflight as CreateWindow's
+	// transaction does: an absent Project is refused by both with one Code.
+	absent := core.WindowCreateIntent{Project: "uid:proj-absent"}
+	_, shellErr := c.CreateWindow(ctx, core.CreateWindowRequest{Project: absent.Project})
+	var want *projmux.Refusal
+	if !errors.As(shellErr, &want) {
+		t.Fatalf("CreateWindow absent Project: %v", shellErr)
+	}
+	var got *projmux.Refusal
+	if _, err := c.PreflightWindowIntent(ctx, absent); !errors.As(err, &got) || got.Code != want.Code {
+		t.Fatalf("shell preflight absent Project: %v, want %s", err, want.Code)
+	}
+	if preview, err := c.PreflightWindowIntent(ctx, core.WindowCreateIntent{Project: ref}); err != nil || !preview.Shell {
+		t.Fatalf("shell preview %+v %v", preview, err)
+	}
+
 	for name, tc := range map[string]struct {
 		intent core.WindowCreateIntent
 		code   projmux.Code
