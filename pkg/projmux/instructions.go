@@ -145,6 +145,8 @@ const (
 // matching Error text. Other filesystem errors and context cancellation remain
 // ordinary errors. Users names the profiles blocking a deletion.
 // Field and Reason optionally describe a link rule validation or confirmation refusal.
+// Reason also distinguishes CodeClaudeSettingsChanged refusals: since-plan for a
+// stale Base, while-writing for a file changed after the apply read it.
 type Refusal struct {
 	Code Code `json:"Code"`
 	// AgentUID identifies the protected Agent when Code is CodeAgentProtected.

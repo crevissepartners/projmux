@@ -16,7 +16,8 @@ import (
 
 const (
 	// CodeClaudeSettingsChanged refuses an apply whose Base is not the
-	// settings file's current content, or whose file changed while it wrote.
+	// settings file's current content (Reason since-plan), or whose file changed
+	// while it wrote (Reason while-writing).
 	CodeClaudeSettingsChanged Code = claudesettings.CodeChanged
 	// CodeClaudeHooksConflict refuses an apply the integration itself refuses;
 	// the plan's Conflict says why.
@@ -53,13 +54,14 @@ func (c *Client) PreviewClaudeHooks(ctx context.Context, request core.ClaudeHook
 
 // ApplyClaudeHooks plans again as PreviewClaudeHooks does and carries the plan
 // out as `projmux agent integrate claude` does. It is refused with
-// CodeClaudeSettingsChanged when request.Base is not the current file's Base,
+// CodeClaudeSettingsChanged with Reason since-plan when request.Base is not
+// the current file's Base,
 // with CodeClaudeHooksConflict when the plan has a Conflict, and with
 // CodeClaudeSettingsUnreadable when the file cannot be read or parsed. A plan
 // with nothing to change writes nothing. Otherwise the file is replaced
 // atomically, keeping its mode and a symbolic link's target, and the replace
-// is refused with CodeClaudeSettingsChanged if the file changed after it was
-// read. Applies are serialized within one process only. A context canceled
+// is refused with CodeClaudeSettingsChanged and Reason while-writing if the
+// file changed after it was read. Applies are serialized within one process only. A context canceled
 // before the write starts, including while waiting for another apply, returns
 // its error and writes nothing; a write already started completes.
 func (c *Client) ApplyClaudeHooks(ctx context.Context, request core.ApplyClaudeHooksRequest) (core.ApplyClaudeHooksResult, error) {
@@ -83,7 +85,7 @@ func (c *Client) ApplyClaudeHooks(ctx context.Context, request core.ApplyClaudeH
 		return core.ApplyClaudeHooksResult{}, err
 	}
 	if request.Base != plan.Base {
-		return core.ApplyClaudeHooksResult{}, &Refusal{Code: CodeClaudeSettingsChanged, message: (&claudesettings.ChangedError{Path: plan.Path}).Error()}
+		return core.ApplyClaudeHooksResult{}, &Refusal{Code: CodeClaudeSettingsChanged, Reason: "since-plan", message: (&claudesettings.ChangedError{Path: plan.Path}).Error()}
 	}
 	if plan.Conflict != "" {
 		return core.ApplyClaudeHooksResult{}, &Refusal{Code: CodeClaudeHooksConflict, message: plan.Conflict}
@@ -98,7 +100,7 @@ func (c *Client) ApplyClaudeHooks(ctx context.Context, request core.ApplyClaudeH
 	if err := claudesettings.Replace(plan.Path, base, []byte(plan.Next)); err != nil {
 		var changed *claudesettings.ChangedError
 		if errors.As(err, &changed) {
-			return core.ApplyClaudeHooksResult{}, &Refusal{Code: CodeClaudeSettingsChanged, message: err.Error(), cause: err}
+			return core.ApplyClaudeHooksResult{}, &Refusal{Code: CodeClaudeSettingsChanged, Reason: "while-writing", message: err.Error(), cause: err}
 		}
 		return core.ApplyClaudeHooksResult{}, fmt.Errorf("write Claude settings %s: %w", plan.Path, err)
 	}

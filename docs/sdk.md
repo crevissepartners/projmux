@@ -1757,13 +1757,17 @@ plan's `Conflict`, not an error. A file that cannot be read or parsed is a
 `Client.ApplyClaudeHooks(ctx, core.ApplyClaudeHooksRequest{Remove, Base})`
 plans again and carries the plan out as the command does. It is refused with
 `CodeClaudeSettingsChanged` (`claude-settings-changed`) when `Base` is not the
-`Base` of the file it now reads, with `CodeClaudeHooksConflict`
+`Base` of the file it now reads (`Refusal.Reason == "since-plan"`), with `CodeClaudeHooksConflict`
 (`claude-hooks-conflict`) when the plan has a `Conflict`, and with
 `CodeClaudeSettingsUnreadable` as the preview is. A plan with nothing to change
 writes nothing and returns `Changed` false. Otherwise the file is replaced with
 the command's writer: atomically, keeping an existing file's mode and a
 symbolic link's target, and refused with `CodeClaudeSettingsChanged` if the
-file stopped holding the bytes it read before the replace. That check is a
+file stopped holding the bytes it read before the replace
+(`Refusal.Reason == "while-writing"`). Both refusals preserve the external edit;
+classify them using `Code` and `Reason`, not the message or unwrapped cause.
+The existing Code, Field, error text and wrapped-cause behavior are unchanged.
+That check is a
 re-read, not a lock; applies are serialized only within one process. The
 command's dry-run diff lines and any localized text are not returned.
 
@@ -1779,6 +1783,11 @@ if plan.Conflict != "" || !plan.Changed {
 result, err := client.ApplyClaudeHooks(ctx, core.ApplyClaudeHooksRequest{Base: plan.Base})
 var refusal *projmux.Refusal
 if errors.As(err, &refusal) && refusal.Code == projmux.CodeClaudeSettingsChanged {
-    // The file changed after the preview: preview again.
+    switch refusal.Reason {
+    case "since-plan":
+        // The preview is stale: preview again before applying.
+    case "while-writing":
+        // The file changed during apply: inspect the external edit and re-preview.
+    }
 }
 ```
