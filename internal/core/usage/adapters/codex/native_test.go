@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -517,5 +518,136 @@ func TestAllMalformedNativePreservesLastKnownGoodWithoutRolloutSynthesis(t *test
 	}
 	if len(client.methods) != 1 || client.methods[0] != methodRateLimitsRead {
 		t.Fatalf("methods = %#v, want one read and zero credential/config/token mutation", client.methods)
+	}
+}
+
+// No real provider or daemon is contacted: every failure is injected before
+// rollout lookup, and the rollout directory deliberately does not exist.
+func TestRefreshFailureReasonWithoutRollout(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		stage string
+		want  usage.SnapshotReason
+	}{
+		{"unclassified ensure", "ensure", "unknown"},
+		{"unclassified open", "open", "unknown"},
+		{"unclassified request", "request", "unknown"},
+		{"daemon not running", "daemon", usage.ReasonAppServerUnavailable},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+			prior := usage.Snapshot{Model: Name, Window: usage.Window5h, Pct: 21,
+				Source: usage.SourceAppServer, UpdatedAt: now.Add(-time.Hour)}
+			store := usage.NewStore(t.TempDir())
+			if err := store.SaveState(usage.State{Snapshots: []usage.Snapshot{prior}}); err != nil {
+				t.Fatal(err)
+			}
+			failure := errors.New("private account/path/auth detail must not become a reason")
+			adapter := NewWithRoot(filepath.Join(t.TempDir(), "missing-rollout"))
+			adapter.now = func() time.Time { return now }
+			adapter.native = nativeTransport{
+				enabled: true,
+				ensure: func(context.Context) (codexappserver.Health, error) {
+					if test.stage == "ensure" {
+						return codexappserver.Health{}, failure
+					}
+					if test.stage == "daemon" {
+						return codexappserver.Decide(codexappserver.AvailabilityUnavailable, codexappserver.ReasonDaemonNotRunning, "", codexappserver.EndpointStdioProxy, codexappserver.ConnectionDisconnected, true), nil
+					}
+					return codexappserver.Decide(codexappserver.AvailabilityAvailable, codexappserver.ReasonNone, "", codexappserver.EndpointStdioProxy, codexappserver.ConnectionReady, true), nil
+				},
+				open: func(context.Context) (nativeClient, error) {
+					if test.stage == "open" {
+						return nil, failure
+					}
+					return &fakeNativeClient{err: failure}, nil
+				},
+			}
+			registry := usage.NewRegistry()
+			if err := registry.Register(adapter); err != nil {
+				t.Fatal(err)
+			}
+			rows, err := usage.NewManager(registry, store, func() time.Time { return now }).Collect(context.Background())
+			if err == nil || len(rows) != 1 {
+				t.Fatalf("Collect = %#v, %v; want retained row and failure", rows, err)
+			}
+			if rows[0].StaleReason != test.want || rows[0].FallbackReason != "" ||
+				rows[0].Pct != prior.Pct || rows[0].Source != prior.Source || !rows[0].UpdatedAt.Equal(prior.UpdatedAt) {
+				t.Fatalf("retained row = %#v, want reason %q and unchanged value/source/time", rows[0], test.want)
+			}
+			state, err := store.LoadState()
+			if err != nil || len(state.Snapshots) != 1 || state.Snapshots[0].StaleReason != test.want {
+				t.Fatalf("saved state = %#v, %v; want reason %q", state, err, test.want)
+			}
+		})
+	}
+}
+
+func TestNativeRefreshErrorClassification(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		err  error
+		want usage.SnapshotReason
+	}{
+		{codexappserver.ErrUnsupported, usage.ReasonAppServerUnsupported},
+		{context.DeadlineExceeded, usage.ReasonAppServerTimeout},
+		{codexappserver.ErrProtocol, usage.ReasonAppServerProtocol},
+		{codexappserver.ErrDisconnected, usage.ReasonAppServerDisconnected},
+		{errors.New("timeout protocol disconnected daemon-not-running /private/account"), usage.ReasonUnknown},
+	} {
+		if got := nativeReasonFromError(test.err); got != test.want {
+			t.Fatalf("classification = %q, want %q", got, test.want)
+		}
+		if got := nativeReasonFromError(fmt.Errorf("wrapped: %w", test.err)); got != test.want {
+			t.Fatalf("wrapped classification = %q, want %q", got, test.want)
+		}
+	}
+}
+
+func TestUnknownRefreshFallbackAndRecovery(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+	root := t.TempDir()
+	writeRollout(t, root, "2026-08-22", rolloutWithRateLimits(5, 12, 1787380200, 1787380300), now)
+	adapter := NewWithRoot(root)
+	adapter.now = func() time.Time { return now }
+	adapter.native = nativeTransport{enabled: true, ensure: func(context.Context) (codexappserver.Health, error) {
+		return codexappserver.Health{}, errors.New("unclassified failure")
+	}}
+	rows, err := adapter.Collect(context.Background())
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("fallback = %#v, %v", rows, err)
+	}
+	for _, row := range rows {
+		if row.Source != usage.SourceRollout || row.FallbackReason != usage.ReasonUnknown || row.StaleReason != "" {
+			t.Fatalf("fallback reason = %#v", row)
+		}
+	}
+	adapter.native = availableNative(&fakeNativeClient{
+		response: json.RawMessage(`{"rateLimits":{"primary":{"usedPercent":12,"windowDurationMins":300,"resetsAt":1787380200}}}`),
+		events:   make(chan codexappserver.Notification),
+	})
+	rows, err = adapter.Collect(context.Background())
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("recovery = %#v, %v", rows, err)
+	}
+	if row := rows[0]; row.Source != usage.SourceAppServer || row.Pct != 12 || row.Window != usage.Window5h || row.FallbackReason != "" || row.StaleReason != "" || !row.UpdatedAt.Equal(now) {
+		t.Fatalf("fresh native value = %#v", row)
+	}
+}
+
+func TestCallerCancellationDoesNotBecomeUnknownRefreshReason(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	adapter := NewWithRoot(filepath.Join(t.TempDir(), "missing-rollout"))
+	adapter.native = nativeTransport{enabled: true, ensure: func(context.Context) (codexappserver.Health, error) {
+		return codexappserver.Health{}, ctx.Err()
+	}}
+	rows, err := adapter.Collect(ctx)
+	var reasonErr *usage.StaleReasonError
+	if len(rows) != 0 || !errors.Is(err, context.Canceled) || errors.As(err, &reasonErr) {
+		t.Fatalf("cancellation = %#v, %v; want bare caller cancellation", rows, err)
 	}
 }

@@ -166,3 +166,68 @@ func TestParseProcessStatReadsAfterTheLastParen(t *testing.T) {
 		t.Fatal("a stat line without its command terminator parsed")
 	}
 }
+
+func TestFixtureRateLimitsNormalAndUnclassifiedFailure(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "codex-lifecycle", "fake-codex-state")
+	t.Setenv("PROJMUX_SMOKE_WORKDIR", root)
+	t.Setenv("PROJMUX_FAKE_CODEX_STATE", dir)
+	id := json.RawMessage(`7`)
+	if response, err := fixtureRateLimitsResponse(id); response != nil || err != nil {
+		t.Fatalf("no marker must remain unhandled: %#v, %v", response, err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	normalMarker := filepath.Join(dir, "usage-normal")
+	if err := os.WriteFile(normalMarker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	normal, err := fixtureRateLimitsResponse(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{"id": id, "result": map[string]any{
+		"rateLimits": map[string]any{
+			"limitId": "codex",
+			"primary": map[string]any{"usedPercent": 12, "windowDurationMins": 300, "resetsAt": 1787380200},
+		},
+	}}
+	if !reflect.DeepEqual(normal, want) {
+		t.Fatalf("normal response = %#v, want %#v", normal, want)
+	}
+	if err := os.Remove(normalMarker); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(dir, "usage-rpc-error")
+	if err := os.WriteFile(marker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	failed, err := fixtureRateLimitsResponse(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantError := map[string]any{"id": id, "error": map[string]any{
+		"code": -32000, "message": "offline fixture refresh failure",
+	}}
+	if !reflect.DeepEqual(failed, wantError) {
+		t.Fatalf("failure response = %#v, want %#v", failed, wantError)
+	}
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+	if response, err := fixtureRateLimitsResponse(id); response != nil || err != nil {
+		t.Fatalf("removed markers must remain unhandled: %#v, %v", response, err)
+	}
+	if err := os.WriteFile(normalMarker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := fixtureRateLimitsResponse(id)
+	if err != nil || !reflect.DeepEqual(recovered, normal) {
+		t.Fatalf("recovery response = %#v, %v; want original normal response", recovered, err)
+	}
+	t.Setenv("PROJMUX_FAKE_CODEX_STATE", filepath.Join(root, "foreign"))
+	if response, err := fixtureRateLimitsResponse(id); response != nil || err != nil {
+		t.Fatalf("foreign profile must remain unhandled: %#v, %v", response, err)
+	}
+}

@@ -132,6 +132,18 @@ rollout fallback row records `source=rollout` plus the closed fallback reason.
 If neither lane produces rows, Manager preserves the previous source/value and
 adds a closed `stale_reason` to the last-known-good row.
 
+The reason vocabulary is `app-server-unavailable`, `app-server-unsupported`,
+`account-unsupported`, `app-server-timeout`, `app-server-protocol-error`,
+`app-server-disconnected`, and `unknown`. An unclassified Codex refresh error
+uses `unknown`: the failure is confirmed, but there is no evidence for a known
+category. It does not mean an absent observation or a successful refresh.
+A daemon-not-running health result remains `app-server-unavailable`; no daemon
+or authentication-specific reason is inferred from raw error text. Reasons
+never contain raw errors, paths, accounts, or credentials. Fresh native rows
+omit both reason fields. The full CLI table, CLI JSON, and SDK saved usage
+expose the same codes in the existing fallback/stale fields; the compact HUD
+continues to show only its existing provenance/stale indication.
+
 ## Snapshot store
 
 ```

@@ -175,6 +175,25 @@ func TestCodexCompactIdentityLabelGolden(t *testing.T) {
 			labelFg: theme.TmuxAccentAIFg,
 		},
 		{
+			name:     "unclassified refresh failure",
+			snapshot: usage.Snapshot{Source: usage.SourceAppServer, StaleReason: "unknown"},
+			want:     "Codex [stale]",
+			labelFg:  theme.TmuxAccentAIFg,
+		},
+		{
+			name:     "unclassified fallback",
+			snapshot: usage.Snapshot{Source: usage.SourceRollout, FallbackReason: "unknown"},
+			want:     "Codex",
+			labelFg:  theme.TmuxProvenanceFg,
+			fallback: true,
+		},
+		{
+			name:     "daemon unavailable retained",
+			snapshot: usage.Snapshot{Source: usage.SourceAppServer, StaleReason: usage.ReasonAppServerUnavailable},
+			want:     "Codex [stale]",
+			labelFg:  theme.TmuxAccentAIFg,
+		},
+		{
 			name:     "unknown",
 			snapshot: usage.Snapshot{Source: usage.SnapshotSource("future-source")},
 			want:     "Codex",
