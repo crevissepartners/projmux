@@ -86,12 +86,16 @@ func TestManagedCodexBaseCarriesResolvedInstructionsBytes(t *testing.T) {
 	}
 	service := GuidanceService{Paths: resolve}
 	base, err := service.PlanManagedCodexBase(metadata.Project{}, "agent-test", nil, settings, true)
-	if err != nil && strings.Contains(err.Error(), "codex-managed-base-instructions-changed") {
+	if err != nil {
 		t.Fatalf("unchanged instructions refused: %v", err)
 	}
-	if err == nil && !base.Fallback {
-		if !strings.Contains(base.Instructions.Base, "ROLE-A-CONTENT") || base.Annotations[metadata.AnnotationAgentPersonaDigest] != persona.Digest([]byte("ROLE-A-CONTENT")) {
-			t.Fatalf("base and recorded digest disagree: %+v", base)
-		}
+	if base == nil {
+		t.Fatal("unchanged instructions returned nil managed base")
+	}
+	if base.Fallback {
+		t.Fatalf("unchanged instructions unexpectedly fell back: %+v", base)
+	}
+	if !strings.Contains(base.Instructions.Base, "ROLE-A-CONTENT") || base.Annotations[metadata.AnnotationAgentPersonaDigest] != persona.Digest([]byte("ROLE-A-CONTENT")) {
+		t.Fatalf("base and recorded digest disagree: %+v", base)
 	}
 }
