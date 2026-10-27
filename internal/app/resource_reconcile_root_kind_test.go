@@ -311,6 +311,11 @@ var rootKindProjectionSites = []rootKindProjectionSite{
 		Why: "indexes both graph roots so a managed Home session resolves to its ControlSession identity",
 	},
 	{
+		File: "pkg/projmux/context_projector.go", Func: "NewResourceContextProjector",
+		Source: "Graph", Verdict: rootKindBoth,
+		Why: "copies both root kinds' graph nodes (Project roots and ControlSession sessions) into the registryview context projector",
+	},
+	{
 		File: "pkg/projmux/agent_settings_display.go", Func: "newDisplaySnapshotIndex",
 		Source: "Snapshot", Verdict: rootKindProjectOnly,
 		Why: "finds the Project whose prompt parts (Project guidance, label link rules) a Window's Agents plan; a ControlSession-owned Window has neither, so its Agents plan only the agent guidance",
@@ -447,7 +452,7 @@ func TestRootKindProjectionSweepTableIsPrintable(t *testing.T) {
 		counts[site.Verdict]++
 	}
 	for verdict, want := range map[rootKindVerdict]int{
-		rootKindBoth:        20,
+		rootKindBoth:        21,
 		rootKindPaired:      2,
 		rootKindProjectOnly: 28,
 		rootKindGap:         0,
@@ -456,7 +461,7 @@ func TestRootKindProjectionSweepTableIsPrintable(t *testing.T) {
 			t.Errorf("%s rows = %d, want %d; update the count with the table and say why in the commit", verdict, counts[verdict], want)
 		}
 	}
-	if got, want := len(rootKindProjectionSites), 50; got != want {
+	if got, want := len(rootKindProjectionSites), 51; got != want {
 		t.Errorf("sweep rows = %d, want %d", got, want)
 	}
 	for _, want := range []string{"SITE", "SOURCE", "KIND HANDLING", "NOTE"} {
