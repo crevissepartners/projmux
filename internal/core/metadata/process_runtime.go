@@ -281,6 +281,8 @@ type ProcessSessionRecord struct {
 	ConnectionID string                   `json:"connectionID,omitempty"`
 	TurnID       string                   `json:"turnID,omitempty"`
 	ResumeState  ProcessResumeState       `json:"resumeState"`
+	// StopRequested observes an explicit stop; it grants no ownership or resume authority.
+	StopRequested bool `json:"stopRequested,omitempty"`
 	Pending      []ProcessRecordedControl `json:"pending,omitempty"`
 	History      *ProcessResumeHistory    `json:"history,omitempty"`
 }

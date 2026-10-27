@@ -42,7 +42,12 @@ func TestProjectProcessStopBornClaimGenerationCancellationAndRetirement(t *testi
 			}
 			calls, reads := 0, 0
 			var lock sync.Mutex
-			s := ProjectProcessStopExecutor{RegistryPath: filepath.Join(t.TempDir(), "registry.json"), Load: func() (m.Registry, error) {
+			s := ProjectProcessStopExecutor{Update: func(apply func(*m.Registry) error) (m.Registry, bool, error) {
+				lock.Lock()
+				defer lock.Unlock()
+				err := apply(&reg)
+				return reg.Clone(), err == nil, err
+			}, RegistryPath: filepath.Join(t.TempDir(), "registry.json"), Load: func() (m.Registry, error) {
 				lock.Lock()
 				defer lock.Unlock()
 				if mode == "cancel-load" {
@@ -154,7 +159,12 @@ func TestProjectProcessStopParallelPartialFailureAndOtherProject(t *testing.T) {
 	both := make(chan struct{})
 	calls := 0
 	var deadlines []time.Time
-	s := ProjectProcessStopExecutor{RegistryPath: filepath.Join(t.TempDir(), "registry.json"), Timeout: time.Second, Load: func() (m.Registry, error) { lock.Lock(); defer lock.Unlock(); return reg.Clone(), nil }, ReadIdentity: func(int) (m.ProcessIdentity, int, error) { return m.ProcessIdentity{}, 0, localipc.ErrProcessAbsent }, CallStop: func(ctx context.Context, _ m.Registry, a m.Agent) error {
+	s := ProjectProcessStopExecutor{Update: func(apply func(*m.Registry) error) (m.Registry, bool, error) {
+		lock.Lock()
+		defer lock.Unlock()
+		err := apply(&reg)
+		return reg.Clone(), err == nil, err
+	}, RegistryPath: filepath.Join(t.TempDir(), "registry.json"), Timeout: time.Second, Load: func() (m.Registry, error) { lock.Lock(); defer lock.Unlock(); return reg.Clone(), nil }, ReadIdentity: func(int) (m.ProcessIdentity, int, error) { return m.ProcessIdentity{}, 0, localipc.ErrProcessAbsent }, CallStop: func(ctx context.Context, _ m.Registry, a m.Agent) error {
 		lock.Lock()
 		calls++
 		d, _ := ctx.Deadline()

@@ -49,6 +49,7 @@ func (e *ProjectProcessStopFailure) Error() string { return e.message }
 func (e *ProjectProcessStopFailure) Unwrap() error { return e.Cause }
 
 type ProjectProcessStopExecutor struct {
+	Update       func(func(*metadata.Registry) error) (metadata.Registry, bool, error)
 	RegistryPath string
 	Load         func() (metadata.Registry, error)
 	ReadIdentity ProcessIdentityReader
@@ -110,9 +111,9 @@ func (s ProjectProcessStopExecutor) Stop(ctx context.Context, projectUID string)
 				return original(bounded, reg, agent)
 			}
 
-			stopper := ProcessAgentStopper{RegistryPath: s.RegistryPath, Load: s.Load, ReadIdentity: s.ReadIdentity, CallStop: call,
+			stopper := ProcessAgentStopper{Update: s.Update, RegistryPath: s.RegistryPath, Load: s.Load, ReadIdentity: s.ReadIdentity, CallStop: call,
 				ClaimStopAdmission: func(metadata.Registry, func() error) error { return processhost.ErrStale }}
-			failures[i] = stopper.StopExact(bounded, reg, target.Agent, target.Pane)
+			failures[i] = stopper.StopExplicit(bounded, reg, target.Agent, target.Pane)
 			confirmed[i] = failures[i] == nil && !stopper.ClaimReleased
 		})
 	}

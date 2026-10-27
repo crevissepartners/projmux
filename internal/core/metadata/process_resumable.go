@@ -122,6 +122,7 @@ func processResumeReservation(previous *ProcessSessionRecord, binding ProcessBin
 		}
 		current.History = &ProcessResumeHistory{Binding: previous.Binding, SessionID: session, InterruptedTurnID: current.TurnID, Expired: current.Pending}
 	}
+	current.StopRequested = false
 	current.Binding, current.ConnectionID, current.TurnID, current.Pending, current.ResumeState = binding, binding.OperationID, "", nil, ProcessResumeUnknown
 	return current
 }

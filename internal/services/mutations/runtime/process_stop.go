@@ -29,6 +29,8 @@ type ProcessIdentityReader func(int) (coremetadata.ProcessIdentity, int, error)
 // ProcessAgentStopper is the shared CLI/SDK exact-generation executor. Paths
 // and readers are explicit. It never deletes resources or writes Offline.
 type ProcessAgentStopper struct {
+	// Update, when supplied, must serialize and validate a Registry transaction.
+	Update             func(func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error)
 	RegistryPath       string
 	ExpectedClaimNonce string
 	ExpectedClaimOwner coremetadata.ProcessIdentity
@@ -77,6 +79,16 @@ func ProcessAgentPane(reg coremetadata.Registry, uid string) (*coremetadata.Pane
 }
 
 func (s *ProcessAgentStopper) StopExact(ctx context.Context, reg coremetadata.Registry, agent coremetadata.Agent, pane coremetadata.Pane) error {
+	return s.stopExact(ctx, reg, agent, pane, false)
+}
+
+// StopExplicit records only a successful explicit request, after exact retirement.
+// Internal cleanup must keep using StopExact and must not acquire this intent.
+func (s *ProcessAgentStopper) StopExplicit(ctx context.Context, reg coremetadata.Registry, agent coremetadata.Agent, pane coremetadata.Pane) error {
+	return s.stopExact(ctx, reg, agent, pane, true)
+}
+
+func (s *ProcessAgentStopper) stopExact(ctx context.Context, reg coremetadata.Registry, agent coremetadata.Agent, pane coremetadata.Pane, explicit bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -107,6 +119,9 @@ func (s *ProcessAgentStopper) StopExact(ctx context.Context, reg coremetadata.Re
 	}
 	if handled, err := s.stopDetachedClaim(ctx, admission, agent, pane); handled || err != nil {
 		s.ClaimReleased = handled && err == nil
+		if err == nil && explicit {
+			return s.recordStopRequested(ctx, pane)
+		}
 		return err
 	}
 	if err := admission.Err(); err != nil {
@@ -124,6 +139,9 @@ func (s *ProcessAgentStopper) StopExact(ctx context.Context, reg coremetadata.Re
 	} else {
 		return retirementUnconfirmed(agent.Metadata.UID, pane.Metadata.UID, errors.New("exact process owner unavailable"))
 	}
+	// An already retired natural exit is not a new explicit stop, even when
+	// the caller's initial snapshot still showed Running.
+	requested := target.Status.Phase != coremetadata.PhaseOffline || !coremetadata.MatchesProcessWait(current.Status.ProcessSession.Binding, current.Status.LastTermination)
 	if agent.Status.Phase != coremetadata.PhaseOffline || !coremetadata.MatchesProcessWait(pane.Status.ProcessSession.Binding, pane.Status.LastTermination) {
 		if err := admission.Err(); err != nil {
 			return err
@@ -160,6 +178,9 @@ func (s *ProcessAgentStopper) StopExact(ctx context.Context, reg coremetadata.Re
 			if ProcessActivationAbsent(activation, s.identityReader()) {
 				if err := ctx.Err(); err != nil {
 					return retirementUnconfirmed(agent.Metadata.UID, pane.Metadata.UID, err)
+				}
+				if explicit && requested {
+					return s.recordStopRequested(ctx, current.Clone())
 				}
 				return nil
 			}
