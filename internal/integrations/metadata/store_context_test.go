@@ -71,10 +71,23 @@ func TestUpdateConvergentContextNoopValidationAndCancellation(t *testing.T) {
 		t.Fatalf("context no-op: %v %v", changed, err)
 	}
 	if _, _, err := store.UpdateConvergentContext(context.Background(), func(reg *coremetadata.Registry) error {
-		reg.SchemaVersion = -1
+		// Schema versions are normalized; an orphan Pane remains invalid.
+		reg.Panes = append(reg.Panes, coremetadata.Pane{
+			APIVersion: coremetadata.APIVersion,
+			Kind:       coremetadata.KindPane,
+			Metadata: coremetadata.ObjectMeta{
+				UID:      "pane-orphan",
+				Name:     "zsh",
+				OwnerRef: &coremetadata.OwnerRef{Kind: coremetadata.KindWindow, UID: "window-missing"},
+			},
+			Spec: coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell},
+		})
 		return nil
-	}); err == nil {
-		t.Fatal("context writer bypassed validation")
+	}); !errors.Is(err, coremetadata.ErrInvalidRegistry) {
+		t.Fatalf("invalid context transaction: %v, want ErrInvalidRegistry", err)
+	}
+	if after, err := os.ReadFile(store.Path()); err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("invalid context transaction changed Registry: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	_, _, err = store.UpdateConvergentContext(ctx, func(reg *coremetadata.Registry) error {
