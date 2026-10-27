@@ -14,7 +14,7 @@ import (
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
 )
 
-const byUIDProject = "proj-cccccccccccccccccccccccccc"
+const byUIDProject = "proj-cccccccccccccccccccccccccq"
 
 func byUIDClient(t *testing.T, registry []byte) (*Client, string) {
 	t.Helper()

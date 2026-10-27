@@ -69,7 +69,7 @@ func TestSettingsDirectoriesNoSideEffects(t *testing.T) {
 	}
 }
 
-const inputPathsProject = "proj-dddddddddddddddddddddddddd"
+const inputPathsProject = "proj-dddddddddddddddddddddddddq"
 
 func TestSettingsInputPathsInputs(t *testing.T) {
 	global := func(dir string) core.SettingsInputPaths {

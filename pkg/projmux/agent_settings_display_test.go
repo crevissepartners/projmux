@@ -245,7 +245,7 @@ func TestReadAgentDisplaySettingsFromSnapshotIgnoresUnrelatedInputs(t *testing.T
 		changed.Panes[i].Metadata.Name = "renamed"
 		changed.Panes[i].Spec.CWD = "/elsewhere"
 	}
-	changed.Projects = append(changed.Projects, core.Project{Metadata: core.ObjectMeta{UID: "proj-bbbbbbbbbbbbbbbbbbbbbbbbbb", Name: "other"}})
+	changed.Projects = append(changed.Projects, core.Project{Metadata: core.ObjectMeta{UID: "proj-bbbbbbbbbbbbbbbbbbbbbbbbbq", Name: "other"}})
 	changed.Agents = append(changed.Agents, core.Agent{Metadata: core.ObjectMeta{UID: "agent-extra", Annotations: map[string]string{metadata.AnnotationAgentProfile: "no-such-profile"}}, Spec: core.AgentSpec{Provider: "claude"}})
 	changed.NameReservations = append(changed.NameReservations, core.NameReservation{Name: "n", UID: "u"})
 	if got := readDisplay(t, c, changed, selected...); !reflect.DeepEqual(got, want) {
@@ -391,21 +391,26 @@ func TestReadAgentDisplaySettingsFromSnapshotCacheableFailures(t *testing.T) {
 func TestReadAgentDisplaySettingsFromSnapshotProcessInstructionsError(t *testing.T) {
 	c, paths, uids := settingsFixtureClient(t)
 	process := uids["codex-process"]
+	// Make the fixture's process Agent a valid Claude one: its Pane's process
+	// session names Claude and keeps the same conversation as a Claude session.
 	_, err := store.NewStore(store.PathFor(paths.StateDir)).Update(func(reg *metadata.Registry) error {
 		agent, _ := reg.Agent(process)
 		agent.Spec.Provider = "claude"
 		agent.Metadata.Annotations = map[string]string{metadata.AnnotationAgentPersona: "gone"}
+		pane, _ := reg.Pane(agent.Status.PaneRef)
+		session := pane.Status.ProcessSession
+		session.Provider, session.SessionID, session.ThreadID = "claude", session.ThreadID, ""
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	old, err := c.ReadAgentSettings(context.Background(), core.ReadAgentSettingsRequest{AgentUIDs: []string{process}})
-	if err != nil || old.Agents[0].Unavailable != string(CodeRelaunchNoConversation) {
+	if err != nil || len(old.Agents) != 1 || old.Agents[0].Host != "process" || old.Agents[0].Provider != "claude" || old.Agents[0].Unavailable != string(CodeRelaunchNoConversation) {
 		t.Fatalf("ReadAgentSettings %+v %v", old, err)
 	}
 	got := readDisplay(t, c, displaySnapshot(t, c), process)[0]
-	if got.Host != "process" || got.Unavailable != "" || !got.Layered || got.Cacheable {
+	if got.Host != "process" || got.Provider != "claude" || got.Unavailable != "" || !got.Layered || got.Cacheable {
 		t.Fatalf("display %+v", got)
 	}
 }
