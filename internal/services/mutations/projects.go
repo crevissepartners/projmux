@@ -17,10 +17,10 @@ import (
 // Update and UpdateConvergent retain the Registry store's locking, degraded-mode
 // gate, validation and atomic replacement semantics.
 type Store struct {
-	Update           func(func(*coremetadata.Registry) error) (coremetadata.Registry, error)
-	UpdateConvergent func(func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error)
+	Update                  func(func(*coremetadata.Registry) error) (coremetadata.Registry, error)
+	UpdateConvergent        func(func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error)
 	UpdateConvergentContext func(context.Context, func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error)
-	Mutator          func() coremetadata.Mutator
+	Mutator                 func() coremetadata.Mutator
 }
 
 func NewStore(path string) Store {

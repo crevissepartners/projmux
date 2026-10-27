@@ -1,8 +1,8 @@
 package app
 
 import (
-	"context"
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -37,12 +37,12 @@ import (
 // available while every ordinary mutation is refused before the normal write
 // lock with an exact recovery-plan command.
 type resourceStore struct {
-	load             func() (coremetadata.Registry, error)
-	snapshot         func() (coremetadata.Registry, error)
-	update           func(func(*coremetadata.Registry) error) (coremetadata.Registry, error)
-	updateConvergent func(func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error)
+	load                    func() (coremetadata.Registry, error)
+	snapshot                func() (coremetadata.Registry, error)
+	update                  func(func(*coremetadata.Registry) error) (coremetadata.Registry, error)
+	updateConvergent        func(func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error)
 	updateConvergentContext func(context.Context, func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error)
-	mutator          func() coremetadata.Mutator
+	mutator                 func() coremetadata.Mutator
 	// stateDir is the state root the Registry above lives under. Explicit
 	// deletions append their deletion record there, next to the Registry they
 	// changed. A store with no state root (an in-memory Registry) has nowhere
@@ -81,7 +81,7 @@ func newResourceStore() *resourceStore {
 func resourceStoreAtPath(path string) *resourceStore {
 	store := mutations.NewStore(path)
 	return &resourceStore{
-		updateConvergent: store.UpdateConvergent,
+		updateConvergent:        store.UpdateConvergent,
 		updateConvergentContext: store.UpdateConvergentContext,
 	}
 }

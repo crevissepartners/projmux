@@ -1,8 +1,8 @@
 package app
 
 import (
-	"context"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"reflect"
@@ -285,12 +285,14 @@ func (s *fakeResourceStore) store() *resourceStore {
 		return working, true, nil
 	}
 	return &resourceStore{
-		load:     func() (coremetadata.Registry, error) { s.reads++; return s.registry.Clone(), nil },
-		snapshot: func() (coremetadata.Registry, error) { s.reads++; return s.registry.Clone(), nil },
-		update:   update,
+		load:             func() (coremetadata.Registry, error) { s.reads++; return s.registry.Clone(), nil },
+		snapshot:         func() (coremetadata.Registry, error) { s.reads++; return s.registry.Clone(), nil },
+		update:           update,
 		updateConvergent: convergent,
 		updateConvergentContext: func(ctx context.Context, fn func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
-			if err := ctx.Err(); err != nil { return coremetadata.Registry{}, false, err }
+			if err := ctx.Err(); err != nil {
+				return coremetadata.Registry{}, false, err
+			}
 			return convergent(fn)
 		},
 		mutator: s.mutator,

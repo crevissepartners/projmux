@@ -45,7 +45,9 @@ func TestProjectProcessStopBornClaimGenerationCancellationAndRetirement(t *testi
 			s := ProjectProcessStopExecutor{Update: func(ctx context.Context, apply func(*m.Registry) error) (m.Registry, bool, error) {
 				lock.Lock()
 				defer lock.Unlock()
-				if err := ctx.Err(); err != nil { return m.Registry{}, false, err }
+				if err := ctx.Err(); err != nil {
+					return m.Registry{}, false, err
+				}
 				err := apply(&reg)
 				return reg.Clone(), err == nil, err
 			}, RegistryPath: filepath.Join(t.TempDir(), "registry.json"), Load: func() (m.Registry, error) {
@@ -163,7 +165,9 @@ func TestProjectProcessStopParallelPartialFailureAndOtherProject(t *testing.T) {
 	s := ProjectProcessStopExecutor{Update: func(ctx context.Context, apply func(*m.Registry) error) (m.Registry, bool, error) {
 		lock.Lock()
 		defer lock.Unlock()
-		if err := ctx.Err(); err != nil { return m.Registry{}, false, err }
+		if err := ctx.Err(); err != nil {
+			return m.Registry{}, false, err
+		}
 		err := apply(&reg)
 		return reg.Clone(), err == nil, err
 	}, RegistryPath: filepath.Join(t.TempDir(), "registry.json"), Timeout: time.Second, Load: func() (m.Registry, error) { lock.Lock(); defer lock.Unlock(); return reg.Clone(), nil }, ReadIdentity: func(int) (m.ProcessIdentity, int, error) { return m.ProcessIdentity{}, 0, localipc.ErrProcessAbsent }, CallStop: func(ctx context.Context, _ m.Registry, a m.Agent) error {

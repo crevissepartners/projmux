@@ -116,7 +116,9 @@ func (s *Store) withObservedLockContext(ctx context.Context, operation LockOpera
 		return err
 	}
 	fnErr := runLeased(lease, func() error {
-		if err := ctx.Err(); err != nil { return err }
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		return fn()
 	})
 	released := s.clock()

@@ -97,7 +97,9 @@ func stopProcessFixture(t *testing.T, failure string) projectProcessStopper {
 			copied.updateConvergentContext = func(ctx context.Context, apply func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
 				mutation.Lock()
 				defer mutation.Unlock()
-				if err := ctx.Err(); err != nil { return coremetadata.Registry{}, false, err }
+				if err := ctx.Err(); err != nil {
+					return coremetadata.Registry{}, false, err
+				}
 				reg, changed, err := originalContext(ctx, apply)
 				return reg.Clone(), changed, err
 			}

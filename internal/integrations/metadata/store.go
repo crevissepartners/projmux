@@ -515,7 +515,9 @@ func (s *Store) UpdateConvergentContext(ctx context.Context, fn func(*coremetada
 	var out coremetadata.Registry
 	changed := false
 	err := s.withMutationLockContext(ctx, LockOperationUpdateConvergent, func() error {
-		if err := ctx.Err(); err != nil { return err }
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		registry, onDiskVersion, existed, report, err := s.readWithReport()
 		if err != nil {
 			return s.mapDegradedMutationError(err)
@@ -524,21 +526,29 @@ func (s *Store) UpdateConvergentContext(ctx context.Context, fn func(*coremetada
 			return s.mapDegradedMutationError(err)
 		}
 		working := registry.Clone()
-		if err := ctx.Err(); err != nil { return err }
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := fn(&working); err != nil {
 			return err
 		}
-		if err := ctx.Err(); err != nil { return err }
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		working = working.Normalize()
 		if err := working.Validate(); err != nil {
 			return err
 		}
-		if err := ctx.Err(); err != nil { return err }
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if existed && !requiresDurableMigration(onDiskVersion, report) && reflect.DeepEqual(working, registry.Normalize()) {
 			out = working
 			return nil
 		}
-		if err := ctx.Err(); err != nil { return err }
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		migrating := existed && requiresDurableMigration(onDiskVersion, report)
 		if err := s.write(working, migrating, onDiskVersion, report); err != nil {
 			return err
@@ -1351,7 +1361,9 @@ func (s *Store) withLock(operation LockOperation, fn func() error) error {
 }
 
 func (s *Store) withLockContext(ctx context.Context, operation LockOperation, fn func() error) error {
-	if err := ctx.Err(); err != nil { return err }
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := localstate.EnsurePrivateDir(filepath.Dir(s.lockPath)); err != nil {
 		return fmt.Errorf("metadata: create lock dir: %w", err)
 	}
@@ -1363,7 +1375,9 @@ func (s *Store) withLockContext(ctx context.Context, operation LockOperation, fn
 		return err
 	}
 	defer lease.release()
-	if err := ctx.Err(); err != nil { return err }
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return fn()
 }
 

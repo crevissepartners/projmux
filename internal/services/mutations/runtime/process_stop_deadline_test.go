@@ -40,13 +40,23 @@ func TestStopRequestedFinalLockDeadlineAndAdmittedCancellation(t *testing.T) {
 				}
 				t.Cleanup(func() {
 					_ = input.Close()
-					if child.ProcessState == nil { _ = child.Process.Kill(); _ = child.Wait() }
-					if host.ProcessState == nil { _ = host.Process.Kill(); _ = host.Wait() }
+					if child.ProcessState == nil {
+						_ = child.Process.Kill()
+						_ = child.Wait()
+					}
+					if host.ProcessState == nil {
+						_ = host.Process.Kill()
+						_ = host.Wait()
+					}
 				})
 				hostID, _, err := localipc.Process(host.Process.Pid)
-				if err != nil { t.Fatal(err) }
+				if err != nil {
+					t.Fatal(err)
+				}
 				childID, _, err := localipc.Process(child.Process.Pid)
-				if err != nil { t.Fatal(err) }
+				if err != nil {
+					t.Fatal(err)
+				}
 				binding := pane.Status.ProcessSession.Binding
 				activation := m.ProcessActivation{Binding: binding, HostProcess: hostID, Child: childID}
 				reg, err := storage.Update(func(r *m.Registry) error {
@@ -54,7 +64,9 @@ func TestStopRequestedFinalLockDeadlineAndAdmittedCancellation(t *testing.T) {
 					p.Status.Activation.Process = &activation
 					return nil
 				})
-				if err != nil { t.Fatal(err) }
+				if err != nil {
+					t.Fatal(err)
+				}
 				a, _ := reg.Agent(agent.Metadata.UID)
 				p, _ := reg.Pane(pane.Metadata.UID)
 				agent, pane = a.Clone(), p.Clone()
@@ -68,8 +80,12 @@ func TestStopRequestedFinalLockDeadlineAndAdmittedCancellation(t *testing.T) {
 				var before []byte
 				entered := false
 				callStop := func(context.Context, m.Registry, m.Agent) error {
-					if err := input.Close(); err != nil { return err }
-					if err := child.Wait(); err != nil { return err }
+					if err := input.Close(); err != nil {
+						return err
+					}
+					if err := child.Wait(); err != nil {
+						return err
+					}
 					_ = host.Process.Kill()
 					_ = host.Wait()
 					code := child.ProcessState.ExitCode()
@@ -79,7 +95,9 @@ func TestStopRequestedFinalLockDeadlineAndAdmittedCancellation(t *testing.T) {
 					_, err := storage.Update(func(r *m.Registry) error {
 						return (m.Mutator{}).RecordProcessWait(r, activation, wait)
 					})
-					if mode == "cancel-after" { cancel() }
+					if mode == "cancel-after" {
+						cancel()
+					}
 					return err
 				}
 				update := func(admitted context.Context, apply func(*m.Registry) error) (m.Registry, bool, error) {
@@ -89,19 +107,30 @@ func TestStopRequestedFinalLockDeadlineAndAdmittedCancellation(t *testing.T) {
 						return m.Registry{}, false, fmt.Errorf("lost admitted deadline/cancellation policy: %v %v %v", got, ok, admitted.Err())
 					}
 					latest, err := storage.LoadReadOnly()
-					if err != nil { return m.Registry{}, false, err }
+					if err != nil {
+						return m.Registry{}, false, err
+					}
 					p, _ := latest.Pane(binding.PaneUID)
 					if !m.MatchesProcessWait(binding, p.Status.LastTermination) || !ProcessActivationAbsent(activation, localipc.Process) {
 						return m.Registry{}, false, errors.New("held final lock before actual retirement")
 					}
 					held, err := os.OpenFile(storage.Path()+".flock", os.O_CREATE|os.O_RDWR, 0600)
-					if err != nil { return m.Registry{}, false, err }
-					if err = unix.Flock(int(held.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil { _ = held.Close(); return m.Registry{}, false, err }
+					if err != nil {
+						return m.Registry{}, false, err
+					}
+					if err = unix.Flock(int(held.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+						_ = held.Close()
+						return m.Registry{}, false, err
+					}
 					unlock = sync.OnceFunc(func() { _ = unix.Flock(int(held.Fd()), unix.LOCK_UN); _ = held.Close() })
 					t.Cleanup(unlock)
 					before, err = os.ReadFile(storage.Path())
-					if err != nil { return m.Registry{}, false, err }
-					if mode == "cancel-after" { unlock() }
+					if err != nil {
+						return m.Registry{}, false, err
+					}
+					if mode == "cancel-after" {
+						unlock()
+					}
 					return storage.UpdateConvergentContext(admitted, func(r *m.Registry) error {
 						callbackCalls.Add(1)
 						return apply(r)
@@ -115,8 +144,12 @@ func TestStopRequestedFinalLockDeadlineAndAdmittedCancellation(t *testing.T) {
 					s := ProjectProcessStopExecutor{RegistryPath: storage.Path(), Load: storage.LoadReadOnly, CallStop: callStop, Update: update}
 					_, err = s.Stop(ctx, binding.ProjectUID)
 				}
-				if time.Since(started) > 5*time.Second { t.Fatal("final lock exceeded the admitted stop deadline watchdog") }
-				if !entered { t.Fatalf("final writer was not reached: %v", err) }
+				if time.Since(started) > 5*time.Second {
+					t.Fatal("final lock exceeded the admitted stop deadline watchdog")
+				}
+				if !entered {
+					t.Fatalf("final writer was not reached: %v", err)
+				}
 				if mode == "deadline" {
 					if !errors.Is(err, context.DeadlineExceeded) || callbackCalls.Load() != 0 {
 						t.Fatalf("held final lock: calls=%d err=%v", callbackCalls.Load(), err)
@@ -125,11 +158,17 @@ func TestStopRequestedFinalLockDeadlineAndAdmittedCancellation(t *testing.T) {
 					t.Fatalf("admitted cancellation reached writer: calls=%d err=%v", callbackCalls.Load(), err)
 				}
 				unlock()
-				if _, _, e := storage.UpdateConvergent(func(*m.Registry) error { return nil }); e != nil { t.Fatal(e) }
+				if _, _, e := storage.UpdateConvergent(func(*m.Registry) error { return nil }); e != nil {
+					t.Fatal(e)
+				}
 				after, e := os.ReadFile(storage.Path())
-				if e != nil { t.Fatal(e) }
+				if e != nil {
+					t.Fatal(e)
+				}
 				latest, e := storage.LoadReadOnly()
-				if e != nil { t.Fatal(e) }
+				if e != nil {
+					t.Fatal(e)
+				}
 				p, _ = latest.Pane(binding.PaneUID)
 				if p.Status.ProcessSession.StopRequested != (mode == "cancel-after") {
 					t.Fatal("deadline wrote a late mark or admitted stop lost its mark")
