@@ -928,9 +928,11 @@ func logDetachedPeerPrewriteFailure(t *testing.T, f processCreateCLI, primary []
 		StateMatches, ReasonMatches, UnknownMatches                                         bool
 		MessageMatches, ConversationMatches, SourceRouteSame, TargetRouteSame, DeadlineSame bool
 	}
+	// Stage is the refusing proof step a handoff record names, "absent" when
+	// it names none, and empty for registration records.
 	type eventEvidence struct {
-		Event, Source, Code, Result, At, RunSHA256, Phase string
-		AgentIsSource, AgentIsTarget, PaneMatchesTarget   bool
+		Event, Source, Code, Stage, Result, At, RunSHA256, Phase string
+		AgentIsSource, AgentIsTarget, PaneMatchesTarget          bool
 	}
 	type evidence struct {
 		Phase                      string
@@ -1125,7 +1127,10 @@ func logDetachedPeerPrewriteFailure(t *testing.T, f processCreateCLI, primary []
 		}
 		result.Records++
 		handoff := event.Event == "agent.message.claude-handoff-route" && (event.AgentUID == source || event.AgentUID == target)
-		registration := event.Event == "agent.claude.registration" && event.AgentUID == target && event.PaneUID == pane
+		// The source's own helper records sit in the same journal already read;
+		// the source pane is not known here, so only the target matches a pane.
+		targetRegistration := event.Event == "agent.claude.registration" && event.AgentUID == target && event.PaneUID == pane
+		registration := targetRegistration || event.Event == "agent.claude.registration" && event.AgentUID == source
 		if !handoff && !registration {
 			continue
 		}
@@ -1136,6 +1141,8 @@ func logDetachedPeerPrewriteFailure(t *testing.T, f processCreateCLI, primary []
 		for key := range keys {
 			switch key {
 			case "at", "level", "component", "event", "result", "duration_ms", "run_id", "version", "mux_backend", "source", "code", "agent_uid", "pane_uid", "kind":
+			case "classification":
+				shape = shape && handoff
 			default:
 				shape = false
 			}
@@ -1147,6 +1154,20 @@ func logDetachedPeerPrewriteFailure(t *testing.T, f processCreateCLI, primary []
 			shape = shape && (event.Code == "claude.handoff.source-route-unproven" || event.Code == "claude.handoff.target-route-unproven")
 			switch event.Source {
 			case "tmux-claude", "tmux-codex", "process-claude", "process-codex", "unknown":
+			default:
+				shape = false
+			}
+			switch diagnostics.ClaudeHandoffRouteStage(event.Classification) {
+			case "", diagnostics.ClaudeHandoffStageRouteUnresolved, diagnostics.ClaudeHandoffStageRouteFenceMismatch,
+				diagnostics.ClaudeHandoffStageCodexAuthorityUnproven, diagnostics.ClaudeHandoffStageProviderProcessMismatch,
+				diagnostics.ClaudeHandoffStageLeaseHelperProcessMismatch, diagnostics.ClaudeHandoffStageLeaseAuthorityInvalid,
+				diagnostics.ClaudeHandoffStageLeaseProcessMismatch, diagnostics.ClaudeHandoffStageLeaseSocketUnavailable,
+				diagnostics.ClaudeHandoffStageLeaseDialStale, diagnostics.ClaudeHandoffStageLeaseDialUnanswered,
+				diagnostics.ClaudeHandoffStageLeasePeerMismatch, diagnostics.ClaudeHandoffStageLeaseReadinessStale,
+				diagnostics.ClaudeHandoffStageLeaseReadinessUnanswered, diagnostics.ClaudeHandoffStageLeaseNotReady,
+				diagnostics.ClaudeHandoffStageLeaseTargetInvalid, diagnostics.ClaudeHandoffStageLeaseProbeStale,
+				diagnostics.ClaudeHandoffStageLeaseProbeUnanswered, diagnostics.ClaudeHandoffStageLeaseProbeNotReady,
+				diagnostics.ClaudeHandoffStageLeaseUnclassified:
 			default:
 				shape = false
 			}
@@ -1169,7 +1190,14 @@ func logDetachedPeerPrewriteFailure(t *testing.T, f processCreateCLI, primary []
 			if !at.Before(result.PrimaryAt) {
 				phase = "timestamp-at-or-after-primary"
 			}
-			rows = append(rows, eventEvidence{Event: event.Event, Source: event.Source, Code: event.Code, Result: event.Result, At: at.UTC().Format(time.RFC3339Nano), RunSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(event.RunID))), Phase: phase, AgentIsSource: event.AgentUID == source, AgentIsTarget: event.AgentUID == target, PaneMatchesTarget: registration})
+			stage := ""
+			if handoff {
+				stage = event.Classification
+				if stage == "" {
+					stage = "absent"
+				}
+			}
+			rows = append(rows, eventEvidence{Event: event.Event, Source: event.Source, Code: event.Code, Stage: stage, Result: event.Result, At: at.UTC().Format(time.RFC3339Nano), RunSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(event.RunID))), Phase: phase, AgentIsSource: event.AgentUID == source, AgentIsTarget: event.AgentUID == target, PaneMatchesTarget: targetRegistration})
 		}
 	}
 	result.Journal, result.Events = "complete", rows

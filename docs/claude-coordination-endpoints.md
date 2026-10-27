@@ -202,8 +202,8 @@ does. A source or target that cannot be proved writes zero and fails the
 receipt as `broker-handoff-persist-failed`, or as `provider-prewrite-refused`
 when a process Claude target's proof before its busy reservation fails; either
 way the helper's
-`agent.message.claude-handoff-route` diagnostics record names which end failed
-and that Agent's Registry host and provider (see
+`agent.message.claude-handoff-route` diagnostics record names which end failed,
+the proof step that refused it, and that Agent's Registry host and provider (see
 [operational diagnostics](operational-diagnostics.md)).
 
 The frame route is deliberately narrower than the durable one. The delivery

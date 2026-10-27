@@ -227,47 +227,74 @@ func claudeProbeWaitOutcome(err error) ProbeOutcome {
 	return ProbeStale
 }
 
+// LeaseStep names the step of a registration lease probe that decided a
+// failed outcome. It is a closed diagnostic name, never error text, and is
+// empty when the probe succeeded.
+type LeaseStep string
+
+const (
+	LeaseStepNone                 LeaseStep = ""
+	LeaseStepAuthority            LeaseStep = "authority"
+	LeaseStepProcess              LeaseStep = "process"
+	LeaseStepSocket               LeaseStep = "socket"
+	LeaseStepDial                 LeaseStep = "dial"
+	LeaseStepPeer                 LeaseStep = "peer"
+	LeaseStepReadiness            LeaseStep = "readiness"
+	LeaseStepNotReady             LeaseStep = "not-ready"
+	LeaseStepTarget               LeaseStep = "target"
+	LeaseStepCoordination         LeaseStep = "coordination"
+	LeaseStepCoordinationNotReady LeaseStep = "coordination-not-ready"
+)
+
 func ClassifyRegistrationLease(registryPath string, route coremetadata.AgentRouteRef) ProbeOutcome {
+	outcome, _ := ClassifyRegistrationLeaseStep(registryPath, route)
+	return outcome
+}
+
+// ClassifyRegistrationLeaseStep is ClassifyRegistrationLease that also names
+// the step which decided a failed outcome. It runs the same checks, reads,
+// and bounded waits in the same order; naming the step adds none.
+func ClassifyRegistrationLeaseStep(registryPath string, route coremetadata.AgentRouteRef) (ProbeOutcome, LeaseStep) {
 	authority, ok := route.Authority().(coremetadata.ClaudeAuthorityRef)
 	if !ok || !authority.Valid() {
-		return ProbeStale
+		return ProbeStale, LeaseStepAuthority
 	}
 	for _, expected := range []coremetadata.ProcessIdentity{authority.Process, authority.LeaseProcess} {
 		actual, _, err := Process(expected.PID)
 		if err != nil || actual != expected {
-			return ProbeStale
+			return ProbeStale, LeaseStepProcess
 		}
 	}
 	path := LeaseSocket(registryPath, route.PaneUID, route.Generation, authority.RegistrationGeneration)
 	if _, err := InspectSocket(path); err != nil {
-		return ProbeStale
+		return ProbeStale, LeaseStepSocket
 	}
 	// Dial only Projmux's readiness helper. Never connect to the provider inbox;
 	// its secret path exists only in serveClaudeRegistration's private memory.
 	connection, err := net.DialTimeout("unix", path, LeaseDialTimeout)
 	if err != nil {
-		return claudeProbeWaitOutcome(err)
+		return claudeProbeWaitOutcome(err), LeaseStepDial
 	}
 	defer connection.Close()
 	unixConnection, ok := connection.(*net.UnixConn)
 	if !ok {
-		return ProbeStale
+		return ProbeStale, LeaseStepPeer
 	}
 	peer, err := PeerProcess(unixConnection)
 	if err != nil || peer != authority.LeaseProcess {
-		return ProbeStale
+		return ProbeStale, LeaseStepPeer
 	}
 	_ = connection.SetDeadline(time.Now().Add(LeaseReadinessReadTimeout))
 	var ready [1]byte
 	if _, err := io.ReadFull(connection, ready[:]); err != nil {
-		return claudeProbeWaitOutcome(err)
+		return claudeProbeWaitOutcome(err), LeaseStepReadiness
 	}
 	if ready[0] != 1 {
-		return ProbeStale
+		return ProbeStale, LeaseStepNotReady
 	}
 	target, ok := TargetForRoute(route)
 	if !ok {
-		return ProbeStale
+		return ProbeStale, LeaseStepTarget
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), LeaseCoordinationProbeTimeout)
 	defer cancel()
@@ -275,12 +302,12 @@ func ClassifyRegistrationLease(registryPath string, route coremetadata.AgentRout
 		Version: CoordinationVersion, Operation: "probe", Target: target,
 	})
 	if err != nil {
-		return claudeCoordinationCallOutcome(ctx)
+		return claudeCoordinationCallOutcome(ctx), LeaseStepCoordination
 	}
 	if response.Kind != "ready" {
-		return ProbeStale
+		return ProbeStale, LeaseStepCoordinationNotReady
 	}
-	return ProbeReady
+	return ProbeReady, LeaseStepNone
 }
 
 // claudeCoordinationCallOutcome classifies a failed coordination call by its own

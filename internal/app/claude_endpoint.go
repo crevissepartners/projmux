@@ -1058,6 +1058,12 @@ func classifyClaudeRegistrationLease(registryPath string, route coremetadata.Age
 	return claudeadapter.ClassifyRegistrationLease(registryPath, route)
 }
 
+// classifyClaudeRegistrationLeaseStep is classifyClaudeRegistrationLease that
+// also names the step which decided a failed outcome.
+func classifyClaudeRegistrationLeaseStep(registryPath string, route coremetadata.AgentRouteRef) (claudeProbeOutcome, claudeadapter.LeaseStep) {
+	return claudeadapter.ClassifyRegistrationLeaseStep(registryPath, route)
+}
+
 // claudeCoordinationCallOutcome classifies a failed coordination call by its own
 // bound: claudeadapter.CallCoordination arms the connection with the context deadline.
 func claudeCoordinationCallOutcome(ctx context.Context) claudeProbeOutcome {
