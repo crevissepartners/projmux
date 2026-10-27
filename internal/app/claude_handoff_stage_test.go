@@ -8,8 +8,8 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
-	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
+	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
