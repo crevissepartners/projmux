@@ -76,7 +76,11 @@ link rules file larger than `MaxProjectLinkRulesBytes` is a
 `CodeLinkRulesUnreadable` read refusal, and rules whose stored encoding would
 be larger are a `CodeInvalidLinkRules` write refusal on field `links`. Host-global
 or Project guidance larger than `MaxAgentGuidanceBytes` is a
-`CodeAgentGuidanceTooLarge` refusal. An input of exactly the limit is accepted.
+`CodeAgentGuidanceTooLarge` refusal. Rules or Project guidance of exactly the
+limit are accepted. Host-global guidance is also refused with
+`CodeAgentGuidanceTooLarge` when, while guidance is enabled, the built-in text,
+the process note, fragments and it together would be larger than the same
+limit; `AssembledBytes` and `ProcessAssembledBytes` report those sizes.
 A caller that bounds a JSON request body before decoding it should leave room
 for escaping, at most six bytes per input byte, so that one byte past the limit
 still reaches the validator and gets its refusal rather than a transport error.

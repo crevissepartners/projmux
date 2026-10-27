@@ -67,6 +67,27 @@ func TestPublicInputLimitsMatchValidators(t *testing.T) {
 				return err
 			},
 		}
+		// Enabled host-global guidance is also bounded once assembled: the
+		// built-in text, the process note and the candidate together must fit
+		// the same limit, so the largest candidate is the limit less that text.
+		small, err := c.ValidateAgentGuidance(ctx, []byte("x"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		fixed := max(small.AssembledBytes, small.ProcessAssembledBytes) - 1
+		if fixed <= 0 || fixed >= limit {
+			t.Fatalf("assembled text around one byte is %d bytes", fixed)
+		}
+		if _, err := c.ValidateAgentGuidance(ctx, bytes.Repeat([]byte("x"), limit-fixed)); err != nil {
+			t.Fatalf("enabled: %d bytes assembling to the limit refused: %v", limit-fixed, err)
+		}
+		if _, err := c.ValidateAgentGuidance(ctx, bytes.Repeat([]byte("x"), limit-fixed+1)); !refused(err, projmux.CodeAgentGuidanceTooLarge) {
+			t.Fatalf("enabled: %d bytes assembling past the limit: %v, want %s", limit-fixed+1, err, projmux.CodeAgentGuidanceTooLarge)
+		}
+		// With guidance off only the candidate's own size is checked.
+		if err := c.SetAgentGuidanceEnabled(ctx, "", false); err != nil {
+			t.Fatal(err)
+		}
 		for name, validate := range validators {
 			if err := validate(bytes.Repeat([]byte("x"), limit)); err != nil {
 				t.Fatalf("%s: %d bytes refused: %v", name, limit, err)
