@@ -115,7 +115,15 @@ func compareResourceShape(t *testing.T, a, b reflect.Type, seen map[[2]reflect.T
 			}
 			compareResourceShape(t, f.Type, g.Type, seen)
 		}
-		if n != b.NumField() {
+		// Fields excluded from JSON on both sides (graph process keys) are
+		// copied explicitly and checked by their own tests.
+		m := 0
+		for i := 0; i < b.NumField(); i++ {
+			if b.Field(i).Tag.Get("json") != "-" {
+				m++
+			}
+		}
+		if n != m {
 			t.Fatalf("extra public fields %s", b)
 		}
 	}

@@ -62,7 +62,7 @@ type Options struct {
 
 // Client executes public instruction, profile, resource registration and read operations. It owns no background work and needs
 // no Close. ReadRegistrySnapshot provides one effect-free read of stored
-// Projects, Windows, and Agents. Its paths are immutable; methods may be called concurrently. Writes
+// Projects, Windows, Panes and Agents. Its paths are immutable; methods may be called concurrently. Writes
 // are atomic except for the legacy setter described below. Multi-call transactions
 // and concurrent profile edits are not serialized (the same limits apply to separate CLI processes).
 // GetAISplitMode and SetAISplitMode preserve the synchronous legacy settings contract and take no context; they do not observe cancellation.

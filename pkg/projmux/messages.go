@@ -26,6 +26,15 @@ const (
 	CodeMessageDeliveryFailed   Code = "message-delivery-failed"
 )
 
+// CodeOperatorOriginTargetNotClaude classifies the refusal of operator input
+// to any target but Claude. It is the reason string that refusal carries.
+const CodeOperatorOriginTargetNotClaude Code = message.ReasonOperatorOriginTargetNotClaude
+
+// ErrOperatorOriginTargetNotClaude matches, under errors.Is, the existing
+// refusal of operator input to any target but Claude. It classifies an error
+// only; the SDK adds no operator send path.
+var ErrOperatorOriginTargetNotClaude = message.ErrOperatorOriginTargetNotClaude
+
 // SendMessageRequest names exact source and target Agents explicitly. References
 // are names or uid: values, resolved to exactly one Agent. Source is an unverified
 // coordination anchor, never caller authentication or operator authority.

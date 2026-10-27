@@ -2,6 +2,10 @@ package projmux
 
 import "github.com/crevissepartners/projmux/internal/core/profile"
 
+// ReservedProfileName is the one otherwise-valid name no profile may take; it
+// is kept free to spell "no profile". ValidateProfileName refuses it.
+const ReservedProfileName = profile.ReservedName
+
 // ValidateProfileName checks the existing profile name rules and reserved names.
 // It requires no Client or context and performs no environment, file, Registry,
 // path or network access, writes or locking. It does not check profile existence.

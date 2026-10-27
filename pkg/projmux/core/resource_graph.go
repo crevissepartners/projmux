@@ -98,9 +98,27 @@ type GraphWindowNode struct {
 	Runtime     *GraphRuntimeRef `json:"runtime,omitempty"`
 }
 
+// GraphProcessKey identifies the owned provider child a process Pane resolved
+// to in this observation. It is observation evidence only, never process
+// admission, binding or control authority. A key without a host still names
+// the Pane and generation the graph judged; Valid reports a complete key.
+type GraphProcessKey struct {
+	Host       string
+	Pane       string
+	Generation string
+}
+
+// Valid reports whether Host, Pane and Generation are all set.
+func (k GraphProcessKey) Valid() bool {
+	return k.Host != "" && k.Pane != "" && k.Generation != ""
+}
+
 // GraphPaneNode is one Registry Pane with its runtime overlay and resolved
-// owner chain. WindowUID is the effective containing Window.
+// owner chain. WindowUID is the effective containing Window. Process is set
+// for a Pane judged as a process child and is excluded from JSON, so the graph
+// JSON stays the CLI's.
 type GraphPaneNode struct {
+	Process     *GraphProcessKey `json:"-"`
 	Pane        Pane             `json:"pane"`
 	AgentUID    string           `json:"agentUID,omitempty"`
 	WindowUID   string           `json:"windowUID,omitempty"`
@@ -114,8 +132,10 @@ type GraphPaneNode struct {
 }
 
 // GraphAgentNode is one Registry Agent with the overlay of its managed Pane.
-// Agent.Status.Phase is reported verbatim from the Registry.
+// Agent.Status.Phase is reported verbatim from the Registry. Process is the
+// managed Pane's process key, excluded from JSON like GraphPaneNode.Process.
 type GraphAgentNode struct {
+	Process     *GraphProcessKey `json:"-"`
 	Agent       Agent            `json:"agent"`
 	WindowUID   string           `json:"windowUID,omitempty"`
 	RootKind    Kind             `json:"rootKind,omitempty"`

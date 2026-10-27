@@ -1006,6 +1006,12 @@ route unavailability and delivery failures. Context cancellation remains availab
 through `errors.Is`. Qualification, provider creation, user turn input and
 operator authentication are separate APIs and are not added by peer messaging.
 
+Operator input to any target but Claude is refused with the reason
+`operator-origin-target-not-claude`. `projmux.CodeOperatorOriginTargetNotClaude`
+is that reason, and `projmux.ErrOperatorOriginTargetNotClaude` matches the
+refusal under `errors.Is`, including through wrapping. They classify an error
+returned by the existing operator path; the SDK adds no operator send method.
+
 ### Read-only message archives
 
 `Client.ReadMessageArchive(ctx)` returns `core.MessageArchive`: live `Records`
@@ -1156,7 +1162,8 @@ write anything, or take locks.
 
 A valid name returns nil. Invalid names return `*projmux.Refusal` with
 `CodeProfileNameInvalid` or `CodeProfileNameReserved`; `Name` and error text
-preserve the existing profile refusal.
+preserve the existing profile refusal. `projmux.ReservedProfileName` is the
+reserved name, `none`.
 
 ```go
 if err := projmux.ValidateProfileName(name); err != nil {
@@ -1167,6 +1174,14 @@ if err := projmux.ValidateProfileName(name); err != nil {
     return err
 }
 ```
+
+## Provider name normalization
+
+`projmux.NormalizeProvider(provider string) string` maps a provider spelling to
+its registered id (`codex`, `claude`, `antigravity`) the way Agent records are
+classified: it ignores case and surrounding space and returns an empty string
+for an empty or unknown provider. It needs no Client or context and reads no
+environment, file, Registry or network.
 
 ## Profile parsing and previews
 
@@ -1454,7 +1469,7 @@ the same termination evidence.
 ## Stored Registry snapshot without observation
 
 `Client.ReadRegistrySnapshot(ctx)` returns one caller-owned
-`core.RegistrySnapshot` with non-nil `Projects`, `Windows`, and `Agents` slices.
+`core.RegistrySnapshot` with non-nil `Projects`, `Windows`, `Panes`, and `Agents` slices.
 It reads the captured Registry once through the CLI's degraded read-only loader.
 It preserves stored values, row order, duplicate UIDs, Offline Agents, and
 nested data. It adds no runtime context or ownership resolution. Consumers
@@ -1471,9 +1486,14 @@ for _, agent := range snapshot.Agents {
 }
 ```
 
+Pane rows keep their stored order. A Pane's runtime kind is its stored
+`Spec.Runtime`; read it with `Spec.Runtime.EffectiveKind()`, which reports
+`tmux` for legacy rows that stored no runtime. The stored value is not
+rewritten.
+
 This call performs no tmux observation, provider contact, locking, writing,
 migration save, or permission repair. Its envelope has only `projects`,
-`windows`, and `agents`; it exposes no Registry schema, path, Pane, or
+`windows`, `panes`, and `agents`; it exposes no Registry schema, path, or
 ControlSession collection. The existing public resource values include their
 stored status fields, which are returned unchanged and may be stale.
 `ListResources`, `GetResource`, and `ObserveRuntime` retain their existing
@@ -1532,6 +1552,14 @@ if observed.RegistryIdentity != nil {
     }
 }
 ```
+
+A Pane node judged as a process child carries `Process`, a
+`core.GraphProcessKey` with the host, Pane and generation of that child, and
+its Agent node carries a copy. Tmux Panes carry nil. A key whose host could not
+be resolved still names the Pane and generation; `Valid()` reports whether all
+three are set. `Process` is excluded from JSON, so the graph JSON is unchanged.
+The key is observation evidence only and grants no process admission, binding
+or control.
 
 Neither call writes tmux, the Registry, provider hosts, or the caller's stderr.
 Process hosts are only observed within the CLI's existing read budgets; no
@@ -1630,7 +1658,8 @@ Recovery suggests resume only for confirmed Offline with no known new Pane;
 Running, unobserved or partial results require exact Agent/Pane/socket state inspection.
 No operation is automatically retried. Errors support
 `errors.As(err, &refusal)` with persona reason codes, existing selector/Registry
-codes, and `process-relaunch-unsupported`. Cancellation before admission retains
+codes, and `process-relaunch-unsupported`. `CodePersonaProviderUnsupported` and
+`CodePersonaUnavailable` carry the same values as the CLI's persona reasons. Cancellation before admission retains
 `errors.Is`; after admission, stop and recovery complete independently of it.
 Session authorization and consumer mutation locks remain with the caller.
 

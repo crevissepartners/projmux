@@ -248,6 +248,7 @@ Fixture.retireAfterFailure	Test-only installed qualification helper retained for
 FooterBlockLines	Default-theme entry point of FooterBlockLinesWithTheme retained as the picker footer geometry seam.
 FormatList	Locale-resolving list formatter retained as the test seam that pins payload-item preservation over the live formatter locale resolution.
 FoundationKeys	Foundation key set retained as the test seam that pins the shipped default catalog coverage of it.
+GraphProcessKey.Valid	Public v0 resource graph process key validity, matching the internal ProcessKey rule; covered by process key copy parity and GOWORK=off consumer tests.
 HUDSnapshotsWithVisibility	Read-only HUD projection retained for caller-supplied provider and window visibility.
 Handle.BindClaudeHook	Internal Claude process binding/control fixture seam; remove the retention row when the Task 5 public consumer wires it.
 Handle.CheckClaudeHook	Internal Claude process binding/control fixture seam; remove the retention row when the Task 5 public consumer wires it.
@@ -370,6 +371,7 @@ NonEmpty	Internal configuration-generation compatibility entrypoint retained for
 NormalizeKeymapAuthoringChord	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 NormalizeKeymapSequence	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 NormalizeKeymapTypedChord	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+NormalizeProvider	Public pure provider spelling normalization SDK entrypoint; covered by internal parity and GOWORK=off consumer tests.
 Observe	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 ObserveFrontReads	Test hook of the settings layer seam; the settings layer guard installs it to count front-layer reads per public route, and production never installs an observer.
 OpenPrivateUnix	Test-only private Unix app-server dial is retained for fixed dual-version installed qualification only.
@@ -786,6 +788,7 @@ publicApprovalControl.Bind	Public v0 approval SDK entrypoint or native transport
 publicApprovalControl.Call	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 publicConfig	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 publicCreateRecorder.Record	Optional public SDK create outcome adapter, reachable from external consumers rather than the CLI binary; covered by external consumer, timing ownership, concurrency and real tmux rollback/lock-release tests.
+publicGraphProcessKey	Public v0 coherent resource graph SDK adapter copying JSON-excluded process keys onto public nodes; covered by ObserveResourceGraph process key parity and copy-ownership tests.
 publicLinkRules	Public v0 Project link rules SDK entrypoint or its adapter; retained for external consumers and exercised by CLI/SDK parity, typed refusals, field coverage, and GOWORK=off consumer tests.
 publicMessageReceipt	Client.SendMessage/MessageStatus copy internal redacted receipt values into independently owned public core DTOs.
 publicQuestionDispatcher.AnswerExactProcessQuestion	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
