@@ -41,6 +41,12 @@
 // and reuses a held one while the file is unchanged, and
 // ObserveResourceGraphFromSnapshot resolves a graph from a held snapshot and
 // process inventory without reading the Registry or observing process hosts.
+// PrepareRegistrySnapshot decodes a Registry read once into an immutable
+// handle reused while the file and state root are unchanged;
+// ObserveGraphInventory reads one tmux server as a value, and
+// ResolveResourceGraphFromPrepared resolves a handle against supplied runtime
+// and process inventory without any I/O. NewResourceContextProjector derives
+// presentation context from a resolved graph.
 // ReadAgentSettings resolves from one Registry read the settings each Agent's
 // plain relaunch would run with, without admitting that relaunch.
 // ReadAgentDisplaySettingsFromSnapshot resolves them for display from a held

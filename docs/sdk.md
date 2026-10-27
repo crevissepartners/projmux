@@ -1701,6 +1701,81 @@ authority is returned.
 `ReadRegistrySnapshot`, `ListResources`, `GetResource`, and `ObserveRuntime`
 keep their existing behavior.
 
+### Prepared Registry snapshots and graphs from observed values
+
+A caller that resolves graphs repeatedly can decode the Registry once and keep
+the Registry read apart from the runtime observation:
+
+```go
+prepared, reuse, err := client.PrepareRegistrySnapshot(ctx, held) // held may be nil
+if err != nil {
+    return err // held is unchanged and still usable
+}
+held = prepared // reuse.Reused: nothing was read or decoded
+
+inventory, err := client.ObserveGraphInventory(ctx, projmux.GraphObservationRequest{SocketName: "projmux"})
+if err != nil {
+    return err
+}
+graph, err := client.ResolveResourceGraphFromPrepared(ctx, prepared, projmux.PreparedGraphOverlay{
+    Runtime:   inventory,
+    Processes: processes, // core.GraphProcessInventory the caller holds
+})
+if err != nil {
+    return err
+}
+contexts := projmux.NewResourceContextProjector(graph)
+fmt.Println(contexts.For(core.KindWindow, windowUID).Value)
+```
+
+`Client.PrepareRegistrySnapshot(ctx, previous)` returns an immutable
+`*PreparedRegistrySnapshot` and a `SnapshotReuse` with the file `Identity` and
+`Reused`. When `previous` was prepared from this Client's state root and its
+identity equals the file's current stat, `previous` itself is returned and the
+Registry is neither read nor decoded. Otherwise the Registry is read once
+between two stats, exactly as `ReadRegistrySnapshotCached` reads it: a nil or
+foreign `previous`, a nil identity, a stat failure, a first-use missing file or
+a rewrite between the stats never reuses. The state root is compared as a
+value, so a symlinked state directory is a different root. A failure returns
+no handle, keeps `ReadRegistrySnapshotCached`'s refusal and cause, and leaves
+`previous` unchanged and usable. The SDK keeps no cache or watcher.
+
+`PreparedRegistrySnapshot.Snapshot()` returns an independent clone of the rows,
+equal to `ReadRegistrySnapshot` for the same file state; a caller may call it
+once per handle and share it read-only. `IsVirtualWindow(windowUID)` applies
+the Registry's exact eligible-anchor rule: the Window is virtual when that
+anchor Pane is process-hosted, whatever the Agent phase or host liveness.
+
+`Client.ObserveGraphInventory(ctx, projmux.GraphObservationRequest{...})`
+observes the selected tmux server once and returns a
+`core.GraphRuntimeInventory`: the transport, host mode, sessions, windows,
+panes and unavailable scopes. It reads no Registry and observes no process
+host. Routing is that of `RuntimeRequest`, including the
+`CodeRuntimeRequestInvalid` refusals; an unreadable server is reported in
+`Unavailable`, not as an error.
+
+`Client.ResolveResourceGraphFromPrepared(ctx, prepared, overlay)` is a pure
+computation: it reads and stats no file, observes no tmux server or process
+host and reads no clock. The same handle and equal `Runtime` and `Processes`
+values give an equal graph (order, empty slices, conflicts and process keys
+included), so a caller can keep its last graph while the handle and the
+observed values are unchanged and resolve only when they change. File identity
+never stands in for runtime evidence. The graph rules, the `unknown` process
+Panes and the graph JSON are those of `ObserveResourceGraphFromSnapshot`, and
+the result's `RegistryIdentity` is a copy of the handle's. A nil or zero handle,
+or one prepared by a Client of another state root, is a
+`CodePreparedSnapshotInvalid` (`prepared-snapshot-invalid`) refusal. A handle
+grants no authority and cannot be serialized.
+
+`NewResourceContextProjector(graph)` indexes one graph and its `For(kind, uid)`
+returns a `core.ResourceContext`: `Value`, `Source` and `Observed`, by the
+CLI's precedence (a live Window name or Pane title only from a managed runtime
+ref, then Agent topic or provider, command, or the Window fallback). An unknown
+UID or kind is the zero value; it never falls back to the resource name. The
+projector copies what it reads, so later changes to the graph do not reach it.
+Contexts are presentation only; they are not admission evidence, and mutations
+re-validate their own targets.
+
 ## Agent settings without relaunch admission
 
 `Client.ReadAgentSettings(ctx, core.ReadAgentSettingsRequest{AgentUIDs: ...})`
