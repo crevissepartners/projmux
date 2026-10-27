@@ -37,6 +37,10 @@
 // joins one Registry read to one tmux and process observation with the CLI's
 // graph rules and reports that read's Registry file identity;
 // ReadRegistryFileIdentity stats the same file without reading it.
+// ReadRegistrySnapshotCached returns a snapshot with its read's file identity
+// and reuses a held one while the file is unchanged, and
+// ObserveResourceGraphFromSnapshot resolves a graph from a held snapshot and
+// process inventory without reading the Registry or observing process hosts.
 // ReadAgentSettings resolves from one Registry read the settings each Agent's
 // plain relaunch would run with, without admitting that relaunch.
 //

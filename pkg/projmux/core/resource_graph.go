@@ -113,6 +113,26 @@ func (k GraphProcessKey) Valid() bool {
 	return k.Host != "" && k.Pane != "" && k.Generation != ""
 }
 
+// GraphProcessObservation is one exact process host observation of a child.
+// Status uses the graph node Status values: "live", "offline" or "unknown".
+// A failed host read is "unknown", never "offline"; any other value is
+// treated as "unknown".
+type GraphProcessObservation struct {
+	Key    GraphProcessKey
+	Status string
+}
+
+// GraphProcessInventory is process evidence a caller already holds, kept
+// separate the way the graph keeps it: Declared names the children a host
+// declares and Observed their observations, so an unavailable host cannot
+// erase its children. A Pane stored with the process runtime is always
+// treated as declared, even when Declared is empty, and without a matching
+// declaration and observation its status is "unknown".
+type GraphProcessInventory struct {
+	Declared []GraphProcessKey
+	Observed []GraphProcessObservation
+}
+
 // GraphPaneNode is one Registry Pane with its runtime overlay and resolved
 // owner chain. WindowUID is the effective containing Window. Process is set
 // for a Pane judged as a process child and is excluded from JSON, so the graph

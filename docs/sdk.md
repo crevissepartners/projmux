@@ -1469,7 +1469,9 @@ the same termination evidence.
 ## Stored Registry snapshot without observation
 
 `Client.ReadRegistrySnapshot(ctx)` returns one caller-owned
-`core.RegistrySnapshot` with non-nil `Projects`, `Windows`, `Panes`, and `Agents` slices.
+`core.RegistrySnapshot` with the stored envelope (`APIVersion`,
+`SchemaVersion`, `UpdatedAt`) and non-nil `Projects`, `ControlSessions`,
+`Windows`, `Panes`, `Agents`, and `NameReservations` slices.
 It reads the captured Registry once through the CLI's degraded read-only loader.
 It preserves stored values, row order, duplicate UIDs, Offline Agents, and
 nested data. It adds no runtime context or ownership resolution. Consumers
@@ -1492,10 +1494,12 @@ Pane rows keep their stored order. A Pane's runtime kind is its stored
 rewritten.
 
 This call performs no tmux observation, provider contact, locking, writing,
-migration save, or permission repair. Its envelope has only `projects`,
-`windows`, `panes`, and `agents`; it exposes no Registry schema, path, or
-ControlSession collection. The existing public resource values include their
-stored status fields, which are returned unchanged and may be stale.
+migration save, or permission repair. Its JSON has the stored Registry's keys
+in the stored order, with every collection present; it exposes no Registry
+path. The envelope, ControlSession and NameReservation fields were added after
+the first release of this call, so its JSON now carries them as well. The
+existing public resource values include their stored status fields, which are
+returned unchanged and may be stale.
 `ListResources`, `GetResource`, and `ObserveRuntime` retain their existing
 observation behavior.
 
@@ -1505,6 +1509,38 @@ the existing `CodeRegistryUnavailable` refusal and detail. Decodeable invalid
 graphs remain readable. Cancellation is checked before captured path errors
 and before returning success. A loader or projection failure wins over
 cancellation during that work; cancellation does not interrupt file I/O.
+
+### Reusing a held snapshot while the file is unchanged
+
+`Client.ReadRegistrySnapshotCached(ctx, previous)` returns a
+`core.RegistrySnapshotRead`: the `Snapshot`, the `RegistryIdentity` of the file
+it was read from, and `Reused`. With a nil `previous`, or one whose identity is
+nil or differs from the file's current stat, it stats the file, reads it once
+exactly as `ReadRegistrySnapshot` does, and stats it again; the identity is set
+only when both stats succeed and agree. When `previous.RegistryIdentity` equals
+the current stat, the file is neither read nor decoded: `previous.Snapshot` is
+returned as is, sharing its memory, with `Reused` set.
+
+The SDK keeps no cache; the caller holds `previous` and decides how long to
+keep it. Treat a held snapshot as read-only, and call `RegistrySnapshot.Clone()`
+for an independent copy: Clone allocates every nested slice, map and pointer
+anew and keeps nil and empty values, row order and values exactly. A snapshot
+the caller changed is not re-validated against the file.
+
+```go
+var held *core.RegistrySnapshotRead
+read, err := client.ReadRegistrySnapshotCached(ctx, held)
+if err != nil {
+    return err
+}
+held = &read // read.Reused reports that nothing was decoded
+```
+
+A first-use missing file reads empty with a nil identity, so it is read again
+on every call. Registry failures are the `CodeRegistryUnavailable` refusal and
+detail of `ReadRegistrySnapshot`, and `errors.Is` and `errors.As` reach the
+loader's cause (for example a schema that is too new). Cancellation is checked
+on entry and before returning success.
 
 ## One coherent resource graph and its Registry file identity
 
@@ -1561,9 +1597,40 @@ three are set. `Process` is excluded from JSON, so the graph JSON is unchanged.
 The key is observation evidence only and grants no process admission, binding
 or control.
 
-Neither call writes tmux, the Registry, provider hosts, or the caller's stderr.
-Process hosts are only observed within the CLI's existing read budgets; no
-process admission, binding or control authority is returned.
+### A graph from a held snapshot and process evidence
+
+`Client.ObserveResourceGraphFromSnapshot(ctx, snapshot, projmux.ResourceGraphOverlayRequest{...})`
+returns the graph `ObserveResourceGraph` would return for that Registry, from a
+`core.RegistrySnapshot` and a `core.GraphProcessInventory` the caller already
+holds. The Registry is not read or stat'ed and no process host is observed,
+even when `Processes` is empty; only the selected tmux server is observed,
+once. `SocketName` and `SocketPath` route exactly as in `ResourceGraphRequest`.
+
+`GraphProcessInventory` keeps `Declared` process keys apart from `Observed`
+`GraphProcessObservation` values, each a key and a `Status` of `live`,
+`offline` or `unknown` (any other value counts as `unknown`; a failed host read
+is `unknown`, never `offline`). A Pane stored with the process runtime is
+always treated as declared. Without a matching declared key and observation
+for its current generation its status is `unknown`, and Window and Project
+status aggregate from it as they do in `ObserveResourceGraph`.
+
+```go
+graph, err := client.ObserveResourceGraphFromSnapshot(ctx, read.Snapshot, projmux.ResourceGraphOverlayRequest{
+    SocketName:       "projmux",
+    Processes:        processes, // core.GraphProcessInventory the caller holds
+    RegistryIdentity: read.RegistryIdentity,
+})
+```
+
+The result's `RegistryIdentity` is a copy of the request's: the caller's own
+record of the file the snapshot came from, not a new stat and not proof that
+the snapshot matches the file. Neither input is changed, and the result owns
+its nested values. Cancellation is checked between the steps.
+
+None of these calls writes tmux, the Registry, provider hosts, or the caller's
+stderr. Process hosts are only observed by `ObserveResourceGraph`, within the
+CLI's existing read budgets; no process admission, binding or control
+authority is returned.
 `ReadRegistrySnapshot`, `ListResources`, `GetResource`, and `ObserveRuntime`
 keep their existing behavior.
 
