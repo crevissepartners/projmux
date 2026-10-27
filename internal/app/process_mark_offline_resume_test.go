@@ -105,6 +105,28 @@ func TestMarkedOfflineRelaunchRetirementAcceptsExactReceipt(t *testing.T) {
 	}
 }
 
+func TestProcessRelaunchRetirementErrorExplainsBothConditions(t *testing.T) {
+	for name, change := range markedOfflineRefusals {
+		t.Run(name, func(t *testing.T) {
+			c, _, store, a := markedOfflinePreparedFixture(t)
+			if _, _, err := store.UpdateConvergent(func(reg *coremetadata.Registry) error { change(reg, a); return nil }); err != nil {
+				t.Fatal(err)
+			}
+			reg, err := store.LoadReadOnly()
+			if err != nil {
+				t.Fatal(err)
+			}
+			agent, _ := reg.Agent(a.Binding.AgentUID)
+			pane, _ := reg.Pane(a.Binding.PaneUID)
+			_, err = c.awaitProcessRelaunchRetirement(context.Background(), agent.Clone(), pane.Clone(), false)
+			const want = "exact old child Wait is unavailable and lost-host retirement of the same binding is not committed"
+			if err == nil || err.Error() != want {
+				t.Fatalf("retirement error = %v, want %q", err, want)
+			}
+		})
+	}
+}
+
 func TestMarkedOfflineChecksRefuseInexactReceiptWithoutWrites(t *testing.T) {
 	for name, change := range markedOfflineRefusals {
 		t.Run(name, func(t *testing.T) {
