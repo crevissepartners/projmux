@@ -429,6 +429,16 @@ func serveFixtureConnection(input io.Reader, output io.Writer, hub *fixtureContr
 			if err := peer.writeResult(message.ID, map[string]any{"status": "disabled"}); err != nil {
 				return err
 			}
+		case "account/rateLimits/read":
+			response, err := fixtureRateLimitsResponse(message.ID)
+			if err != nil {
+				return err
+			}
+			if response != nil {
+				if err := peer.writeMessage(response); err != nil {
+					return err
+				}
+			}
 		case "thread/start":
 			threadID, err := nextStartedThread()
 			if err != nil {
@@ -614,6 +624,40 @@ func serveFixtureConnection(input io.Reader, output io.Writer, hub *fixtureContr
 			}
 		}
 	}
+}
+
+// fixtureRateLimitsResponse supplies explicitly opted-in offline usage cases.
+// With neither marker (or no fixed fixture profile), the method stays
+// unhandled exactly as it was before usage observation was added.
+func fixtureRateLimitsResponse(id json.RawMessage) (map[string]any, error) {
+	dir, _, err := fixtureProfilePaths()
+	if err != nil {
+		return nil, nil
+	}
+	// #nosec G703 -- fixed marker under fixtureProfilePaths' confined smoke profile.
+	_, err = os.Stat(filepath.Join(dir, "usage-rpc-error"))
+	if err == nil {
+		return map[string]any{"id": id, "error": map[string]any{
+			"code": -32000, "message": "offline fixture refresh failure",
+		}}, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	// #nosec G703 -- fixed marker under the same confined smoke profile.
+	_, err = os.Stat(filepath.Join(dir, "usage-normal"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"id": id, "result": map[string]any{
+		"rateLimits": map[string]any{
+			"limitId": "codex",
+			"primary": map[string]any{"usedPercent": 12, "windowDurationMins": 300, "resetsAt": 1787380200},
+		},
+	}}, nil
 }
 
 func fixtureStateDir() (string, error) {
