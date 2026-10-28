@@ -65,7 +65,7 @@ func (c *Client) createAgent(ctx context.Context, req core.CreateAgentRequest, r
 	if strings.TrimSpace(req.Window) == "" {
 		return result, &Refusal{Code: CodeSelectorInvalid, message: "CreateAgentRequest.Window must name one Window"}
 	}
-	checked, err := c.checkCreateAgent(ctx, req, runner, false, false)
+	checked, err := c.checkCreateAgent(ctx, req, runner, false, false, false)
 	if err != nil {
 		return result, err
 	}
@@ -155,8 +155,10 @@ type createAgentChecks struct {
 // PreflightCreateAgent runs it too. It does not refuse an empty Window. For
 // process it keeps the process creator's Creator grammar and requires a
 // provider the process creator hosts once the provider is resolved. Only
-// skipEnabled leaves out the providers setting, which is checked last.
-func (c *Client) checkCreateAgent(ctx context.Context, req core.CreateAgentRequest, runner mutationruntime.TmuxCommandRunner, process, skipEnabled bool) (createAgentChecks, error) {
+// skipEnabled leaves out the providers setting, which is checked last. A
+// resume selects no profile of its own: it inherits the conversation's inside
+// the create, as the CLI resume picker does, so resume skips the profile.
+func (c *Client) checkCreateAgent(ctx context.Context, req core.CreateAgentRequest, runner mutationruntime.TmuxCommandRunner, process, skipEnabled, resume bool) (createAgentChecks, error) {
 	var checked createAgentChecks
 	for _, input := range []struct {
 		kind       metadata.Kind
@@ -238,8 +240,10 @@ func (c *Client) checkCreateAgent(ctx context.Context, req core.CreateAgentReque
 			return checked, createRefusal(err, "CreateAgentRequest")
 		}
 	}
-	if err = planner.SettingsService().ResolveCreateProfile("create agent", provider, &planner.Settings); err != nil {
-		return checked, createRefusal(err, "CreateAgentRequest")
+	if !resume {
+		if err = planner.SettingsService().ResolveCreateProfile("create agent", provider, &planner.Settings); err != nil {
+			return checked, createRefusal(err, "CreateAgentRequest")
+		}
 	}
 	if planner.Settings.ProfileLaunch.Active() {
 		if err = fields.RequireLaunchOptions("create agent", provider, planner.Settings.Model, planner.Settings.Effort, settings.DialogueReplyOnly, "nothing was created"); err != nil {

@@ -25,6 +25,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/pins"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -3460,7 +3461,7 @@ func TestSettingsAIResumePickerRowsAndCustomWrite(t *testing.T) {
 	if err := cmd.setAIResumePickerLimit(50, &stdout); err != nil {
 		t.Fatalf("setAIResumePickerLimit error = %v", err)
 	}
-	if got := cmd.currentAIResumePickerLimit(); got.Limit != 50 || got.Source != aiResumePickerLimitSourceGlobal {
+	if got := cmd.currentAIResumePickerLimit(); got.Limit != 50 || got.Source != mutationruntime.ResumePickerLimitSourceGlobal {
 		t.Fatalf("current resume picker = %#v, want 50/global", got)
 	}
 	if got, want := stdout.String(), "AI resume picker limit: 50\n"; got != want {
@@ -3480,7 +3481,7 @@ func TestSettingsAIResumePickerRowsAndCustomWrite(t *testing.T) {
 	if err := cmd.setAIResumeScanDepth(2, &stdout); err != nil {
 		t.Fatalf("setAIResumeScanDepth error = %v", err)
 	}
-	if got := cmd.currentAIResumeScanDepth(); got.Depth != 2 || got.Source != aiResumeScanDepthSourceGlobal {
+	if got := cmd.currentAIResumeScanDepth(); got.Depth != 2 || got.Source != mutationruntime.ResumeScanDepthSourceGlobal {
 		t.Fatalf("current scan depth = %#v, want 2/global", got)
 	}
 	if !hasEntryLabelContaining(cmd.aiResumePickerDepthEntries(), "depth 2") {

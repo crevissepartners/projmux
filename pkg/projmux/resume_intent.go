@@ -44,9 +44,10 @@ func checkResumeSelectionShape(host string, agent core.WindowIntentAgent) error 
 // still list the same conversation from the same source. It runs in
 // PreflightWindowIntent and again in CreateWindowFromIntent right before the
 // transaction, so a selection made stale since it was listed is refused
-// before any effect.
+// before any effect. A Resume names a Claude, Antigravity or Codex rollout
+// conversation, so the check reads no Codex catalog and starts no process.
 func (c *Client) checkResumeCandidate(ctx context.Context, project string, selection core.ResumeSelection) error {
-	candidates, err := c.ListResumeCandidates(ctx, core.ResumeCandidateQuery{Project: project, Provider: selection.Provider, Cwd: selection.Cwd})
+	candidates, err := c.listResumeCandidates(ctx, core.ResumeCandidateQuery{Project: project, Provider: selection.Provider, Cwd: selection.Cwd}, false)
 	if err != nil {
 		return err
 	}

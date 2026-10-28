@@ -8,10 +8,10 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/tmux"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"github.com/crevissepartners/projmux/internal/services/resources"
-	"github.com/crevissepartners/projmux/internal/version"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
 )
 
@@ -22,13 +22,21 @@ import (
 // Codex catalog may start the default Codex app-server proxy, as the picker
 // does. A provider whose search failed or did not finish contributes no rows.
 // Each call runs a discovery of its own and shares no state with another
-// call, so concurrent calls are independent.
+// call, so concurrent calls are independent. The Codex catalog is read with
+// the Client's captured home and environment; when that native session
+// cannot be prepared, Codex rows come from rollouts only.
 func (c *Client) ListResumeCandidates(ctx context.Context, query core.ResumeCandidateQuery) ([]core.ResumeCandidate, error) {
+	return c.listResumeCandidates(ctx, query, true)
+}
+
+// listResumeCandidates lists query's candidates. Without catalog the Codex
+// app-server is never read or started: Codex rows come from rollouts only.
+func (c *Client) listResumeCandidates(ctx context.Context, query core.ResumeCandidateQuery, catalog bool) ([]core.ResumeCandidate, error) {
 	cwd, enabled, err := c.resumeCandidateInputs(ctx, query)
 	if err != nil {
 		return nil, err
 	}
-	frame := c.resumeDiscovery(ctx, cwd, enabled).Populate()
+	frame := c.resumeDiscovery(ctx, cwd, enabled, catalog).Populate()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -82,8 +90,9 @@ func (c *Client) resumeCandidateInputs(ctx context.Context, query core.ResumeCan
 }
 
 // resumeDiscovery is a new discovery of cwd for one call, read through the
-// Client's home and environment.
-func (c *Client) resumeDiscovery(ctx context.Context, cwd string, enabled map[string]bool) *mutationruntime.ResumeDiscovery {
+// Client's home and environment. With catalog, the default Codex app-server
+// route is found and connected through the Client's captured native session.
+func (c *Client) resumeDiscovery(ctx context.Context, cwd string, enabled map[string]bool, catalog bool) *mutationruntime.ResumeDiscovery {
 	home := func() (string, error) { return c.discoveryHome, nil }
 	lookup := func(key string) string { return c.discoveryEnv[key] }
 	opts := mutationruntime.ResumeDiscoveryOptions{
@@ -91,18 +100,35 @@ func (c *Client) resumeDiscovery(ctx context.Context, cwd string, enabled map[st
 		Depth:             mutationruntime.ResolveResumeScanDepth(home, lookup, cwd).Depth,
 		Limit:             mutationruntime.ResolveResumePickerLimit(home, lookup, cwd).Limit,
 		PopulationTimeout: mutationruntime.ResumeSummaryPopulationBudget, PopulationContext: context.WithTimeout,
-		Budgets:          mutationruntime.DefaultResumeBudgets(),
-		OpenCodexCatalog: aisessions.NewDefaultCodexCatalogOpener(version.String()),
-		LoadRegistry:     func() (metadata.Registry, error) { return resources.Load(c.paths) },
-		Discover:         aisessions.DiscoverResumeSummariesContext,
+		Budgets:      mutationruntime.DefaultResumeBudgets(),
+		LoadRegistry: func() (metadata.Registry, error) { return resources.Load(c.paths) },
+		Discover:     aisessions.DiscoverResumeSummariesContext,
 	}
-	planner := &mutationruntime.SDKAgentPlanner{Paths: c.paths, HomeDir: c.discoveryHome, Shell: c.projectShell, Executable: c.projmuxExecutable, Environment: c.agentEnvironment, Store: &mutationruntime.CreateStore{Load: opts.LoadRegistry}}
-	planner.Initialize()
-	if native, err := planner.NativeSession(); err == nil {
-		opts.CodexNative = sdkCodexCatalog{current: native.Current}
+	if catalog {
+		planner := &mutationruntime.SDKAgentPlanner{Paths: c.paths, HomeDir: c.discoveryHome, Shell: c.projectShell, Executable: c.projmuxExecutable, Environment: c.agentEnvironment, Store: &mutationruntime.CreateStore{Load: opts.LoadRegistry}}
+		planner.Initialize()
+		if native, err := planner.NativeSession(); err == nil {
+			opts.CodexNative = sdkCodexCatalog{current: native.Current}
+			opts.OpenRoute = func(ctx context.Context, route mutationruntime.NativeCodexRoute, experimental bool) (*codexappserver.Client, error) {
+				if route.Default {
+					return native.Open(ctx, experimental)
+				}
+				return mutationruntime.OpenNativeCodexRoute(ctx, route, experimental)
+			}
+			opts.OpenCodexCatalog = func(ctx context.Context) (aisessions.CodexCatalog, error) {
+				client, err := native.Open(ctx, false)
+				if err != nil {
+					return nil, err
+				}
+				return aisessions.NewCodexCatalog(client), nil
+			}
+		}
 	}
 	if c.resumeSources != nil {
 		c.resumeSources(&opts)
+	}
+	if !catalog {
+		opts.CodexNative, opts.OpenRoute, opts.OpenCodexCatalog = nil, nil, nil
 	}
 	return mutationruntime.NewResumeDiscovery(opts)
 }

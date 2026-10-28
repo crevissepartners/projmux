@@ -8,6 +8,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/receipt"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
 )
@@ -24,7 +25,8 @@ const SessionHistoryNotRecordedFmt = "agent session history not recorded: %s\n"
 // working Registry, the settings layers resolve them, and the provider resume
 // launch is planned from what they resolved. The Agent records the
 // conversation as its session in the same transaction; History holds the
-// session history lines to append once the transaction has committed.
+// session history lines to append once the transaction has committed, and
+// Profile the inherited profile the planned launch applied.
 type ResumePickerCreate struct {
 	Paths                          config.Paths
 	Provider, Conversation, Source string
@@ -32,13 +34,14 @@ type ResumePickerCreate struct {
 	Guidance                       *GuidanceService
 	BindPane                       func(context.Context, AgentPaneBinding) error
 	History                        []sessionhistory.Record
+	Profile                        *receipt.ReceiptProfile
 }
 
 // Prepare plans the resume launch of one picker create. It refuses when the
 // Agents recording the conversation disagree about its profile.
 func (r *ResumePickerCreate) Prepare(working coremetadata.Registry, project coremetadata.Project, _ coremetadata.AgentWorkspace) (AgentPreparation, error) {
 	provider, conversation := r.Provider, strings.TrimSpace(r.Conversation)
-	r.History = nil
+	r.History, r.Profile = nil, nil
 	var values map[string]string
 	var notices []string
 	if len(ResumeLaunchValueKeysFor(provider)) > 0 {
@@ -88,6 +91,9 @@ func (r *ResumePickerCreate) Prepare(working coremetadata.Registry, project core
 		Plan: func(workspace coremetadata.AgentWorkspace) (string, []string, error) {
 			var err error
 			launch, err = r.Launch.PlanAgentResume(provider, workspace, conversation, values)
+			if err == nil && launch.ProfileName != "" {
+				r.Profile = &receipt.ReceiptProfile{Name: launch.ProfileName, Digest: launch.ProfileDigest}
+			}
 			return launch.Title, launch.Argv, err
 		},
 		Bind: func(ctx context.Context, paneID string, workspace coremetadata.AgentWorkspace, title string) error {

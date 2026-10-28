@@ -80,13 +80,15 @@ type resumeDiscoverySources struct {
 	openCodexCatalog              aisessions.OpenCodexCatalog
 	loadRegistry                  func() (coremetadata.Registry, error)
 	discoverResumeSummaryProvider func(context.Context, string, string, aisessions.ResumeSummaryOptions, int) (aisessions.ResumeSummaryDiscovery, error)
+	openRoute                     func(context.Context, NativeCodexRoute, bool) (*codexappserver.Client, error)
 }
 
 // ResumeDiscoveryOptions configures one resume candidate discovery. Ctx is the
 // invocation lifetime; every provider envelope and stage span starts under it.
 // CodexNative nil reads Codex without native routes. Discover nil uses the
-// installed summary discovery. RecordElapsed, when set, receives each
-// provider's settlement witness at that provider's own terminal.
+// installed summary discovery. OpenRoute nil connects to a route with
+// OpenNativeCodexRoute. RecordElapsed, when set, receives each provider's
+// settlement witness at that provider's own terminal.
 type ResumeDiscoveryOptions struct {
 	Ctx               context.Context
 	Cwd, Home         string
@@ -97,6 +99,7 @@ type ResumeDiscoveryOptions struct {
 	Budgets           ResumeBudgets
 	HandoffTimer      func(time.Duration) (<-chan time.Time, func())
 	CodexNative       ResumeCodexCatalog
+	OpenRoute         func(context.Context, NativeCodexRoute, bool) (*codexappserver.Client, error)
 	OpenCodexCatalog  aisessions.OpenCodexCatalog
 	LoadRegistry      func() (coremetadata.Registry, error)
 	Discover          func(context.Context, string, string, aisessions.ResumeSummaryOptions, int) (aisessions.ResumeSummaryDiscovery, error)
@@ -127,7 +130,7 @@ func NewResumeDiscovery(opts ResumeDiscoveryOptions) *ResumeDiscovery {
 		ctx = context.Background()
 	}
 	return &ResumeDiscovery{
-		cmd:               &resumeDiscoverySources{codexNative: opts.CodexNative, openCodexCatalog: opts.OpenCodexCatalog, loadRegistry: opts.LoadRegistry, discoverResumeSummaryProvider: opts.Discover},
+		cmd:               &resumeDiscoverySources{codexNative: opts.CodexNative, openCodexCatalog: opts.OpenCodexCatalog, loadRegistry: opts.LoadRegistry, discoverResumeSummaryProvider: opts.Discover, openRoute: opts.OpenRoute},
 		ctx:               ctx,
 		cwd:               opts.Cwd,
 		home:              opts.Home,
@@ -489,10 +492,14 @@ func (c *ResumeDiscovery) discoverResumeProvider(
 	var failures []error
 	nativeSettled := false
 	resolvedRoutes := make([]NativeCodexRoute, 0, len(inventory.routes))
+	openRoute := c.cmd.openRoute
+	if openRoute == nil {
+		openRoute = OpenNativeCodexRoute
+	}
 	for _, route := range inventory.routes {
 		resolvedRoutes = append(resolvedRoutes, route)
 		generation, err := discover(fallbackSpan.Ctx, provider, c.cwd, routeOptions(func(openCtx context.Context) (aisessions.CodexCatalog, error) {
-			client, openErr := OpenNativeCodexRoute(openCtx, route, false)
+			client, openErr := openRoute(openCtx, route, false)
 			if openErr != nil {
 				return nil, openErr
 			}

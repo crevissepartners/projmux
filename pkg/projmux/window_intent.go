@@ -2,6 +2,7 @@ package projmux
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -144,15 +145,10 @@ func (c *Client) checkWindowIntent(ctx context.Context, intent core.WindowCreate
 	// A tmux create always holds the providers setting, as CreateAgent does.
 	// The process creator does not, so a process intent asks for it.
 	skipEnabled := process && !intent.RequireEnabledProvider
-	if checked.agent, err = c.checkCreateAgent(ctx, req, runner, process, skipEnabled); err != nil {
+	if checked.agent, err = c.checkCreateAgent(ctx, req, runner, process, skipEnabled, agent.Resume != nil); err != nil {
 		return checked, err
 	}
 	planner := checked.agent.planner
-	if agent.Resume != nil {
-		// A resume inherits the profile of the conversation inside the
-		// transaction; a default profile of the provider is not applied.
-		planner.Settings.ProfileLaunch = mutationruntime.ProfileLaunch{}
-	}
 	// The read half of PrepareSnapshots, as PreflightCreateAgent runs it.
 	if settings := planner.Settings; settings.Instructions != "" {
 		if err := planner.SettingsService().CheckPersonaLaunch("create agent", settings.Instructions, settings.InstructionsOption); err != nil {
@@ -183,6 +179,18 @@ func (c *Client) checkWindowIntent(ctx context.Context, intent core.WindowCreate
 	checked.preview.Provider = checked.agent.provider
 	if profile := planner.ProfileReceipt(); profile != nil {
 		checked.preview.Profile = profile.Name
+	}
+	if selection := agent.Resume; selection != nil {
+		// A resume launches with the profile the recording Agents name.
+		reg, err := resources.Load(c.paths)
+		if err != nil {
+			return checked, resourceRefusal(err)
+		}
+		inherited, err := mutationruntime.InheritedResumeProfile(&reg, selection.Provider, strings.TrimSpace(selection.Conversation))
+		if err != nil {
+			return checked, createRefusal(errors.New("create agent: "+err.Error()), "WindowCreateIntent")
+		}
+		checked.preview.Profile = inherited[metadata.AnnotationAgentProfile]
 	}
 	checked.preview.CwdFrom = "project"
 	if checked.cwdPane != "" {
@@ -268,7 +276,11 @@ func (c *Client) createTmuxWindowFromIntent(ctx context.Context, intent core.Win
 	if historyNotice != "" {
 		notices = append(notices, historyNotice)
 	}
-	rcpt := windowIntentReceipt(out.Window, agentRow.UID, agentRow.Name, planner.ProfileReceipt())
+	profile := planner.ProfileReceipt()
+	if resume != nil {
+		profile = resume.Profile
+	}
+	rcpt := windowIntentReceipt(out.Window, agentRow.UID, agentRow.Name, profile)
 	if err := c.windowIntentProjection(&result, out.Window.UID, agentRow.UID, rcpt); err != nil {
 		return result, err
 	}
