@@ -37,6 +37,7 @@ var claudeSessionRefWriters = []string{
 	"internal/app/agent_session_ref.go:persistAgentSessionRef",
 	"internal/app/agent_session_ref.go:persistManagedAgentInteractionWithActivationPolicy",
 	"internal/app/create_intent.go:openIntentAgent",
+	"internal/services/mutations/runtime/resume_picker_create.go:Prepare",
 }
 
 // sessionHistoryAppendHelpers write a staged line after a commit.
@@ -58,6 +59,7 @@ var sessionHistoryObservedRowWriters = []string{
 	"internal/app/agent_session_ref.go:persistManagedAgentInteractionWithActivationPolicy",
 	"internal/services/mutations/runtime/create_native_agent.go:Create",
 	"internal/app/create_intent.go:openIntentAgent",
+	"internal/services/mutations/runtime/resume_picker_create.go:Prepare",
 }
 
 // sessionHistoryObservedRowBuilders are the calls that build an observed row
@@ -156,6 +158,10 @@ func TestSessionHistoryObservedRowWritersCarryAffiliation(t *testing.T) {
 	for _, key := range want {
 		if key == "internal/services/mutations/runtime/create_native_agent.go:Create" {
 			requireNativeHistoryCarrier(t, funcs)
+			continue
+		}
+		if key == resumePickerHistoryWriter {
+			requireResumePickerHistoryCarrier(t, root)
 			continue
 		}
 		fn := funcs[key]
@@ -271,6 +277,10 @@ func TestClaudeSessionRefWritersRecordHistory(t *testing.T) {
 	}
 
 	for _, key := range want {
+		if key == resumePickerHistoryWriter {
+			requireResumePickerHistoryCarrier(t, root)
+			continue
+		}
 		fn := funcs[key]
 		if !callsAny(fn, "claudeSessionHistoryRecord") {
 			t.Errorf("%s calls RecordAgentSessionRef but never stages a history line with claudeSessionHistoryRecord", key)
@@ -1143,5 +1153,82 @@ func requireNativeHistoryCarrier(t *testing.T, funcs map[string]*ast.FuncDecl) {
 	observe := funcs["internal/services/mutations/runtime/create_sdk_native.go:Observe"]
 	if observe == nil || !callsAny(observe, "Append") {
 		t.Fatal("SDK native history carrier lost its explicit post-commit append")
+	}
+}
+
+// resumePickerHistoryWriter is the SDK resume-picker create's preparation. It
+// runs inside the create's transaction in the service package, so it cannot
+// use the app's history helpers; requireResumePickerHistoryCarrier holds it
+// to the same two steps.
+const resumePickerHistoryWriter = "internal/services/mutations/runtime/resume_picker_create.go:Prepare"
+
+// requireResumePickerHistoryCarrier requires that ResumePickerCreate.Prepare
+// stages its observed rows in its History field, built with ObservedRecordFor
+// from the transaction's working Registry, and that the SDK create appends
+// that field only after its transaction returned without error.
+func requireResumePickerHistoryCarrier(t *testing.T, root string) {
+	t.Helper()
+	parse := func(rel, name string) *ast.FuncDecl {
+		file, err := parser.ParseFile(token.NewFileSet(), filepath.Join(root, rel), nil, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, decl := range file.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == name && fn.Body != nil {
+				return fn
+			}
+		}
+		t.Fatalf("resume picker history carrier missing: %s:%s", rel, name)
+		return nil
+	}
+	prepare := parse("internal/services/mutations/runtime/resume_picker_create.go", "Prepare")
+	staged := false
+	ast.Inspect(prepare, func(node ast.Node) bool {
+		if assign, ok := node.(*ast.AssignStmt); ok {
+			for i, left := range assign.Lhs {
+				sel, ok := left.(*ast.SelectorExpr)
+				call, isCall := assign.Rhs[min(i, len(assign.Rhs)-1)].(*ast.CallExpr)
+				if ok && sel.Sel.Name == "History" && isCall && calleeName(call) == "append" {
+					staged = true
+				}
+			}
+		}
+		return true
+	})
+	if !staged || !callsAny(prepare, "ObservedRecordFor") {
+		t.Fatal("ResumePickerCreate.Prepare must stage its ObservedRecordFor rows in its History field")
+	}
+	create := parse("pkg/projmux/window_intent.go", "createTmuxWindowFromIntent")
+	var committed, appended token.Pos
+	ast.Inspect(create, func(node ast.Node) bool {
+		if call, ok := node.(*ast.CallExpr); ok {
+			switch calleeName(call) {
+			case "Transact":
+				committed = call.Pos()
+			case "Append":
+				appended = call.Pos()
+			}
+		}
+		return true
+	})
+	returnsOnError := false
+	for index, stmt := range create.Body.List {
+		if committed < stmt.Pos() || committed > stmt.End() || index+1 >= len(create.Body.List) {
+			continue
+		}
+		guard, ok := create.Body.List[index+1].(*ast.IfStmt)
+		if !ok || guard.End() >= appended {
+			continue
+		}
+		if cond, ok := guard.Cond.(*ast.BinaryExpr); ok && cond.Op == token.NEQ {
+			for _, inner := range guard.Body.List {
+				if _, ok := inner.(*ast.ReturnStmt); ok {
+					returnsOnError = true
+				}
+			}
+		}
+	}
+	if committed == token.NoPos || appended <= committed || !returnsOnError {
+		t.Fatal("createTmuxWindowFromIntent must return on transaction error before appending the resume history")
 	}
 }
