@@ -16,7 +16,10 @@ type AgentCreateRequest struct {
 	Provider, Cwd, CwdFrom, Placement string
 	AddDirs, Payload                  []string
 	CwdSet, DialogueReplyOnly         bool
-	Labels                            map[string]string
+	// NoEqualize skips evening the split against its anchor, for an anchor the
+	// same operation retires.
+	NoEqualize bool
+	Labels     map[string]string
 }
 type AgentPreparation struct {
 	Plan                  func(coremetadata.AgentWorkspace) (string, []string, error)
@@ -307,7 +310,7 @@ func (c *AgentCreation) Operation(scope CreateScope, flags AgentCreateRequest, s
 			if err != nil {
 				return err
 			}
-			if !work.Target.Virtual {
+			if !work.Target.Virtual && !flags.NoEqualize {
 				c.Execution.Runtime.EqualizeSplitLayout(ctx, anchorPaneID, flags.Placement)
 			}
 			// The managed-pane options are what make this pane an agent pane to

@@ -89,6 +89,8 @@ type Client struct {
 	transport          resourcegraph.Transport
 	runtimeSocketPath  string
 	codexModelLister   func(context.Context) ([]string, error)
+	// activationAwait replaces the provider-hook wait of a tmux create; tests only.
+	activationAwait func(context.Context, mutationruntime.TmuxCommandRunner, string, time.Duration, time.Duration) (bool, string, error)
 }
 
 // NewClient captures paths without creating directories or changing the process

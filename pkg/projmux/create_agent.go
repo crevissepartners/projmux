@@ -65,12 +65,12 @@ func (c *Client) createAgent(ctx context.Context, req core.CreateAgentRequest, r
 	if strings.TrimSpace(req.Window) == "" {
 		return result, &Refusal{Code: CodeSelectorInvalid, message: "CreateAgentRequest.Window must name one Window"}
 	}
-	checked, err := c.checkCreateAgent(ctx, req, runner, false)
+	checked, err := c.checkCreateAgent(ctx, req, runner, false, false)
 	if err != nil {
 		return result, err
 	}
 	scope, labels, socket, execution, transaction := checked.scope, checked.labels, checked.socket, checked.execution, checked.transaction
-	fields, planner, provider, creator, operator := checked.fields, checked.planner, checked.provider, checked.creator, checked.operator
+	planner, provider := checked.planner, checked.provider
 	req.CwdFrom = checked.cwdFrom
 	if err := ctx.Err(); err != nil {
 		return result, err
@@ -96,26 +96,8 @@ func (c *Client) createAgent(ctx context.Context, req core.CreateAgentRequest, r
 	if placement == "" {
 		placement = "right"
 	}
-	// The CLI's creator precedence: a declaration naming no Agent refuses, then
-	// an in-process operator is recorded in its place.
 	var declined string
-	machine := &mutationruntime.AgentCreation{Execution: execution, Prepare: planner.Prepare, ResolveWorkspace: func(reg metadata.Registry, p metadata.Project, provider, cwd string, dirs []string) (metadata.AgentWorkspace, error) {
-		return mutationruntime.ResolveAgentWorkspaceFor("create agent", reg, p, provider, cwd, dirs)
-	}, Creator: func(_ context.Context, reg *metadata.Registry) (mutationruntime.AgentCreatorRecord, error) {
-		declared, err := mutationruntime.DeclaredAgentCreator(reg, creator, "create agent", fields.Option("creator"))
-		if err != nil || operator == "" {
-			return declared, err
-		}
-		decision := mutationruntime.DecideOperatorCreator(operator, creator)
-		declined = ""
-		if decision.Declined != "" {
-			declined = mutationruntime.CreatorDeclinedNotice(decision.Declined, decision.Declared)
-		}
-		return decision.AgentCreatorRecord, nil
-	}}
-	if native != nil {
-		machine.Native = native.Engine
-	}
+	machine := checked.agentCreation(native, &declined)
 	var out mutationruntime.AgentCreateResult
 	request := mutationruntime.AgentCreateRequest{CreateSelection: selection, Provider: provider, Cwd: req.Cwd, CwdSet: req.Cwd != "", CwdFrom: req.CwdFrom, Placement: placement, AddDirs: req.AddDirs, Payload: req.Payload, DialogueReplyOnly: req.DialogueReplyOnly, Labels: labels}
 	err = transaction.TransactAdmitted(mutationruntime.CreateKindAgent, execution.ProcessAnchorAdmission(scope, selection, "create agent"), machine.Operation(scope, request, "create agent", &out), execution.ProjectOwnershipGuard(scope))
@@ -129,8 +111,7 @@ func (c *Client) createAgent(ctx context.Context, req core.CreateAgentRequest, r
 	if native != nil {
 		native.Observe(out)
 	}
-	activation := mutationruntime.AgentActivationService{Store: transaction.Store, Runner: execution.Runtime.Runner, Await: planner.Launch.AwaitAgentActivation}
-	activationErr := activation.Confirm(out.ActivationTargets)
+	activationErr := c.confirmActivations(checked, out.ActivationTargets)
 	projection, err := c.createProjection(socket, core.KindAgent, first)
 	if err != nil {
 		return result, err
@@ -173,8 +154,9 @@ type createAgentChecks struct {
 // providers. It reads the Registry and the config and writes nothing, so
 // PreflightCreateAgent runs it too. It does not refuse an empty Window. For
 // process it keeps the process creator's Creator grammar and requires a
-// provider the process creator hosts once the provider is resolved.
-func (c *Client) checkCreateAgent(ctx context.Context, req core.CreateAgentRequest, runner mutationruntime.TmuxCommandRunner, process bool) (createAgentChecks, error) {
+// provider the process creator hosts once the provider is resolved. Only
+// skipEnabled leaves out the providers setting, which is checked last.
+func (c *Client) checkCreateAgent(ctx context.Context, req core.CreateAgentRequest, runner mutationruntime.TmuxCommandRunner, process, skipEnabled bool) (createAgentChecks, error) {
 	var checked createAgentChecks
 	for _, input := range []struct {
 		kind       metadata.Kind
@@ -270,10 +252,47 @@ func (c *Client) checkCreateAgent(ctx context.Context, req core.CreateAgentReque
 	if _, err := mutationruntime.DeclaredAgentCreator(&reg, creator, "create agent", fields.Option("creator")); err != nil {
 		return checked, &Refusal{Code: CodeCreateCreatorInvalid, message: err.Error(), cause: err}
 	}
-	if err := planner.RequireEnabled(provider); err != nil {
+	checked = createAgentChecks{scope: scope, labels: labels, socket: socket, execution: execution, transaction: transaction, fields: fields, planner: planner, provider: provider, creator: creator, operator: operator, cwdFrom: req.CwdFrom}
+	if err := planner.RequireEnabled(provider); err != nil && !skipEnabled {
 		return checked, createRefusal(err, "CreateAgentRequest")
 	}
-	return createAgentChecks{scope: scope, labels: labels, socket: socket, execution: execution, transaction: transaction, fields: fields, planner: planner, provider: provider, creator: creator, operator: operator, cwdFrom: req.CwdFrom}, nil
+	return checked, nil
+}
+
+// agentCreation is the Agent create machine CreateAgent and
+// CreateWindowFromIntent run, with the CLI's creator precedence: a
+// declaration naming no Agent refuses, then an in-process operator is recorded
+// in its place and the declined declaration is set in declined.
+func (checked createAgentChecks) agentCreation(native *mutationruntime.SDKNativeCreation, declined *string) *mutationruntime.AgentCreation {
+	fields, creator, operator := checked.fields, checked.creator, checked.operator
+	machine := &mutationruntime.AgentCreation{Execution: checked.execution, Prepare: checked.planner.Prepare, ResolveWorkspace: func(reg metadata.Registry, p metadata.Project, provider, cwd string, dirs []string) (metadata.AgentWorkspace, error) {
+		return mutationruntime.ResolveAgentWorkspaceFor("create agent", reg, p, provider, cwd, dirs)
+	}, Creator: func(_ context.Context, reg *metadata.Registry) (mutationruntime.AgentCreatorRecord, error) {
+		declared, err := mutationruntime.DeclaredAgentCreator(reg, creator, "create agent", fields.Option("creator"))
+		if err != nil || operator == "" {
+			return declared, err
+		}
+		decision := mutationruntime.DecideOperatorCreator(operator, creator)
+		*declined = ""
+		if decision.Declined != "" {
+			*declined = mutationruntime.CreatorDeclinedNotice(decision.Declined, decision.Declared)
+		}
+		return decision.AgentCreatorRecord, nil
+	}}
+	if native != nil {
+		machine.Native = native.Engine
+	}
+	return machine
+}
+
+// confirmActivations waits for the provider hooks of a committed tmux create
+// and records each outcome, as CreateAgent does.
+func (c *Client) confirmActivations(checked createAgentChecks, targets []mutationruntime.AgentActivationTarget) error {
+	activation := mutationruntime.AgentActivationService{Store: checked.transaction.Store, Runner: checked.execution.Runtime.Runner, Await: checked.planner.Launch.AwaitAgentActivation}
+	if c.activationAwait != nil {
+		activation.Await = c.activationAwait
+	}
+	return activation.Confirm(targets)
 }
 
 func createFirstResult(rows []mutationruntime.ShellCreateResource) (mutationruntime.ShellCreateResource, error) {
@@ -297,6 +316,13 @@ func processCreateShape(req core.CreateAgentRequest) error {
 }
 
 func (c *Client) createProcessAgent(ctx context.Context, req core.CreateAgentRequest) (core.CreateAgentResult, error) {
+	return c.createProcessAgentIn(ctx, req, nil)
+}
+
+// createProcessAgentIn creates req's process Agent in req.Window, or, with
+// newWindow, in that new Window, which the process creator reserves and rolls
+// back together with the Agent.
+func (c *Client) createProcessAgentIn(ctx context.Context, req core.CreateAgentRequest, newWindow *metadata.BootstrapWindow) (core.CreateAgentResult, error) {
 	var result core.CreateAgentResult
 	if err := ctx.Err(); err != nil {
 		return result, err
@@ -308,9 +334,12 @@ func (c *Client) createProcessAgent(ctx context.Context, req core.CreateAgentReq
 	if err != nil {
 		return result, err
 	}
-	window, err := selector.ParseRef(metadata.KindWindow, req.Window)
-	if err != nil {
-		return result, resourceRefusal(selectorInputError(err, "CreateAgentRequest.Window"))
+	var window selector.Ref
+	if newWindow == nil {
+		window, err = selector.ParseRef(metadata.KindWindow, req.Window)
+		if err != nil {
+			return result, resourceRefusal(selectorInputError(err, "CreateAgentRequest.Window"))
+		}
 	}
 	creator := ""
 	if req.Creator != "" {
@@ -328,7 +357,7 @@ func (c *Client) createProcessAgent(ctx context.Context, req core.CreateAgentReq
 	}
 	// The operator travels to the owner route as a typed field of the internal
 	// request, never as argv.
-	options := mutationruntime.ProcessAgentCreateOptions{Project: scope.Project, Window: window, Provider: req.Provider, Name: req.Name, CWD: req.Cwd, Model: req.Model, Effort: req.Effort, Instructions: req.Instructions, Profile: req.Profile, Creator: creator, OperatorCreatorClient: operator, Payload: req.Payload, AddDirs: req.AddDirs, Labels: labels}
+	options := mutationruntime.ProcessAgentCreateOptions{Project: scope.Project, Window: window, NewWindow: newWindow, Provider: req.Provider, Name: req.Name, CWD: req.Cwd, Model: req.Model, Effort: req.Effort, Instructions: req.Instructions, Profile: req.Profile, Creator: creator, OperatorCreatorClient: operator, Payload: req.Payload, AddDirs: req.AddDirs, Labels: labels}
 	reply, err := mutationruntime.ExecuteDetachedProcessCreate(ctx, c.processCreateContext, options)
 	if reply.Binding.Agent != "" {
 		_ = unregisterCopy(metadata.ProcessBinding{HostInstanceID: reply.Binding.Host, ProjectUID: reply.Binding.Project, WindowUID: reply.Binding.Window, AgentUID: reply.Binding.Agent, PaneUID: reply.Binding.Pane, Generation: reply.Binding.Generation, OperationID: reply.Binding.Operation}, &result.Binding)
