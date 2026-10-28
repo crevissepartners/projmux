@@ -691,12 +691,13 @@ Agent session history (Claude and Codex):
   the state domain and version witnessed by its dedicated initialized wire.
   `TestClaudeSessionRefWritersRecordHistory` pins the callers of
   `RecordAgentSessionRef`, and
-  `TestSessionHistoryObservedRowWritersCarryAffiliation` pins the set of five,
+  `TestSessionHistoryObservedRowWritersCarryAffiliation` pins the set of six,
   that each builds its row with `sessionhistory.ObservedRecordFor` (directly or
   through `claudeSessionHistoryRecord`) from its transaction's `working`
   Registry, that each reaches a post-commit append helper (the native create
   carrier is appended by CLI `createAgent` or SDK `SDKNativeCreation.Observe`
-  only after the shared transaction returns successfully), and that no other
+  only after the shared transaction returns successfully, and the SDK
+  resume-picker create appends `ResumePickerCreate.History` the same way), and that no other
   code builds an `observed` row with `RecordFor`. The append runs after the
   commit and never fails its caller: a hook logs one `session-history` line to
   `ai-ingest.log`, a CLI create or process writer prints one

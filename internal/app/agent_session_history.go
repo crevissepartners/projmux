@@ -51,7 +51,7 @@ import (
 //
 // TestClaudeSessionRefWritersRecordHistory pins the callers of
 // RecordAgentSessionRef, and
-// TestSessionHistoryObservedRowWritersCarryAffiliation pins the set of five
+// TestSessionHistoryObservedRowWritersCarryAffiliation pins the set of six
 // and that no other code builds an observed row with RecordFor, so a new
 // writer cannot land without the history or without its affiliation.
 //
