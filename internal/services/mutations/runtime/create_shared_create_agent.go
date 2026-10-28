@@ -30,6 +30,9 @@ type AgentPreparation struct {
 	ManagedBase           func(string) (*ManagedCodexBase, error)
 	Policy                codexappserver.ThreadPolicy
 	Model, Effort         string
+	// Created, when set, records what the new Agent carries beyond its
+	// annotations, in the same transaction, before its Pane is attached.
+	Created func(*coremetadata.Registry, coremetadata.Mutator, string) error
 }
 type AgentCreatorRecord struct{ Annotations map[string]string }
 
@@ -197,6 +200,11 @@ func (c *AgentCreation) Operation(scope CreateScope, flags AgentCreateRequest, s
 				return MapMetadataError(err)
 			}
 			agentCreator := creator.ForAgent(working, agent.Metadata.UID)
+			if prepared.Created != nil {
+				if err := prepared.Created(working, mutator, agent.Metadata.UID); err != nil {
+					return err
+				}
+			}
 			out.Notices = append(out.Notices, prepared.Notices(agent.Metadata.Name)...)
 
 			pane, err := mutator.AttachAgentPane(working, agent.Metadata.UID, coremetadata.BootstrapPane{

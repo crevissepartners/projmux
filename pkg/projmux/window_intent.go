@@ -7,6 +7,7 @@ import (
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/receipt"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
 	"github.com/crevissepartners/projmux/internal/integrations/tmux"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"github.com/crevissepartners/projmux/internal/services/resources"
@@ -87,7 +88,9 @@ func (c *Client) checkWindowIntent(ctx context.Context, intent core.WindowCreate
 	agent := intent.Agent
 	if agent != nil {
 		if agent.Resume != nil {
-			return checked, windowIntentRefusal("WindowCreateIntent.Agent.Resume is not supported yet; nothing was created")
+			if err := checkResumeSelectionShape(host, *agent); err != nil {
+				return checked, err
+			}
 		}
 		cwdFrom := strings.TrimSpace(agent.CwdFrom)
 		switch {
@@ -127,6 +130,9 @@ func (c *Client) checkWindowIntent(ctx context.Context, intent core.WindowCreate
 		return checked, ctx.Err()
 	}
 	req := core.CreateAgentRequest{Host: intent.Host, Detach: intent.Detach, Project: intent.Project, Provider: agent.Provider, Profile: agent.Profile, Instructions: agent.Instructions, Model: agent.Model, Effort: agent.Effort, Labels: agent.Labels, CwdFrom: agent.CwdFrom, Payload: agent.Payload, Creator: agent.Creator, SocketPath: intent.SocketPath, Operator: agent.Operator}
+	if agent.Resume != nil {
+		req.Provider, req.Cwd = agent.Resume.Provider, agent.Resume.Cwd
+	}
 	process := host == "process"
 	if process {
 		if err := processCreateShape(req); err != nil {
@@ -141,6 +147,11 @@ func (c *Client) checkWindowIntent(ctx context.Context, intent core.WindowCreate
 		return checked, err
 	}
 	planner := checked.agent.planner
+	if agent.Resume != nil {
+		// A resume inherits the profile of the conversation inside the
+		// transaction; a default profile of the provider is not applied.
+		planner.Settings.ProfileLaunch = mutationruntime.ProfileLaunch{}
+	}
 	// The read half of PrepareSnapshots, as PreflightCreateAgent runs it.
 	if settings := planner.Settings; settings.Instructions != "" {
 		if err := planner.SettingsService().CheckPersonaLaunch("create agent", settings.Instructions, settings.InstructionsOption); err != nil {
@@ -158,6 +169,11 @@ func (c *Client) checkWindowIntent(ctx context.Context, intent core.WindowCreate
 		}
 		if _, ok := mutationruntime.ProjectPaneWindow(reg, project.Metadata.UID, checked.cwdPane); !ok {
 			return checked, windowIntentRefusal("WindowCreateIntent.Agent.CwdPane uid:" + checked.cwdPane + " is not a Pane of the intent's Project; nothing was created")
+		}
+	}
+	if agent.Resume != nil {
+		if err := c.checkResumeCandidate(ctx, intent.Project, *agent.Resume); err != nil {
+			return checked, err
 		}
 	}
 	if err := ctx.Err(); err != nil {
@@ -214,6 +230,14 @@ func (c *Client) createTmuxWindowFromIntent(ctx context.Context, intent core.Win
 		Agent:      mutationruntime.AgentCreateRequest{Provider: provider, Placement: "right", Payload: checked.agentReq.Payload, Labels: agent.labels},
 		CwdPaneUID: checked.cwdPane,
 	}
+	var resume *mutationruntime.ResumePickerCreate
+	if selection := intent.Agent.Resume; selection != nil {
+		resume = c.resumePickerCreate(planner, agent.execution, *selection)
+		machine.Prepare = resume.Prepare
+		if selection.Cwd != "" {
+			request.Agent.Cwd, request.Agent.CwdSet = selection.Cwd, true
+		}
+	}
 	var out mutationruntime.WindowAgentResult
 	err = agent.transaction.Transact(mutationruntime.CreateKindWindow, machine.WindowOperation(checked.scope, request, "create window", &out), agent.execution.ProjectOwnershipGuard(checked.scope))
 	if err != nil {
@@ -221,6 +245,11 @@ func (c *Client) createTmuxWindowFromIntent(ctx context.Context, intent core.Win
 	}
 	if native != nil {
 		native.Observe(out.Agent)
+	}
+	if resume != nil {
+		for _, row := range resume.History {
+			_ = sessionhistory.Append(c.paths.StateDir, row)
+		}
 	}
 	activationErr := c.confirmActivations(agent, out.Agent.ActivationTargets)
 	agentRow, err := createFirstResult(out.Agent.Results)

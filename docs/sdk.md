@@ -309,11 +309,35 @@ under the split rule: inside the Project tree it is used, otherwise the Agent
 starts in the Project root and `Notices` carries the fallback line. A tmux
 create always refuses a provider the providers setting has switched off;
 `RequireEnabledProvider` asks the same of a process intent, in the preflight
-and again in the create. `Agent.Resume` is reserved and refused before any
-effect. `Client.PreflightWindowIntent(ctx, intent)` runs every check the
+and again in the create. `Client.PreflightWindowIntent(ctx, intent)` runs every check the
 create runs before its first effect and returns `core.WindowIntentPreview`
 (shell, host, provider, profile, cwd source); like `PreflightCreateAgent` it
 writes nothing and does not authorize the create.
+
+`Client.ListResumeCandidates(ctx, core.ResumeCandidateQuery{Project, Provider, Cwd})`
+lists the recorded sessions the CLI resume picker lists for the same
+directory, in the same order: the same enabled providers, scan depth, row
+limit, per-provider budgets, Codex catalog routes and collision rules. `Cwd`
+is absolute and defaults to the Project root; `Provider` empty lists every
+enabled provider. A `core.ResumeCandidate` carries what a selection needs
+(`Provider`, `Conversation`, `Source`, `Cwd`) and the row summary (`Title`,
+`Branch`, `UpdatedAt`); no transcript or preview text is read. Reading the
+Codex catalog may start the default Codex app-server proxy, as the picker
+does. Each call runs its own discovery and shares no state with another call.
+
+`Agent.Resume` names one candidate to continue in the new Agent, on tmux only:
+a process intent with `Resume` is refused before any effect, with no tmux
+fallback. The Agent inherits its launch values and profile from the Agents
+that record the conversation, as the picker's create does, so `Profile`,
+`Instructions`, `Model`, `Effort`, `Payload` and `CwdFrom` `pane` are refused
+with it, and `Agent.Provider`, when set, must equal `Resume.Provider`. The
+preflight and the create both list the selection's directory again and refuse
+a selection that is no longer a candidate (`resume-candidate-stale`) before
+any effect; inside the transaction, holders that disagree about the profile
+refuse the create. The new Agent records the conversation as its session in
+the same transaction. Claude, Antigravity and Codex rollout candidates resume;
+a Codex app-server candidate is refused before any effect as not supported
+yet.
 
 `core.WindowIntentResult` carries the Window, the Agent, the `create.window`
 receipt with the Agent row, the remaining PaneID and, for process, the

@@ -91,6 +91,8 @@ type Client struct {
 	codexModelLister   func(context.Context) ([]string, error)
 	// activationAwait replaces the provider-hook wait of a tmux create; tests only.
 	activationAwait func(context.Context, mutationruntime.TmuxCommandRunner, string, time.Duration, time.Duration) (bool, string, error)
+	// resumeSources replaces the provider reads of a resume discovery; tests only.
+	resumeSources func(*mutationruntime.ResumeDiscoveryOptions)
 }
 
 // NewClient captures paths without creating directories or changing the process

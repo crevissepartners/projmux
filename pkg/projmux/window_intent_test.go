@@ -12,6 +12,7 @@ import (
 
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/receipt"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	store "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmux"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
@@ -225,6 +226,29 @@ func TestWindowIntentCLIParity(t *testing.T) {
 		}
 	})
 
+	t.Run("resume", func(t *testing.T) {
+		// The resume picker's create: the Agent's Pane alone in a new Window,
+		// in the conversation's directory, with the conversation recorded as
+		// the Agent's session.
+		f.useResumeCatalog(nil)
+		defer func() { f.c.resumeSources = nil }()
+		id := "11111111-2222-4333-8444-000000000020"
+		cwd := filepath.Join(f.workspace, "sub")
+		f.writeClaudeResumeSession(t, id, cwd, time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC))
+		agent := &core.WindowIntentAgent{Resume: &core.ResumeSelection{Provider: "claude", Conversation: id, Source: aisessions.SourceClaudeTranscript, Cwd: cwd}}
+		if preview, err := f.c.PreflightWindowIntent(ctx, f.intent(agent)); err != nil || preview.Shell || preview.Provider != "claude" {
+			t.Fatalf("preview %+v %v", preview, err)
+		}
+		result, err := f.c.CreateWindowFromIntent(ctx, f.intent(agent))
+		if err != nil {
+			t.Fatal(err)
+		}
+		stored := requireAgentOnlyWindow(t, f.registry(t), result)
+		if ref := stored.Status.SessionRef; ref == nil || ref.Claude == nil || ref.Claude.SessionID != id || stored.Spec.Workspace.CWD != cwd {
+			t.Fatalf("resumed Agent workspace %q session %+v", stored.Spec.Workspace.CWD, ref)
+		}
+	})
+
 	t.Run("refusals", func(t *testing.T) {
 		for _, body := range []string{"provider = \"codex\"\n"} {
 			if _, err := f.c.WriteProfile(ctx, "coder", []byte(body)); err != nil {
@@ -407,7 +431,7 @@ func TestWindowIntentRollbackAndActivationUnknown(t *testing.T) {
 			{Project: "uid:" + f.project, Host: "process", Agent: &core.WindowIntentAgent{Provider: "claude"}},
 			{Project: "uid:" + f.project, Host: "process", Detach: true, Agent: &core.WindowIntentAgent{Provider: "claude", CwdFrom: "pane", CwdPane: "uid:pane-x"}},
 			{Project: "uid:" + f.project, Detach: true, Agent: &core.WindowIntentAgent{Provider: "claude"}},
-			{Project: "uid:" + f.project, Agent: &core.WindowIntentAgent{Provider: "claude", Resume: &core.ResumeSelection{Provider: "claude", Conversation: "c", Source: "s"}}},
+			{Project: "uid:" + f.project, Host: "process", Detach: true, Agent: &core.WindowIntentAgent{Provider: "claude", Resume: &core.ResumeSelection{Provider: "claude", Conversation: "c", Source: "s"}}},
 		} {
 			var refusal *Refusal
 			if _, err := f.c.CreateWindowFromIntent(ctx, intent); !errors.As(err, &refusal) || refusal.Code != CodeCreateRequestInvalid {
