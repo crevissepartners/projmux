@@ -21,7 +21,3 @@ func withCreateSettingSources(flags resourceCreateFlags, base map[string]string)
 func withInheritedSettingSources(inherited, base map[string]string) map[string]string {
 	return mutationruntime.WithInheritedSettingSources(inherited, base)
 }
-
-func withSettingSources(base, sources map[string]string) map[string]string {
-	return mutationruntime.WithSettingSources(base, sources)
-}
