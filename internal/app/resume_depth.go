@@ -26,8 +26,6 @@ const (
 
 type aiResumeScanDepthResolution = mutationruntime.ResumeScanDepthResolution
 
-func normalizeResumeScanDepth(depth int) int { return mutationruntime.NormalizeResumeScanDepth(depth) }
-
 func resolveAIResumeScanDepth(homeDir func() (string, error), lookupEnv func(string) string, cwd string) aiResumeScanDepthResolution {
 	return mutationruntime.ResolveResumeScanDepth(homeDir, lookupEnv, cwd)
 }
