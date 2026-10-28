@@ -18,10 +18,10 @@ func TestResumeProviderUnfinishedAndFailureHaveDistinctLocalizedTerminals(t *tes
 		want   aiResumeProviderState
 		en, ko string
 	}{
-		{"expired without rows", aiResumeProviderResult{provider: aiModeClaude, envelopeExpired: true}, aiResumeProviderScanUnfinished, "scan unfinished", "검색 미완료"},
-		{"real provider error", aiResumeProviderResult{provider: aiModeClaude, err: errors.New("provider failed")}, aiResumeProviderSearchFailed, "search failed", "검색 실패"},
-		{"error still wins over expiry marker", aiResumeProviderResult{provider: aiModeClaude, err: errors.New("provider failed"), envelopeExpired: true}, aiResumeProviderSearchFailed, "search failed", "검색 실패"},
-		{"completed empty scan", aiResumeProviderResult{provider: aiModeClaude}, aiResumeProviderCount, "0 found", "0건 발견"},
+		{"expired without rows", aiResumeProviderResult{Provider: aiModeClaude, EnvelopeExpired: true}, aiResumeProviderScanUnfinished, "scan unfinished", "검색 미완료"},
+		{"real provider error", aiResumeProviderResult{Provider: aiModeClaude, Err: errors.New("provider failed")}, aiResumeProviderSearchFailed, "search failed", "검색 실패"},
+		{"error still wins over expiry marker", aiResumeProviderResult{Provider: aiModeClaude, Err: errors.New("provider failed"), EnvelopeExpired: true}, aiResumeProviderSearchFailed, "search failed", "검색 실패"},
+		{"completed empty scan", aiResumeProviderResult{Provider: aiModeClaude}, aiResumeProviderCount, "0 found", "0건 발견"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := resumeProviderProjection(tc.result, true)

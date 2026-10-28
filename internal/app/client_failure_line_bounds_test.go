@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
@@ -641,7 +642,7 @@ func clientBoundsResumeDisclosure(holders int) string {
 	}
 	return fmt.Sprintf("%s conversation %s opened without inherited launch values (%s): %s record different %s",
 		aiModeClaude, "b3cbaa25-bd88-4f8a-b236-26e760ce0e61", launchValuesReasonAmbiguous,
-		strings.Join(names, ", "), ambiguousLaunchValueSubject(aiModeClaude))
+		strings.Join(names, ", "), mutationruntime.ResumeAmbiguousLaunchValueSubject(aiModeClaude))
 }
 
 // clientBoundsNoticeSurfaces are the two producers that carry that disclosure.
@@ -674,7 +675,7 @@ func TestTheResumeDisclosureLosesItsHoldersAndNotItsEnds(t *testing.T) {
 
 	const holders = 12
 	notice := clientBoundsResumeDisclosure(holders)
-	subject := "record different " + ambiguousLaunchValueSubject(aiModeClaude)
+	subject := "record different " + mutationruntime.ResumeAmbiguousLaunchValueSubject(aiModeClaude)
 	if !strings.HasSuffix(notice, subject) || !strings.Contains(notice, launchValuesReasonAmbiguous) {
 		t.Fatalf("fixture %q is not the disclosure this contract is about", notice)
 	}

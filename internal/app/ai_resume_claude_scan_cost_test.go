@@ -181,7 +181,7 @@ func TestClaudeHandoffExpiryKeepsLateResultOutsideSettlement(t *testing.T) {
 	returned := make(chan aiResumeProviderResult, 1)
 	settled := make(chan aiResumeProviderResult, 1)
 	go func() {
-		settled <- controller.settleProviderResult(aiModeClaude, envelope, startedAt, returned)
+		settled <- controller.discovery().SettleProviderResult(aiModeClaude, envelope, startedAt, returned)
 	}()
 	clock.advance(aiResumeSummaryPopulationBudget)
 	if budget := <-handoffEntered; budget != 35*time.Millisecond {
@@ -190,12 +190,12 @@ func TestClaudeHandoffExpiryKeepsLateResultOutsideSettlement(t *testing.T) {
 	clock.advance(aiResumeHandoffBudget)
 	handoffExpiry <- clock.instant()
 	result := <-settled
-	if !result.envelopeExpired || len(result.discovery.Summaries) != 0 || result.elapsed != aiResumeSummaryPopulationBudget+aiResumeHandoffBudget {
+	if !result.EnvelopeExpired || len(result.Discovery.Summaries) != 0 || result.Elapsed != aiResumeSummaryPopulationBudget+aiResumeHandoffBudget {
 		t.Fatalf("expired handoff result=%+v", result)
 	}
 	// The completed settlement has no receiver left. A late provider can send
 	// into its buffer, but cannot replace the already selected terminal result.
-	returned <- aiResumeProviderResult{provider: aiModeClaude, discovery: discovery}
+	returned <- aiResumeProviderResult{Provider: aiModeClaude, Discovery: discovery}
 	if len(returned) != 1 {
 		t.Fatal("late result was consumed after settlement")
 	}

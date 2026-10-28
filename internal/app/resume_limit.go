@@ -9,13 +9,14 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 const (
 	// aiResumePickerLimitDefault is the number of recent sessions the AI resume
 	// picker shows when nothing is configured. This preserves the historical
 	// hardcoded behaviour (Phase 0 and earlier used a literal 30).
-	aiResumePickerLimitDefault = 30
+	aiResumePickerLimitDefault = mutationruntime.ResumePickerLimitDefault
 	// aiResumePickerLimitEnv overrides the configured/default limit. It takes
 	// precedence over both project and global config, matching the source
 	// priority convention used by the other AI settings.
@@ -40,13 +41,7 @@ type aiResumePickerLimitResolution struct {
 // applies: non-positive falls back to the default, oversized clamps to the
 // supported maximum, and in-range values pass through unchanged.
 func normalizeResumePickerLimit(limit int) int {
-	if limit <= 0 {
-		return aiResumePickerLimitDefault
-	}
-	if limit > hooks.AIResumePickerLimitMax {
-		return hooks.AIResumePickerLimitMax
-	}
-	return limit
+	return mutationruntime.NormalizeResumePickerLimit(limit)
 }
 
 // resolveAIResumePickerLimit resolves the effective resume-picker limit using
