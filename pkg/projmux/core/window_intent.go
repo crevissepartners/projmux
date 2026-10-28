@@ -43,8 +43,9 @@ type WindowCreateIntent struct {
 // The Agent inherits its launch values and profile from the Agents that
 // record the conversation, so Profile, Instructions, Model, Effort, Payload
 // and CwdFrom pane are refused with it; a selection that is no longer a
-// candidate, and a Codex app-server conversation, are refused before any
-// effect.
+// candidate is refused before any effect, and a Codex app-server
+// conversation has its endpoint and generation checked when the Window is
+// created.
 type WindowIntentAgent struct {
 	Provider, Profile, Instructions, Model, Effort string
 	Payload                                        []string
@@ -66,7 +67,10 @@ type ResumeSelection struct {
 // WindowIntentPreview is what PreflightWindowIntent resolved for an intent it
 // did not refuse. Shell reports a Window with no Agent. Provider is the
 // provider the create will run, the profile's when the intent names none;
-// Profile is the profile the create will record, empty for none.
+// Profile is the profile the create will record, empty for none. For a Codex
+// app-server Resume the preview does not check the conversation's endpoint
+// and generation; CreateWindowFromIntent checks them right before its
+// transaction.
 type WindowIntentPreview struct {
 	Shell    bool
 	Host     string

@@ -25,7 +25,9 @@ import (
 // process.
 //
 // It does not authorize the create: CreateWindowFromIntent checks everything
-// again, so settings changed between the two calls decide the create.
+// again, so settings changed between the two calls decide the create. The
+// endpoint and generation of a Codex app-server Resume are not checked by the
+// preview; CreateWindowFromIntent checks them right before its transaction.
 func (c *Client) PreflightWindowIntent(ctx context.Context, intent core.WindowCreateIntent) (core.WindowIntentPreview, error) {
 	checked, err := c.checkWindowIntent(ctx, intent, tmux.ExecRunner{})
 	if err != nil {
@@ -228,6 +230,16 @@ func (c *Client) createTmuxWindowFromIntent(ctx context.Context, intent core.Win
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
+	// A Codex app-server Resume is checked here, right before the
+	// transaction: its row is found again in the catalog and its endpoint
+	// and generation must still resolve to a current route.
+	var nativeResume *mutationruntime.SDKNativeSession
+	var nativeRoute mutationruntime.NativeCodexRoute
+	if selection := intent.Agent.Resume; selection != nil && resumeNativeSelection(*selection) {
+		if nativeRoute, nativeResume, err = c.nativeResumeRoute(ctx, intent.Project, *selection, planner); err != nil {
+			return result, err
+		}
+	}
 	// Admission is the last Context boundary, as in CreateAgent.
 	if err := planner.PrepareSnapshots(provider); err != nil {
 		return result, createRefusal(err, "CreateAgentRequest")
@@ -243,6 +255,10 @@ func (c *Client) createTmuxWindowFromIntent(ctx context.Context, intent core.Win
 	if selection := intent.Agent.Resume; selection != nil {
 		resume = c.resumePickerCreate(planner, agent.execution, *selection)
 		machine.Prepare = resume.Prepare
+		if nativeResume != nil {
+			resume.NativeRoute = &nativeRoute
+			machine.Native = nativeResumeEngine(planner, agent.execution, nativeResume, nativeRoute, selection.Conversation)
+		}
 		if selection.Cwd != "" {
 			request.Agent.Cwd, request.Agent.CwdSet = selection.Cwd, true
 		}
@@ -254,6 +270,9 @@ func (c *Client) createTmuxWindowFromIntent(ctx context.Context, intent core.Win
 	}
 	if native != nil {
 		native.Observe(out.Agent)
+	}
+	if nativeResume != nil {
+		nativeResume.Observe(out.Agent)
 	}
 	var historyNotice string
 	if resume != nil {

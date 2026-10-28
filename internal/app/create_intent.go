@@ -933,31 +933,19 @@ func (c *createCommand) prepareIntentAgent(provider string, flags resourceCreate
 		}
 		plan.nativeRoute = route
 	} else if plan.nativeCatalogResume {
-		if !nativeLaunchCapable || c.codexNative == nil || !flags.resumeEndpoint.Valid() {
+		if !nativeLaunchCapable || c.codexNative == nil {
 			return intentAgentPlan{}, nativeResumePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: codexNativeReasonLegacyEndpointMissing})
 		}
-		// Draining and handover-pending rows are leftovers of the retired
-		// private generation pool; they resolve like current rows, switching
-		// onto the default endpoint of the same Codex state domain or refusing.
-		switch flags.resumeGenerationState {
-		case coremetadata.CodexGenerationCurrent, coremetadata.CodexGenerationDraining, coremetadata.CodexGenerationHandoverPending:
-		default:
-			return intentAgentPlan{}, nativeResumePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable})
-		}
 		nativeCtx, cancel := prepareNativeContext(context.Background())
-		route, routeErr := c.codexNative.Resolve(nativeCtx, flags.resumeEndpoint)
+		route, routeErr := mutationruntime.ResolveNativeCatalogResumeRoute(nativeCtx, flags.resumeEndpoint, flags.resumeGenerationState, func(ctx context.Context, endpoint coremetadata.CodexEndpointRef) (mutationruntime.NativeCodexRoute, error) {
+			route, err := c.codexNative.Resolve(ctx, endpoint)
+			return route.shared(), err
+		})
 		cancel()
-		if routeErr == nil && route.valid() && !route.Endpoint.Same(flags.resumeEndpoint) &&
-			(!route.Default || route.Endpoint.StateDomainID != flags.resumeEndpoint.StateDomainID) {
-			routeErr = &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
-		}
-		if routeErr != nil || !route.valid() || route.State != coremetadata.CodexGenerationCurrent {
-			if routeErr == nil {
-				routeErr = &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
-			}
+		if routeErr != nil {
 			return intentAgentPlan{}, nativeResumePreparationRefusal(canonicalCreateAgent, routeErr)
 		}
-		plan.nativeRoute = route
+		plan.nativeRoute = localNativeCodexRoute(route)
 	}
 	return plan, nil
 }

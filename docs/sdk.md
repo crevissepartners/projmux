@@ -330,14 +330,22 @@ a process intent with `Resume` is refused before any effect, with no tmux
 fallback. The Agent inherits its launch values and profile from the Agents
 that record the conversation, as the picker's create does, so `Profile`,
 `Instructions`, `Model`, `Effort`, `Payload` and `CwdFrom` `pane` are refused
-with it, and `Agent.Provider`, when set, must equal `Resume.Provider`. The
-preflight and the create both list the selection's directory again and refuse
-a selection that is no longer a candidate (`resume-candidate-stale`) before
-any effect; inside the transaction, holders that disagree about the profile
-refuse the create. The new Agent records the conversation as its session in
-the same transaction. Claude, Antigravity and Codex rollout candidates resume;
-a Codex app-server candidate is refused before any effect as not supported
-yet.
+with it, and `Agent.Provider`, when set, must equal `Resume.Provider`. For a
+Claude, Antigravity or Codex rollout selection the preflight and the create
+both list the selection's directory again, without the Codex catalog, and
+refuse a selection that is no longer a candidate (`resume-candidate-stale`)
+before any effect; inside the transaction, holders that disagree about the
+profile refuse the create. The new Agent records the conversation as its
+session in the same transaction.
+
+A Codex app-server candidate resumes on the native lane, as the picker's
+create does: the thread is resumed on the default Codex app-server endpoint
+of its state domain with the policy of the inherited profile, and the new
+Pane attaches to it. The preflight checks only its shape and does not read
+the Codex catalog; the create finds the row again in the catalog right
+before its transaction and refuses before any effect a row that is gone
+(`resume-candidate-stale`) or whose endpoint or generation no longer
+resolves to a current route.
 
 `core.WindowIntentResult` carries the Window, the Agent, the `create.window`
 receipt with the Agent row, the remaining PaneID and, for process, the
