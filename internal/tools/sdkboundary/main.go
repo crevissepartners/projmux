@@ -152,6 +152,7 @@ func allowedImplementation(p packageData) bool {
 		module + "/internal/core/lifecycle",
 		module + "/internal/core/resources",
 		module + "/internal/core/terminaltext",
+		module + "/internal/integrations/agents/aisessions",
 		module + "/internal/integrations/agents/codexappserver",
 		module + "/internal/integrations/agents/localipc",
 		module + "/internal/integrations/hooks",
