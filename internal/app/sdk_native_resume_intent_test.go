@@ -18,6 +18,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
 	storepkg "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/tmux"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"github.com/crevissepartners/projmux/pkg/projmux"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
@@ -160,6 +161,17 @@ func TestSDKNativeCatalogResumeMatchesCLI(t *testing.T) {
 				c := sdkAgentCLI(t, state, config, socket, executable, home)
 				c.codexNative = newCodexNativeThreadController(state)
 				c.resumes.(*aiCommand).nativeObserverPaths = &mutationruntime.NativeObserverPaths{Paths: configpkg.Paths{StateDir: state, ConfigDir: config}, RegistryPath: storepkg.PathFor(state), Executable: executable}
+				// The picker's UI origin is the exact shell Pane on this private
+				// server only; the process TMUX stays untouched.
+				getenv := func(key string) string {
+					if key == "TMUX" {
+						return socket + ",0,0"
+					}
+					return ""
+				}
+				c.anchorTarget = func(paneID string) activeTargetLookup {
+					return anchoredActiveTargetLookup(paneID, getenv, storepkg.NewMirror(sdkNativeResumeRunner{socket: socket}))
+				}
 				route, err := c.codexNative.Current(ctx)
 				if err != nil {
 					t.Fatal(err)
@@ -210,7 +222,7 @@ func TestSDKNativeCatalogResumeMatchesCLI(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			starts, resumes := 0, []string{}
+			starts, settings, resumes, methods := 0, 0, []string{}, []string{}
 			for line := range bytes.SplitSeq(wire, []byte("\n")) {
 				var frame struct {
 					Method string         `json:"method"`
@@ -219,20 +231,36 @@ func TestSDKNativeCatalogResumeMatchesCLI(t *testing.T) {
 				if json.Unmarshal(line, &frame) != nil {
 					continue
 				}
+				if frame.Method != "" {
+					methods = append(methods, frame.Method)
+				}
 				switch frame.Method {
 				case "thread/start":
 					starts++
+				case "thread/settings/update":
+					settings++
 				case "thread/resume":
 					resumes = append(resumes, fmt.Sprint(frame.Params["threadId"]))
 				}
 			}
-			outcomes[lane] = fmt.Sprintf("provider=%s endpoint-default-domain=%t lifecycle=%s activation=%s history=%d starts=%d resumes=%s",
+			t.Logf("%s wire methods: %s", lane, strings.Join(methods, ","))
+			outcomes[lane] = fmt.Sprintf("provider=%s endpoint-default-domain=%t lifecycle=%s activation=%s history=%d starts=%d settings=%d resumes=%s",
 				created.Spec.Provider, ref.Codex.Endpoint.StateDomainID != "", ref.Codex.Lifecycle.State, created.Status.Activation.State,
-				len(rows.Sessions), starts, strings.Join(resumes, ","))
+				len(rows.Sessions), starts, settings, strings.Join(resumes, ","))
 		})
 	}
-	want := "provider=codex endpoint-default-domain=true lifecycle=" + string(metadata.CodexGenerationCurrent) + " activation=" + string(metadata.ActivationAcknowledged) + " history=1 starts=0 resumes=process-thread"
-	if outcomes["cli"] != want || outcomes["sdk"] != want {
+	// A resume starts no turn, so the activation is never acknowledged; the
+	// second thread/resume is the lifecycle observer's bootstrap.
+	want := "provider=codex endpoint-default-domain=true lifecycle=" + string(metadata.CodexGenerationCurrent) + " activation= history=1 starts=0 settings=0 resumes=process-thread,process-thread"
+	if outcomes["cli"] != outcomes["sdk"] || outcomes["cli"] != want {
 		t.Fatalf("native catalog resume\ncli %s\nsdk %s\nwant %s", outcomes["cli"], outcomes["sdk"], want)
 	}
+}
+
+// sdkNativeResumeRunner pins every tmux call of the CLI origin lookup to the
+// test's private server.
+type sdkNativeResumeRunner struct{ socket string }
+
+func (r sdkNativeResumeRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return (tmux.ExecRunner{}).Run(ctx, name, append([]string{"-S", r.socket}, args...)...)
 }
