@@ -12,6 +12,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/app/personacmd"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/persona"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 // TestInstructionsSpellingsSayInstructions pins the text the public spellings
@@ -171,10 +172,10 @@ func TestLaunchAndResumeTextSaysInstructions(t *testing.T) {
 		t.Errorf("resume notice = %q, want %q", notice, want)
 	}
 
-	if got := ambiguousLaunchValueSubject(aiModeCodex); got != "instructions values" {
+	if got := mutationruntime.ResumeAmbiguousLaunchValueSubject(aiModeCodex); got != "instructions values" {
 		t.Errorf("codex ambiguity subject = %q", got)
 	}
-	if got := ambiguousLaunchValueSubject(aiModeClaude); got != "instructions, system prompt snapshot or effort values" {
+	if got := mutationruntime.ResumeAmbiguousLaunchValueSubject(aiModeClaude); got != "instructions, system prompt snapshot or effort values" {
 		t.Errorf("claude ambiguity subject = %q", got)
 	}
 

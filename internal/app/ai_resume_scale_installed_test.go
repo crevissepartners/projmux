@@ -260,7 +260,7 @@ func runScaleResumeArm(t *testing.T, store, cwd string, configure func(*aiComman
 // settleWatch is the window a settled frame is watched for late mutation. It
 // is the declared provider terminal, so every abandoned stage of the arm has
 // had its full bound to try to write into an already published result.
-var settleWatch = defaultAIResumeBudgets().providerTerminal()
+var settleWatch = defaultAIResumeBudgets().ProviderTerminal()
 
 func frameBytes(entries []intpickercompat.Entry) []byte {
 	var encoded []byte
@@ -409,7 +409,7 @@ func TestInstalledResumePickerSettlesProviderTruthOnTheExactPrivateGeneration(t 
 	}
 
 	budgets := defaultAIResumeBudgets()
-	terminal := budgets.providerTerminal()
+	terminal := budgets.ProviderTerminal()
 
 	// Acceptance 2: a native that cannot settle inside its window must not cost
 	// the invocation the rollout rows it already holds. The exact number is the

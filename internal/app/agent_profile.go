@@ -1,11 +1,9 @@
 package app
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"maps"
-	"strings"
 
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 
@@ -231,47 +229,8 @@ func recordResumedProfileDigest(registry *coremetadata.Registry, mutator coremet
 	return nil
 }
 
-// inheritedResumeProfile is the profile pair a resume-picker create of one
-// Claude or Codex conversation inherits from the Agents that already recorded
-// it. When every holder records the same profile name, the new Agent records
-// that profile and its resume applies it; the digest is refreshed by that
-// resume.
-// Holders that disagree about the profile refuse the create: picking one, or
-// none, could launch the conversation without the permissions it runs with.
-// A Codex conversation inherits on the same terms: its native catalog resume
-// re-sends the profile's current policy (codexResumeProfile), and its rollout
-// resume passes the policy as CLI flags (resumeProfileSettings). Any
-// other provider, and a conversation no holder records a profile for,
-// inherits nothing.
 func inheritedResumeProfile(registry *coremetadata.Registry, provider, conversation string) (map[string]string, error) {
-	conversation = strings.TrimSpace(conversation)
-	if registry == nil || (provider != aiModeClaude && provider != aiModeCodex) || conversation == "" {
-		return nil, nil
-	}
-	holders := registry.AgentsRecordingConversation(pickerResumeSessionObservation(provider, conversation))
-	if len(holders) == 0 {
-		return nil, nil
-	}
-	first := holders[0].Metadata.Annotations
-	for _, holder := range holders[1:] {
-		if holder.Metadata.Annotations[coremetadata.AnnotationAgentProfile] != first[coremetadata.AnnotationAgentProfile] {
-			names := make([]string, 0, len(holders))
-			for _, h := range holders {
-				names = append(names, fmt.Sprintf("agent/%s (uid:%s)", h.Metadata.Name, h.Metadata.UID))
-			}
-			return nil, errors.New((&profileResumeError{name: first[coremetadata.AnnotationAgentProfile], reason: launchValuesReasonAmbiguous,
-				detail: fmt.Sprintf("%s conversation %s is recorded with different profiles by %s", provider, conversation, strings.Join(names, ", "))}).Error() +
-				"; nothing was created")
-		}
-	}
-	name := first[coremetadata.AnnotationAgentProfile]
-	if name == "" {
-		return nil, nil
-	}
-	return map[string]string{
-		coremetadata.AnnotationAgentProfile:       name,
-		coremetadata.AnnotationAgentProfileDigest: first[coremetadata.AnnotationAgentProfileDigest],
-	}, nil
+	return mutationruntime.InheritedResumeProfile(registry, provider, conversation)
 }
 
 // profileCreateProject resolves only when a scoped profile requires an owner.

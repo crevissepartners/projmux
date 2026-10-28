@@ -10,7 +10,6 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/core/profile"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
@@ -963,43 +962,30 @@ func (c *createCommand) prepareIntentAgent(provider string, flags resourceCreate
 	return plan, nil
 }
 
-// resolvePickerSettings resolves the settings of the Agent a resume-picker
-// create records from inherited, the launch values and profile pair it
-// inherited: from the create's home for Codex, whose inherited profile policy
-// is re-read there too (codexResumeProfile), and through the resume launcher
-// for any other provider -- the homes a rebind reads. A profile that is gone
-// or invalid leaves the settings unlayered, so the launch refuses exactly as
-// it did before layers existed. The snapshot of new instructions content is
-// written here, inside the create's transaction.
+// resolvePickerSettings resolves the settings of a resume-picker create
+// (mutationruntime.ResolvePickerSettings) from the create's home for Codex,
+// whose inherited profile policy is re-read there too (codexResumeProfile),
+// and through the resume launcher for any other provider -- the homes a
+// rebind reads.
 func (c *createCommand) resolvePickerSettings(provider string, inherited map[string]string, projectUID ...string) (agentSettingsLaunch, error) {
-	request := agentSettingsRequest{}
-	if len(projectUID) != 0 {
-		request.projectUID = projectUID[0]
-	}
-	if name := inherited[coremetadata.AnnotationAgentProfile]; name != "" {
-		_, _, _, err := resolveRecordedProfile(c.homeDir, c.lookupEnv, name, request.projectUID)
-		if profile.ReasonOf(err) == profile.ReasonOutOfScope {
-			return agentSettingsLaunch{}, err
-		}
-	}
-	annotations := withInheritedSettingSources(inherited, inherited)
-	var settings agentSettingsLaunch
-	var err error
-	if provider == aiModeCodex {
-		settings, err = resolveAgentSettings(c.homeDir, c.lookupEnv, provider, annotations, request)
-	} else if resolver, ok := c.resumes.(agentSettingsResolver); ok {
-		settings, err = resolver.ResolveAgentSettingsRequest(provider, annotations, request)
-	}
-	if err != nil {
-		if profile.ReasonOf(err) == profile.ReasonOutOfScope {
-			return agentSettingsLaunch{}, err
-		}
-		return agentSettingsLaunch{}, nil
-	}
-	if settings = settings.writeSnapshot(); settings.snapshotErr != nil {
-		return agentSettingsLaunch{}, settings.snapshotErr
-	}
-	return settings, nil
+	settings, err := mutationruntime.ResolvePickerSettings(
+		func(name, projectUID string) error {
+			_, _, _, err := resolveRecordedProfile(c.homeDir, c.lookupEnv, name, projectUID)
+			return err
+		},
+		func(annotations map[string]string, request mutationruntime.AgentSettingsRequest) (mutationruntime.AgentSettingsLaunch, bool, error) {
+			if provider == aiModeCodex {
+				settings, err := resolveAgentSettings(c.homeDir, c.lookupEnv, provider, annotations, localAgentSettingsRequest(request))
+				return settings.shared(), true, err
+			}
+			if resolver, ok := c.resumes.(agentSettingsResolver); ok {
+				settings, err := resolver.ResolveAgentSettingsRequest(provider, annotations, localAgentSettingsRequest(request))
+				return settings.shared(), true, err
+			}
+			return mutationruntime.AgentSettingsLaunch{}, false, nil
+		},
+		inherited, projectUID...)
+	return localAgentSettingsLaunch(settings), err
 }
 
 // pickerSettingsNotice is the one settings notice a resume-picker create
@@ -1400,17 +1386,6 @@ func (p intentAgentPlan) startLifecycleObserver(opened intentAgentOpened) {
 	}
 }
 
-// pickerResumeSessionObservation projects the provider-discriminated picker
-// identity onto the existing durable sessionRef input shape. The picker owns
-// only the exact resume id: it never reads or persists transcripts, caches, or
-// provider-private turn identity.
 func pickerResumeSessionObservation(provider, conversation string) coremetadata.AgentSessionObservation {
-	observation := coremetadata.AgentSessionObservation{Provider: provider}
-	switch provider {
-	case aiModeCodex, aiModeAntigravity:
-		observation.ThreadID = conversation
-	default:
-		observation.SessionID = conversation
-	}
-	return observation
+	return mutationruntime.PickerResumeSessionObservation(provider, conversation)
 }

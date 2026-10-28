@@ -253,13 +253,7 @@ func (defaultCodexNativeThreadController) ProbeThreadSettings(ctx context.Contex
 }
 
 func openCodexNativeRoute(ctx context.Context, route codexNativeEndpointRoute, experimental bool) (*codexappserver.Client, error) {
-	if route.Default {
-		client, _, err := codexappserver.AttachDefaultEndpoint(ctx, version.String(), codexappserver.AttachOptions{
-			Timeout: codexNativeThreadTimeout, ExperimentalAPI: experimental,
-		})
-		return client, err
-	}
-	return codexappserver.OpenPrivateUnix(ctx, route.SocketPath, codexNativeThreadTimeout, version.String(), experimental)
+	return mutationruntime.OpenNativeCodexRoute(ctx, route.shared(), experimental)
 }
 
 func (defaultCodexNativeThreadController) CanFallback(err error) bool {

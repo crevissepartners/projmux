@@ -23,6 +23,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -298,12 +299,12 @@ func TestResumeProviderStateUsesSettledAuthorityBeforeGlobalCap(t *testing.T) {
 		enabled bool
 		want    aiResumeProviderProjection
 	}{
-		{name: "native count", enabled: true, result: aiResumeProviderResult{provider: aiModeCodex, discovery: summaryDiscovery(aiModeCodex, "native", aisessions.SourceCodexAppServer, time.Time{})}, want: aiResumeProviderProjection{state: aiResumeProviderCount, count: 1}},
-		{name: "native zero", enabled: true, result: aiResumeProviderResult{provider: aiModeCodex, discovery: aisessions.ResumeSummaryDiscovery{Codex: aisessions.CodexCatalogOutcome{Source: aisessions.CatalogSourceNative}}}, want: aiResumeProviderProjection{state: aiResumeProviderCount}},
-		{name: "fallback stays count", enabled: true, result: aiResumeProviderResult{provider: aiModeCodex, discovery: aisessions.ResumeSummaryDiscovery{Codex: aisessions.CodexCatalogOutcome{Source: aisessions.CatalogSourceFallback}}}, want: aiResumeProviderProjection{state: aiResumeProviderCount}},
-		{name: "provider failure", enabled: true, result: aiResumeProviderResult{provider: aiModeClaude, err: errors.New("failed")}, want: aiResumeProviderProjection{state: aiResumeProviderSearchFailed}},
-		{name: "envelope expiry", enabled: true, result: aiResumeProviderResult{provider: aiModeAntigravity, err: context.DeadlineExceeded, envelopeExpired: true}, want: aiResumeProviderProjection{state: aiResumeProviderSearchFailed}},
-		{name: "settings disabled", result: aiResumeProviderResult{provider: aiModeClaude}, want: aiResumeProviderProjection{state: aiResumeProviderDisabled}},
+		{name: "native count", enabled: true, result: aiResumeProviderResult{Provider: aiModeCodex, Discovery: summaryDiscovery(aiModeCodex, "native", aisessions.SourceCodexAppServer, time.Time{})}, want: aiResumeProviderProjection{state: aiResumeProviderCount, count: 1}},
+		{name: "native zero", enabled: true, result: aiResumeProviderResult{Provider: aiModeCodex, Discovery: aisessions.ResumeSummaryDiscovery{Codex: aisessions.CodexCatalogOutcome{Source: aisessions.CatalogSourceNative}}}, want: aiResumeProviderProjection{state: aiResumeProviderCount}},
+		{name: "fallback stays count", enabled: true, result: aiResumeProviderResult{Provider: aiModeCodex, Discovery: aisessions.ResumeSummaryDiscovery{Codex: aisessions.CodexCatalogOutcome{Source: aisessions.CatalogSourceFallback}}}, want: aiResumeProviderProjection{state: aiResumeProviderCount}},
+		{name: "provider failure", enabled: true, result: aiResumeProviderResult{Provider: aiModeClaude, Err: errors.New("failed")}, want: aiResumeProviderProjection{state: aiResumeProviderSearchFailed}},
+		{name: "envelope expiry", enabled: true, result: aiResumeProviderResult{Provider: aiModeAntigravity, Err: context.DeadlineExceeded, EnvelopeExpired: true}, want: aiResumeProviderProjection{state: aiResumeProviderSearchFailed}},
+		{name: "settings disabled", result: aiResumeProviderResult{Provider: aiModeClaude}, want: aiResumeProviderProjection{state: aiResumeProviderDisabled}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -759,7 +760,7 @@ func TestNativeResumePickerDuplicateVisibilityUsesKnownOwnerOrRefusesAmbiguous(t
 				}
 			}
 			if !selected.rowPinned || selected.source != aisessions.SourceCodexAppServer || selected.state != test.wantState ||
-				!selected.endpoint.Same(codexSummaryEndpoint(found[0])) {
+				!selected.endpoint.Same(mutationruntime.CodexSummaryEndpoint(found[0])) {
 				t.Fatalf("collision picker row lost exact route: selection=%#v summary=%#v", selected, found[0])
 			}
 			// A known-owner draining row resumes through the default-endpoint
@@ -774,7 +775,7 @@ func TestNativeResumePickerDuplicateVisibilityUsesKnownOwnerOrRefusesAmbiguous(t
 			key := aiModeCodex + "\x00" + threadID
 			detail, hasDetail := controller.detailRefs[key]
 			if test.knownOwner {
-				if endpoint := codexSummaryEndpoint(found[0]); !endpoint.Same(draining.Endpoint) ||
+				if endpoint := mutationruntime.CodexSummaryEndpoint(found[0]); !endpoint.Same(draining.Endpoint) ||
 					!hasDetail || !codexDetailEndpoint(detail).Same(draining.Endpoint) || detail.GenerationState != string(coremetadata.CodexGenerationDraining) {
 					t.Fatalf("known owner/detail crossed generation: summary=%#v detail=%#v", found[0], detail)
 				}
@@ -791,7 +792,7 @@ func TestNativeResumePickerDuplicateVisibilityUsesKnownOwnerOrRefusesAmbiguous(t
 			before := fx.store.snapshot()
 			_, err := fx.create.createFromIntent(agentPaneIntent{
 				producer: canonicalProducerResumePicker, provider: aiModeCodex, placement: "right", anchorPaneID: fx.originID,
-				conversationID: threadID, resumeSource: found[0].Source, resumeEndpoint: codexSummaryEndpoint(found[0]),
+				conversationID: threadID, resumeSource: found[0].Source, resumeEndpoint: mutationruntime.CodexSummaryEndpoint(found[0]),
 				resumeGenerationState: coremetadata.CodexGenerationState(found[0].GenerationState),
 			}, ioDiscard{}, ioDiscard{})
 			if err == nil || !strings.Contains(err.Error(), codexNativeReasonGenerationUnavailable) || fx.store.transactions != 0 ||
@@ -824,7 +825,7 @@ func TestNativeResumePickerSoleCurrentVisibilityNeverOverridesKnownOldOwner(t *t
 	entries := controller.initialEntries()
 	summaries := controller.snapshotSummaries()
 	if len(summaries) != 1 || summaries[0].GenerationState != string(coremetadata.CodexGenerationBlocked) ||
-		!codexSummaryEndpoint(summaries[0]).Same(current.Endpoint) {
+		!mutationruntime.CodexSummaryEndpoint(summaries[0]).Same(current.Endpoint) {
 		t.Fatalf("sole visible current row gained old-thread authority: %#v", summaries)
 	}
 	if _, exists := controller.detailRefs[aiModeCodex+"\x00"+threadID]; exists {
@@ -1278,8 +1279,8 @@ func virtualBudgetController(cmd *aiCommand, clock *virtualResumeBudgetClock, ho
 	controller := newAIResumeLiveController(cmd, "/work", home, depth, limit)
 	controller.populationContext = clock.withTimeout
 	budgets := defaultAIResumeBudgets()
-	budgets.now = clock.instant
-	budgets.withTimeout = clock.withTimeout
+	budgets.Now = clock.instant
+	budgets.WithTimeout = clock.withTimeout
 	controller.budgets = budgets
 	return controller
 }
@@ -1296,16 +1297,16 @@ func TestAIResumeStageBudgetsAreDeclaredNotDerived(t *testing.T) {
 		{stage: aiResumeStageHandoff, want: 35 * time.Millisecond},
 	}
 	for _, row := range table {
-		if got := budgets.stage(row.stage); got != row.want {
+		if got := budgets.Stage(row.stage); got != row.want {
 			t.Fatalf("%s budget = %s want %s", row.stage, got, row.want)
 		}
 		// A zero field is filled from the declared constant, never from the
 		// time another stage already spent.
-		if got := (aiResumeBudgets{}).stage(row.stage); got != row.want {
+		if got := (aiResumeBudgets{}).Stage(row.stage); got != row.want {
 			t.Fatalf("zero-value %s budget = %s want %s", row.stage, got, row.want)
 		}
 	}
-	if got := budgets.providerTerminal(); got != 2835*time.Millisecond {
+	if got := budgets.ProviderTerminal(); got != 2835*time.Millisecond {
 		t.Fatalf("codex provider terminal = %s want 2.835s", got)
 	}
 	if aiResumeSummaryPopulationBudget != 450*time.Millisecond {
@@ -1316,20 +1317,20 @@ func TestAIResumeStageBudgetsAreDeclaredNotDerived(t *testing.T) {
 	}
 	// Every stage is measured from its own start instant.
 	clock := newVirtualResumeBudgetClock()
-	budgets.now, budgets.withTimeout = clock.instant, clock.withTimeout
-	route := budgets.start(context.Background(), aiResumeStageRoute)
-	defer route.stop()
+	budgets.Now, budgets.WithTimeout = clock.instant, clock.withTimeout
+	route := budgets.Start(context.Background(), aiResumeStageRoute)
+	defer route.Stop()
 	clock.advance(400 * time.Millisecond)
-	fallback := budgets.start(context.Background(), aiResumeStageFallback)
-	defer fallback.stop()
+	fallback := budgets.Start(context.Background(), aiResumeStageFallback)
+	defer fallback.Stop()
 	clock.advance(600 * time.Millisecond)
-	if got := budgets.elapsed(route); got != time.Second {
+	if got := budgets.Elapsed(route); got != time.Second {
 		t.Fatalf("route elapsed = %s want 1s", got)
 	}
-	if got := budgets.elapsed(fallback); got != 600*time.Millisecond {
+	if got := budgets.Elapsed(fallback); got != 600*time.Millisecond {
 		t.Fatalf("fallback elapsed = %s want 600ms", got)
 	}
-	timeout := budgets.timeout(route)
+	timeout := budgets.Timeout(route)
 	if timeout.Stage != aiResumeStageRoute || timeout.Budget != 2500*time.Millisecond || timeout.Elapsed != time.Second ||
 		!errors.Is(timeout, context.DeadlineExceeded) {
 		t.Fatalf("typed route timeout = %#v (%v)", timeout, error(timeout))
@@ -1849,7 +1850,7 @@ func TestRouteSlowInvocationPublishesTheRolloutRowsItAlreadyFound(t *testing.T) 
 
 func TestCodexProviderTerminalTableStaysWithinTheDeclaredWorstCase(t *testing.T) {
 	budgets := defaultAIResumeBudgets()
-	if got := budgets.providerTerminal(); got != budgets.stage(aiResumeStageRoute)+budgets.stage(aiResumeStageNative)+budgets.stage(aiResumeStageHandoff) {
+	if got := budgets.ProviderTerminal(); got != budgets.Stage(aiResumeStageRoute)+budgets.Stage(aiResumeStageNative)+budgets.Stage(aiResumeStageHandoff) {
 		t.Fatalf("provider terminal %s is not route + native + handoff", got)
 	}
 	route := nativeTestRoute("generation-terminal-table", coremetadata.CodexGenerationCurrent)
@@ -1915,8 +1916,8 @@ func TestCodexProviderTerminalTableStaysWithinTheDeclaredWorstCase(t *testing.T)
 			// The rollout clock starts with the provider, so its terminal is
 			// inside the declared provider terminal instead of route_end + 1.25s.
 			rolloutTerminal := scans[0].Add(aiResumeFallbackBudget).Sub(start)
-			if rolloutTerminal > controller.budgets.providerTerminal() {
-				t.Fatalf("rollout terminal %s exceeds the declared provider terminal %s", rolloutTerminal, controller.budgets.providerTerminal())
+			if rolloutTerminal > controller.budgets.ProviderTerminal() {
+				t.Fatalf("rollout terminal %s exceeds the declared provider terminal %s", rolloutTerminal, controller.budgets.ProviderTerminal())
 			}
 			if got := settledProviderState(controller, aiModeCodex); got.state != aiResumeProviderCount || got.count != 1 {
 				t.Fatalf("codex projection = %+v, want one settled row inside the declared terminal", got)
@@ -2042,7 +2043,7 @@ func siblingSettlementDiscovery(provider string) aisessions.ResumeSummaryDiscove
 
 func settlementBudgets() aiResumeBudgets {
 	budgets := defaultAIResumeBudgets()
-	budgets.route, budgets.native, budgets.fallback, budgets.handoff =
+	budgets.Route, budgets.Native, budgets.Fallback, budgets.Handoff =
 		60*time.Millisecond, 20*time.Millisecond, 40*time.Millisecond, 10*time.Millisecond
 	return budgets
 }
@@ -2218,7 +2219,7 @@ func TestCodexSettlementLeavesSiblingProviderStatusAndCountUnchanged(t *testing.
 			}
 			controller := newAIResumeLiveController(cmd, "/work", home, 0, 500)
 			budgets := settlementBudgets()
-			budgets.route = 400 * time.Millisecond
+			budgets.Route = 400 * time.Millisecond
 			controller.budgets = budgets
 			controller.populationTimeout = 20 * time.Millisecond
 			controller.initialEntries()
@@ -2422,7 +2423,7 @@ func TestProviderElapsedIsMeasuredOnEachProviderOwnClock(t *testing.T) {
 			envelopes++
 		}
 	}
-	if envelopes != 2 || !containsBudget(granted, defaultAIResumeBudgets().providerTerminal()) {
+	if envelopes != 2 || !containsBudget(granted, defaultAIResumeBudgets().ProviderTerminal()) {
 		t.Fatalf("granted provider envelopes %v want two population budgets and one provider terminal", granted)
 	}
 	// The witness stays internal: it never reaches a row value or the footer.

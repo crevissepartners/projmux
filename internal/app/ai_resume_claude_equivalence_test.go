@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 // C-3's oracle is the full pre-optimization row set declared by each fixture,
@@ -105,8 +106,8 @@ func TestClaudeLimitedScanPreservesFullSettledRows(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want, _ := settleAIResumeSummaries(fullRows, limit)
-			baseline, _ := settleAIResumeSummaries(full.Summaries, limit)
+			want, _ := mutationruntime.SettleResumeSummaries(fullRows, limit)
+			baseline, _ := mutationruntime.SettleResumeSummaries(full.Summaries, limit)
 			if !reflect.DeepEqual(baseline, want) {
 				t.Fatalf("full scan differs from declared pre-optimization rows:\ngot %#v\nwant %#v", baseline, want)
 			}
@@ -114,7 +115,7 @@ func TestClaudeLimitedScanPreservesFullSettledRows(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, capped := settleAIResumeSummaries(limited.Summaries, limit)
+			got, capped := mutationruntime.SettleResumeSummaries(limited.Summaries, limit)
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("limited settled row set/order/content changed:\ngot %#v\nwant %#v", got, want)
 			}
@@ -128,7 +129,7 @@ func TestClaudeLimitedScanPreservesFullSettledRows(t *testing.T) {
 					t.Fatal("terminal tie must be capped globally")
 				}
 			}
-			projection := resumeProviderProjection(aiResumeProviderResult{provider: aiModeClaude, discovery: limited}, true)
+			projection := resumeProviderProjection(aiResumeProviderResult{Provider: aiModeClaude, Discovery: limited}, true)
 			if projection.state != aiResumeProviderCount || projection.count != wantCount {
 				t.Fatalf("confirmed invocation count = %+v, want count/%d", projection, wantCount)
 			}
