@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
-	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 func writeResumeLimitConfig(t *testing.T, path string, limit int) {
@@ -39,38 +38,38 @@ func TestResolveAIResumePickerLimitPrecedence(t *testing.T) {
 	// Global config wins over default.
 	writeResumeLimitConfig(t, globalPath, 70)
 	got = resolveAIResumePickerLimit(homeDir, noEnv, cwd)
-	if got.Limit != 70 || got.Source != mutationruntime.ResumePickerLimitSourceGlobal {
+	if got.Limit != 70 || got.Source != aiResumePickerLimitSourceGlobal {
 		t.Fatalf("global resolution = %+v, want 70/global", got)
 	}
 
 	// Project config wins over global.
 	writeResumeLimitConfig(t, projectPath, 15)
 	got = resolveAIResumePickerLimit(homeDir, noEnv, cwd)
-	if got.Limit != 15 || got.Source != mutationruntime.ResumePickerLimitSourceProject {
+	if got.Limit != 15 || got.Source != aiResumePickerLimitSourceProject {
 		t.Fatalf("project resolution = %+v, want 15/project", got)
 	}
 
 	// Env wins over everything and is clamped.
 	envLookup := func(name string) string {
-		if name == mutationruntime.ResumePickerLimitEnv {
+		if name == aiResumePickerLimitEnv {
 			return "999"
 		}
 		return ""
 	}
 	got = resolveAIResumePickerLimit(homeDir, envLookup, cwd)
-	if got.Limit != hooks.AIResumePickerLimitMax || got.Source != mutationruntime.ResumePickerLimitSourceEnv {
+	if got.Limit != hooks.AIResumePickerLimitMax || got.Source != aiResumePickerLimitSourceEnv {
 		t.Fatalf("env resolution = %+v, want %d/env", got, hooks.AIResumePickerLimitMax)
 	}
 
 	// A non-numeric env value is ignored and falls through to project config.
 	badEnv := func(name string) string {
-		if name == mutationruntime.ResumePickerLimitEnv {
+		if name == aiResumePickerLimitEnv {
 			return "notanumber"
 		}
 		return ""
 	}
 	got = resolveAIResumePickerLimit(homeDir, badEnv, cwd)
-	if got.Limit != 15 || got.Source != mutationruntime.ResumePickerLimitSourceProject {
+	if got.Limit != 15 || got.Source != aiResumePickerLimitSourceProject {
 		t.Fatalf("bad-env resolution = %+v, want 15/project", got)
 	}
 }

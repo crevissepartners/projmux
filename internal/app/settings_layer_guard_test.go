@@ -22,7 +22,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
-	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 // settingsFrontEntryRoutes are the front entry points: the only routes that
@@ -482,7 +481,7 @@ func newSettingsLayerGuardEnv(t *testing.T) *settingsLayerGuardEnv {
 	for _, key := range []string{
 		"TMUX", "TMUX_PANE", runtimeMutationAnchorPaneEnv, "PROJMUX_CWD", "PROJMUX_SOCKET",
 		"CODEX_HOME", "CLAUDE_CONFIG_DIR", "PROJMUX_USAGE_STATE_DIR", "NO_PROXY", "no_proxy",
-		nativeKeysEnvName, mutationruntime.ResumePickerLimitEnv, mutationruntime.ResumeScanDepthEnv,
+		nativeKeysEnvName, aiResumePickerLimitEnv, aiResumeScanDepthEnv,
 	} {
 		t.Setenv(key, "")
 		if err := os.Unsetenv(key); err != nil {

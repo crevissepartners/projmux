@@ -14,7 +14,14 @@ const (
 	// aiResumePickerLimitDefault is the number of recent sessions the AI resume
 	// picker shows when nothing is configured. This preserves the historical
 	// hardcoded behaviour (Phase 0 and earlier used a literal 30).
-	aiResumePickerLimitDefault       = mutationruntime.ResumePickerLimitDefault
+	aiResumePickerLimitDefault = mutationruntime.ResumePickerLimitDefault
+	aiResumePickerLimitEnv     = mutationruntime.ResumePickerLimitEnv
+)
+
+const (
+	aiResumePickerLimitSourceEnv     = mutationruntime.ResumePickerLimitSourceEnv
+	aiResumePickerLimitSourceProject = mutationruntime.ResumePickerLimitSourceProject
+	aiResumePickerLimitSourceGlobal  = mutationruntime.ResumePickerLimitSourceGlobal
 	aiResumePickerLimitSourceDefault = mutationruntime.ResumePickerLimitSourceDefault
 )
 

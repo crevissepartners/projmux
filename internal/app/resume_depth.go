@@ -10,7 +10,17 @@ import (
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
-const aiResumeScanDepthSourceDefault = mutationruntime.ResumeScanDepthSourceDefault
+const (
+	aiResumeScanDepthDefault = mutationruntime.ResumeScanDepthDefault
+	aiResumeScanDepthEnv     = mutationruntime.ResumeScanDepthEnv
+)
+
+const (
+	aiResumeScanDepthSourceEnv     = mutationruntime.ResumeScanDepthSourceEnv
+	aiResumeScanDepthSourceProject = mutationruntime.ResumeScanDepthSourceProject
+	aiResumeScanDepthSourceGlobal  = mutationruntime.ResumeScanDepthSourceGlobal
+	aiResumeScanDepthSourceDefault = mutationruntime.ResumeScanDepthSourceDefault
+)
 
 type aiResumeScanDepthResolution = mutationruntime.ResumeScanDepthResolution
 

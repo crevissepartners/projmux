@@ -32,57 +32,57 @@ func TestResolveAIResumeScanDepthPrecedence(t *testing.T) {
 
 	// Default when nothing is configured.
 	got := resolveAIResumeScanDepth(homeDir, noEnv, cwd)
-	if got.Depth != mutationruntime.ResumeScanDepthDefault || got.Source != aiResumeScanDepthSourceDefault {
-		t.Fatalf("default resolution = %+v, want %d/default", got, mutationruntime.ResumeScanDepthDefault)
+	if got.Depth != aiResumeScanDepthDefault || got.Source != aiResumeScanDepthSourceDefault {
+		t.Fatalf("default resolution = %+v, want %d/default", got, aiResumeScanDepthDefault)
 	}
 
 	// Global config wins over default.
 	writeResumeDepthConfig(t, globalPath, 3)
 	got = resolveAIResumeScanDepth(homeDir, noEnv, cwd)
-	if got.Depth != 3 || got.Source != mutationruntime.ResumeScanDepthSourceGlobal {
+	if got.Depth != 3 || got.Source != aiResumeScanDepthSourceGlobal {
 		t.Fatalf("global resolution = %+v, want 3/global", got)
 	}
 
 	// Project config wins over global.
 	writeResumeDepthConfig(t, projectPath, 1)
 	got = resolveAIResumeScanDepth(homeDir, noEnv, cwd)
-	if got.Depth != 1 || got.Source != mutationruntime.ResumeScanDepthSourceProject {
+	if got.Depth != 1 || got.Source != aiResumeScanDepthSourceProject {
 		t.Fatalf("project resolution = %+v, want 1/project", got)
 	}
 
 	// Env wins over everything and is clamped.
 	envLookup := func(name string) string {
-		if name == mutationruntime.ResumeScanDepthEnv {
+		if name == aiResumeScanDepthEnv {
 			return "999"
 		}
 		return ""
 	}
 	got = resolveAIResumeScanDepth(homeDir, envLookup, cwd)
-	if got.Depth != hooks.AIResumeScanDepthMax || got.Source != mutationruntime.ResumeScanDepthSourceEnv {
+	if got.Depth != hooks.AIResumeScanDepthMax || got.Source != aiResumeScanDepthSourceEnv {
 		t.Fatalf("env resolution = %+v, want %d/env", got, hooks.AIResumeScanDepthMax)
 	}
 
 	// Env may explicitly set depth 0 (exact cwd) and is still sourced from env.
 	zeroEnv := func(name string) string {
-		if name == mutationruntime.ResumeScanDepthEnv {
+		if name == aiResumeScanDepthEnv {
 			return "0"
 		}
 		return ""
 	}
 	got = resolveAIResumeScanDepth(homeDir, zeroEnv, cwd)
-	if got.Depth != 0 || got.Source != mutationruntime.ResumeScanDepthSourceEnv {
+	if got.Depth != 0 || got.Source != aiResumeScanDepthSourceEnv {
 		t.Fatalf("zero-env resolution = %+v, want 0/env", got)
 	}
 
 	// A non-numeric env value is ignored and falls through to project config.
 	badEnv := func(name string) string {
-		if name == mutationruntime.ResumeScanDepthEnv {
+		if name == aiResumeScanDepthEnv {
 			return "notanumber"
 		}
 		return ""
 	}
 	got = resolveAIResumeScanDepth(homeDir, badEnv, cwd)
-	if got.Depth != 1 || got.Source != mutationruntime.ResumeScanDepthSourceProject {
+	if got.Depth != 1 || got.Source != aiResumeScanDepthSourceProject {
 		t.Fatalf("bad-env resolution = %+v, want 1/project", got)
 	}
 }
@@ -93,7 +93,7 @@ func TestNormalizeResumeScanDepth(t *testing.T) {
 		want int
 	}{
 		{in: 0, want: 0},
-		{in: -3, want: mutationruntime.ResumeScanDepthDefault},
+		{in: -3, want: aiResumeScanDepthDefault},
 		{in: 1, want: 1},
 		{in: hooks.AIResumeScanDepthMax, want: hooks.AIResumeScanDepthMax},
 		{in: hooks.AIResumeScanDepthMax + 1, want: hooks.AIResumeScanDepthMax},
