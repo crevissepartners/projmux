@@ -18,8 +18,6 @@ const (
 	aiResumePickerLimitEnv     = mutationruntime.ResumePickerLimitEnv
 )
 
-type aiResumePickerLimitSource = mutationruntime.ResumePickerLimitSource
-
 const (
 	aiResumePickerLimitSourceEnv     = mutationruntime.ResumePickerLimitSourceEnv
 	aiResumePickerLimitSourceProject = mutationruntime.ResumePickerLimitSourceProject

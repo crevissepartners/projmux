@@ -15,8 +15,6 @@ const (
 	aiResumeScanDepthEnv     = mutationruntime.ResumeScanDepthEnv
 )
 
-type aiResumeScanDepthSource = mutationruntime.ResumeScanDepthSource
-
 const (
 	aiResumeScanDepthSourceEnv     = mutationruntime.ResumeScanDepthSourceEnv
 	aiResumeScanDepthSourceProject = mutationruntime.ResumeScanDepthSourceProject
