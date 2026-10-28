@@ -94,7 +94,7 @@ func (c *Client) resumeDiscovery(ctx context.Context, cwd string, enabled map[st
 		Budgets:          mutationruntime.DefaultResumeBudgets(),
 		OpenCodexCatalog: aisessions.NewDefaultCodexCatalogOpener(version.String()),
 		LoadRegistry:     func() (metadata.Registry, error) { return resources.Load(c.paths) },
-		Discover: aisessions.DiscoverResumeSummariesContext,
+		Discover:         aisessions.DiscoverResumeSummariesContext,
 	}
 	planner := &mutationruntime.SDKAgentPlanner{Paths: c.paths, HomeDir: c.discoveryHome, Shell: c.projectShell, Executable: c.projmuxExecutable, Environment: c.agentEnvironment}
 	planner.Initialize()

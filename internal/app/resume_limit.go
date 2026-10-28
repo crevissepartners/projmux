@@ -15,7 +15,7 @@ const (
 	// picker shows when nothing is configured. This preserves the historical
 	// hardcoded behaviour (Phase 0 and earlier used a literal 30).
 	aiResumePickerLimitDefault = mutationruntime.ResumePickerLimitDefault
-	aiResumePickerLimitEnv = mutationruntime.ResumePickerLimitEnv
+	aiResumePickerLimitEnv     = mutationruntime.ResumePickerLimitEnv
 )
 
 type aiResumePickerLimitSource = mutationruntime.ResumePickerLimitSource

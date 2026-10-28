@@ -20,7 +20,9 @@ import (
 )
 
 // resumeFixtureCatalog is a Codex app-server catalog of fixed threads.
-type resumeFixtureCatalog struct{ threads []codexappserver.CatalogThread }
+type resumeFixtureCatalog struct {
+	threads []codexappserver.CatalogThread
+}
 
 func (c resumeFixtureCatalog) List(context.Context, codexappserver.CatalogQuery) (codexappserver.CatalogPage, error) {
 	return codexappserver.CatalogPage{Threads: c.threads}, nil
