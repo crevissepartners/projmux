@@ -78,3 +78,48 @@ func TestNativeResumeRetiredDomainAndSocketBarrier(t *testing.T) {
 		t.Fatal(bound)
 	}
 }
+
+// TestResolveNativeCatalogResumeRoute pins the picker's rule for the route a
+// Codex app-server catalog row resumes on, shared by the CLI and the SDK.
+func TestResolveNativeCatalogResumeRoute(t *testing.T) {
+	row := metadata.CodexEndpointRef{StateDomainID: "domain", EndpointGenerationID: "codex-0.160.1"}
+	current := NativeCodexRoute{Endpoint: row, State: metadata.CodexGenerationCurrent, TUIExecutable: "/fixture/codex", Default: true}
+	switched := current
+	switched.Endpoint.EndpointGenerationID = "codex-0.161.0"
+	elsewhere := switched
+	elsewhere.Endpoint.StateDomainID = "other"
+	draining := current
+	draining.State = metadata.CodexGenerationDraining
+	for name, tc := range map[string]struct {
+		endpoint metadata.CodexEndpointRef
+		state    metadata.CodexGenerationState
+		route    NativeCodexRoute
+		err      error
+		want     string
+	}{
+		"exact":             {row, metadata.CodexGenerationCurrent, current, nil, ""},
+		"draining-row":      {row, metadata.CodexGenerationDraining, current, nil, ""},
+		"switched-default":  {row, metadata.CodexGenerationCurrent, switched, nil, ""},
+		"no-endpoint":       {metadata.CodexEndpointRef{}, metadata.CodexGenerationCurrent, current, nil, NativeCodexReasonLegacyEndpointMissing},
+		"retired-row":       {row, "retired", current, nil, NativeCodexReasonGenerationUnavailable},
+		"other-domain":      {row, metadata.CodexGenerationCurrent, elsewhere, nil, NativeCodexReasonGenerationUnavailable},
+		"route-not-current": {row, metadata.CodexGenerationCurrent, draining, nil, NativeCodexReasonGenerationUnavailable},
+		"resolve-failed":    {row, metadata.CodexGenerationCurrent, NativeCodexRoute{}, &NativeCodexRouteError{Reason: "daemon-not-running"}, "daemon-not-running"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := ResolveNativeCatalogResumeRoute(context.Background(), tc.endpoint, tc.state, func(context.Context, metadata.CodexEndpointRef) (NativeCodexRoute, error) {
+				return tc.route, tc.err
+			})
+			if tc.want == "" {
+				if err != nil || got != tc.route {
+					t.Fatalf("route %+v %v", got, err)
+				}
+				return
+			}
+			var refusal *NativeCodexRouteError
+			if !errors.As(err, &refusal) || refusal.Reason != tc.want || got != (NativeCodexRoute{}) {
+				t.Fatalf("got %+v %v, want %s", got, err, tc.want)
+			}
+		})
+	}
+}

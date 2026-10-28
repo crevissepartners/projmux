@@ -10,6 +10,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/receipt"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
 )
 
@@ -26,7 +27,10 @@ const SessionHistoryNotRecordedFmt = "agent session history not recorded: %s\n"
 // launch is planned from what they resolved. The Agent records the
 // conversation as its session in the same transaction; History holds the
 // session history lines to append once the transaction has committed, and
-// Profile the inherited profile the planned launch applied.
+// Profile the inherited profile the planned launch applied. NativeRoute, set
+// for a Codex app-server conversation, is the route resolved before the
+// transaction: the conversation then resumes on the native lane, whose
+// thread/resume carries the inherited profile's policy (Prepare's Policy).
 type ResumePickerCreate struct {
 	Paths                          config.Paths
 	Provider, Conversation, Source string
@@ -35,6 +39,7 @@ type ResumePickerCreate struct {
 	BindPane                       func(context.Context, AgentPaneBinding) error
 	History                        []sessionhistory.Record
 	Profile                        *receipt.ReceiptProfile
+	NativeRoute                    *NativeCodexRoute
 }
 
 // Prepare plans the resume launch of one picker create. It refuses when the
@@ -83,12 +88,28 @@ func (r *ResumePickerCreate) Prepare(working coremetadata.Registry, project core
 		values = guidance.ResumeLaunchAnnotations(values)
 	}
 	var launch AgentResumeLaunch
+	var policy codexappserver.ThreadPolicy
+	if r.NativeRoute != nil {
+		// The inherited profile is re-read by name, as `agent resume` re-reads
+		// the one an Agent records; the thread is resumed by the native engine.
+		launch, policy, err = NativeCodexResumeProfile(func() (config.Paths, error) { return r.Paths, nil }, values, project.Metadata.UID)
+		if err != nil {
+			return AgentPreparation{}, err
+		}
+		if launch.ProfileName != "" {
+			r.Profile = &receipt.ReceiptProfile{Name: launch.ProfileName, Digest: launch.ProfileDigest}
+		}
+	}
 	declared := ""
 	if provider == aiModeCodex && strings.TrimSpace(r.Source) == aisessions.SourceCodexRollout {
 		declared = "rollout-catalog-resume"
 	}
 	return AgentPreparation{
+		Policy: policy,
 		Plan: func(workspace coremetadata.AgentWorkspace) (string, []string, error) {
+			if r.NativeRoute != nil {
+				return "", nil, nil
+			}
 			var err error
 			launch, err = r.Launch.PlanAgentResume(provider, workspace, conversation, values)
 			if err == nil && launch.ProfileName != "" {
@@ -114,9 +135,20 @@ func (r *ResumePickerCreate) Prepare(working coremetadata.Registry, project core
 			if err := settings.Record(working, mutator, agentUID); err != nil {
 				return err
 			}
-			recorded, changed, err := mutator.RecordAgentSessionRef(working, agentUID, PickerResumeSessionObservation(provider, conversation))
+			observation := PickerResumeSessionObservation(provider, conversation)
+			if r.NativeRoute != nil {
+				// The resolved route, not the row's endpoint: a switched row
+				// binds the new Agent to the default endpoint.
+				endpoint := r.NativeRoute.Endpoint
+				observation.Endpoint = &endpoint
+			}
+			recorded, changed, err := mutator.RecordAgentSessionRef(working, agentUID, observation)
 			if err != nil {
 				return MapMetadataError(err)
+			}
+			if r.NativeRoute != nil {
+				stored, _ := working.Agent(agentUID)
+				stored.Status.SessionRef.Codex.Lifecycle = &coremetadata.CodexGenerationLifecycleRef{State: coremetadata.CodexGenerationCurrent}
 			}
 			if changed {
 				if record, ok := sessionhistory.ObservedRecordFor(working, agentUID, recorded.Status.SessionRef); ok {

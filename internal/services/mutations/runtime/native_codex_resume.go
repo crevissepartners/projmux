@@ -175,3 +175,33 @@ func PrepareNativeCodexResume(ctx context.Context, spelling string, plan AgentRe
 	}
 	return out, route, native, nil
 }
+
+// ResolveNativeCatalogResumeRoute resolves the route a resume-picker create of
+// one Codex app-server catalog row resumes on: the row's own endpoint, or the
+// default endpoint of the same Codex state domain. Draining and
+// handover-pending rows are leftovers of the retired private generation pool
+// and resolve like current rows. A row with no endpoint, a generation in any
+// other state, or a route elsewhere or not current is refused before the
+// create writes anything.
+func ResolveNativeCatalogResumeRoute(ctx context.Context, endpoint metadata.CodexEndpointRef, state metadata.CodexGenerationState, resolve func(context.Context, metadata.CodexEndpointRef) (NativeCodexRoute, error)) (NativeCodexRoute, error) {
+	if resolve == nil || !endpoint.Valid() {
+		return NativeCodexRoute{}, &NativeCodexRouteError{Reason: NativeCodexReasonLegacyEndpointMissing}
+	}
+	switch state {
+	case metadata.CodexGenerationCurrent, metadata.CodexGenerationDraining, metadata.CodexGenerationHandoverPending:
+	default:
+		return NativeCodexRoute{}, &NativeCodexRouteError{Reason: NativeCodexReasonGenerationUnavailable}
+	}
+	route, err := resolve(ctx, endpoint)
+	if err == nil && route.Valid() && !route.Endpoint.Same(endpoint) &&
+		(!route.Default || route.Endpoint.StateDomainID != endpoint.StateDomainID) {
+		err = &NativeCodexRouteError{Reason: NativeCodexReasonGenerationUnavailable}
+	}
+	if err != nil || !route.Valid() || route.State != metadata.CodexGenerationCurrent {
+		if err == nil {
+			err = &NativeCodexRouteError{Reason: NativeCodexReasonGenerationUnavailable}
+		}
+		return NativeCodexRoute{}, err
+	}
+	return route, nil
+}

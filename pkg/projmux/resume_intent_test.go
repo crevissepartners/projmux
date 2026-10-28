@@ -177,7 +177,6 @@ func TestResumeCandidateSelectionStaleBeforeEffects(t *testing.T) {
 		want   string
 	}{
 		"process":         {core.WindowCreateIntent{Project: "uid:" + f.project, Host: "process", Detach: true, Agent: &core.WindowIntentAgent{Resume: selection}}, "process-resume-unsupported"},
-		"app-server":      {f.intent(&core.WindowIntentAgent{Resume: &core.ResumeSelection{Provider: "codex", Conversation: "019f", Source: aisessions.SourceCodexAppServer}}), "not supported yet; nothing was created"},
 		"provider":        {f.intent(&core.WindowIntentAgent{Provider: "codex", Resume: selection}), "does not match Resume.Provider"},
 		"profile":         {f.intent(&core.WindowIntentAgent{Profile: "coder", Resume: selection}), "inherits its launch settings"},
 		"pane-cwd":        {f.intent(&core.WindowIntentAgent{CwdFrom: "pane", CwdPane: "uid:pane-x", Resume: selection}), "CwdFrom pane"},
@@ -197,6 +196,27 @@ func TestResumeCandidateSelectionStaleBeforeEffects(t *testing.T) {
 			unchanged(t)
 		})
 	}
+
+	// A Codex app-server selection is checked only at commit: the preview
+	// passes, and the create refuses a row the catalog no longer lists, or a
+	// row with no endpoint to resume on, before any effect.
+	if err := os.WriteFile(filepath.Join(f.c.agentEnvironment["PATH"], "codex"), []byte("#!/bin/sh\nexec /bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	native := f.intent(&core.WindowIntentAgent{Resume: &core.ResumeSelection{Provider: "codex", Conversation: "019f0000-0000-7000-8000-000000000060", Source: aisessions.SourceCodexAppServer, Cwd: f.workspace}})
+	if preview, err := f.c.PreflightWindowIntent(ctx, native); err != nil || preview.Provider != "codex" {
+		t.Fatalf("app-server preview %+v %v", preview, err)
+	}
+	if _, err := f.c.CreateWindowFromIntent(ctx, native); err == nil || !strings.Contains(err.Error(), "resume-candidate-stale") {
+		t.Fatalf("app-server create without its row: %v", err)
+	}
+	unchanged(t)
+	f.useResumeCatalog(resumeFixtureCatalog{threads: []codexappserver.CatalogThread{{ID: "019f0000-0000-7000-8000-000000000060", CWD: f.workspace, Name: "native", UpdatedAt: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)}}})
+	if _, err := f.c.CreateWindowFromIntent(ctx, native); err == nil || !strings.Contains(err.Error(), "cannot be resumed natively") || !strings.Contains(err.Error(), mutationruntime.NativeCodexReasonLegacyEndpointMissing) {
+		t.Fatalf("app-server create without an endpoint: %v", err)
+	}
+	unchanged(t)
+	f.useResumeCatalog(nil)
 
 	// The selection was a candidate when previewed; the transcript is gone
 	// before the create, so the create's own revalidation refuses it.
@@ -312,6 +332,7 @@ func TestResumeCandidatesReadCodexThroughClientSession(t *testing.T) {
 // TestResumeIntentChecksStartNoCodexProcess proves the candidate check of a
 // preview and of a create reads no Codex route, connection or catalog, so it
 // can start no app-server process, while ListResumeCandidates does read them.
+// The preview of a Codex app-server selection reads none of them either.
 func TestResumeIntentChecksStartNoCodexProcess(t *testing.T) {
 	f := newWindowIntentFixture(t)
 	ctx := context.Background()
@@ -331,6 +352,11 @@ func TestResumeIntentChecksStartNoCodexProcess(t *testing.T) {
 	}
 	if _, err := f.c.CreateWindowFromIntent(ctx, intent); err == nil || !strings.Contains(err.Error(), "resume-candidate-stale") {
 		t.Fatalf("stale create: %v", err)
+	}
+	// An app-server selection is not checked by the preview at all.
+	native := f.intent(&core.WindowIntentAgent{Resume: &core.ResumeSelection{Provider: "codex", Conversation: id, Source: aisessions.SourceCodexAppServer, Cwd: f.workspace}})
+	if preview, err := f.c.PreflightWindowIntent(ctx, native); err != nil || preview.Provider != "codex" {
+		t.Fatalf("app-server preview %+v %v", preview, err)
 	}
 	if read := spy.routes.Load() + spy.opens.Load() + spy.catalogs.Load(); read != 0 {
 		t.Fatalf("candidate checks read the Codex app-server %d times", read)

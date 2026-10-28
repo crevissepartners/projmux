@@ -66,7 +66,10 @@ type ResumeSelection struct {
 // WindowIntentPreview is what PreflightWindowIntent resolved for an intent it
 // did not refuse. Shell reports a Window with no Agent. Provider is the
 // provider the create will run, the profile's when the intent names none;
-// Profile is the profile the create will record, empty for none.
+// Profile is the profile the create will record, empty for none. For a Codex
+// app-server Resume the preview does not check the conversation's endpoint
+// and generation; CreateWindowFromIntent checks them right before its
+// transaction.
 type WindowIntentPreview struct {
 	Shell    bool
 	Host     string
