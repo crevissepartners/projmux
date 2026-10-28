@@ -96,7 +96,7 @@ func (c *Client) resumeDiscovery(ctx context.Context, cwd string, enabled map[st
 		LoadRegistry:     func() (metadata.Registry, error) { return resources.Load(c.paths) },
 		Discover:         aisessions.DiscoverResumeSummariesContext,
 	}
-	planner := &mutationruntime.SDKAgentPlanner{Paths: c.paths, HomeDir: c.discoveryHome, Shell: c.projectShell, Executable: c.projmuxExecutable, Environment: c.agentEnvironment}
+	planner := &mutationruntime.SDKAgentPlanner{Paths: c.paths, HomeDir: c.discoveryHome, Shell: c.projectShell, Executable: c.projmuxExecutable, Environment: c.agentEnvironment, Store: &mutationruntime.CreateStore{Load: opts.LoadRegistry}}
 	planner.Initialize()
 	if native, err := planner.NativeSession(); err == nil {
 		opts.CodexNative = sdkCodexCatalog{current: native.Current}
