@@ -86,6 +86,7 @@ Client.ListQuestions	Public v0 Agent question SDK entrypoint/adapter or preserve
 Client.ListQuestionsWithOptions	Public opt-in SDK question source and file-only approval reads; preserved for external consumers and covered by source fencing, default parity and read-effect fixtures.
 Client.ListRecordedSessions	Public v0 complete recorded session history SDK, consumed by TestExternalRecordedSessionsConsumer and covered by CORE parity and read admission tests; no Registry or writer API.
 Client.ListResources	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
+Client.ListResumeCandidates	Public v0 resume candidate SDK closure for external frontends: the CLI resume picker's service discovery with its depth, limit, budgets and Codex catalog; covered by TestListResumeCandidatesMatchesPicker.
 Client.MarkAgentOffline	Public v0 lost-host process retirement API; exercised by SDK/CLI parity, kernel absence refusal, no-op and external consumer tests.
 Client.MessageArchiveFiles	Public SDK entrypoint for caller-owned archive paths without file access.
 Client.MessageStatus	Public SDK Client.MessageStatus entrypoint; external consumers follow original receipts without replay.
@@ -152,6 +153,7 @@ Client.agentSessionsService	Public v0 Agent/Project session history SDK closure,
 Client.approvalAgent	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.approvalService	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.checkCreateAgent	Public v0 pre-Window Agent create preflight closure for external frontends; runs CreateAgent's effect-free checks and is covered by TestPreflightCreateAgentMatchesCreateAgent, TestPreflightCreateAgentLeavesNoEffects and the protected SDK surface.
+Client.checkResumeCandidate	Public v0 Window create intent Resume closure for external frontends: commit-time candidate revalidation and the service resume-picker create; covered by TestResumeCandidateSelectionStaleBeforeEffects and TestWindowIntentCLIParity.
 Client.checkWindowIntent	Public v0 Window create intent SDK closure for external frontends: one transaction for a Window and its new Agent with CreateAgent's validator; covered by TestWindowIntentCLIParity, TestWindowIntentCreatorProvenance, TestWindowIntentRollbackAndActivationUnknown and TestWindowIntentPublicPreflight.
 Client.claudeHookInstallEvents	Public v0 Claude hook integration SDK entrypoint or its adapter (PreviewClaudeHooks, ApplyClaudeHooks); reachable from external consumers rather than the CLI binary; covered by CLI plan and install parity, writes-nothing, stale-base refusal and GOWORK=off consumer tests.
 Client.confirmActivations	Public v0 tmux Agent creation closure shared by CreateAgent and CreateWindowFromIntent; covered by SDK/CLI parity, boundary and the Window intent tests.
@@ -171,6 +173,7 @@ Client.deleteProcess	SDK process Agent Delete adapter retained for external cons
 Client.deleteWithRunner	Public v0 Window, Pane and Agent deletion SDK entrypoint or its exact selection/refusal adapter; verified by SDK/CLI parity, injected guards/rollback, public field coverage and external consumer tests.
 Client.guidance	Public v0 global guidance editing SDK entrypoint or adapter; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
 Client.linkRulesService	Public v0 Project link rules SDK entrypoint or its adapter; retained for external consumers and exercised by CLI/SDK parity, typed refusals, field coverage, and GOWORK=off consumer tests.
+Client.listResumeCandidates	Public v0 resume candidate SDK closure for external frontends: the CLI resume picker's service discovery and the catalog-free candidate check a Window create intent Resume revalidates with; covered by TestListResumeCandidatesMatchesPicker and TestResumeIntentChecksStartNoCodexProcess.
 Client.peerMessages	Client.SendMessage and Client.MessageStatus construct the same frozen-path execution service through this adapter.
 Client.planClaudeHooks	Public v0 Claude hook integration SDK entrypoint or its adapter (PreviewClaudeHooks, ApplyClaudeHooks); reachable from external consumers rather than the CLI binary; covered by CLI plan and install parity, writes-nothing, stale-base refusal and GOWORK=off consumer tests.
 Client.preflightCreateAgent	Public v0 pre-Window Agent create preflight closure for external frontends; runs CreateAgent's effect-free checks and is covered by TestPreflightCreateAgentMatchesCreateAgent, TestPreflightCreateAgentLeavesNoEffects and the protected SDK surface.
@@ -184,6 +187,9 @@ Client.relaunchProcessAgent	Public RelaunchAgent process/host closure; frozen-do
 Client.resumeAgent	Public v0 tmux Agent resume entrypoint or its external-only closure; SDK/CLI parity, refusal, rollback and boundary tests cover this path.
 Client.resumeAgentPlan	Public ResumeAgent/RelaunchAgent shared transaction closure; TestResumeAgentSDKCLIParity, TestResumeAgentSDKCLIRollback and TestRelaunchAgentSDKNativeCodexAndPostStopCancellation protect commit and recovery.
 Client.resumeAgentPlanWithApplication	Public RelaunchAgent shared resume closure that also returns the shared settings application; TestRelaunchAgentSettingsApplicationMatchesCLI compares it exactly with CLI settingsApplication.
+Client.resumeCandidateInputs	Public v0 resume candidate SDK closure for external frontends: the CLI resume picker's service discovery with its depth, limit, budgets and Codex catalog; covered by TestListResumeCandidatesMatchesPicker.
+Client.resumeDiscovery	Public v0 resume candidate SDK closure for external frontends: the CLI resume picker's service discovery with its depth, limit, budgets and Codex catalog; covered by TestListResumeCandidatesMatchesPicker.
+Client.resumePickerCreate	Public v0 Window create intent Resume closure for external frontends: commit-time candidate revalidation and the service resume-picker create; covered by TestResumeCandidateSelectionStaleBeforeEffects and TestWindowIntentCLIParity.
 Client.resumePreparationRequest	Shared exact scoped selector and observed binding closure for the public Prepare and Validate APIs; public consumer and refusal tests preserve process Claude admission.
 Client.resumeProcessAgent	Public ResumeAgent detached process closure; supplemental frozen-domain/claim and external caller-exit fixtures cover identity and lifetime.
 Client.runtimeTransport	Public v0 coherent resource graph SDK entrypoint or its adapter (ObserveResourceGraph/ReadRegistryFileIdentity); reachable from external consumers rather than the CLI binary; covered by resourcegraph JSON parity, single-read, identity, field coverage and GOWORK=off consumer tests.
@@ -405,6 +411,7 @@ PaneRuntimeSpec.EffectiveKind	Public v0 resource SDK entrypoint or its JSON/sele
 ParseBinding	Native binding parser compatibility entrypoint retained after pure parser extraction; exercised by TestCaptureBindingsIncludeCustomOptionAndControlChords.
 ParseKeymapFile	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 PickerChromeStringAuditOptions	Picker-chrome profile of the governance string audit; it scopes the live guard that keeps picker chrome inside the catalog.
+PickerSettingsNotice	Public v0 Window create intent Resume closure for external frontends: commit-time candidate revalidation and the service resume-picker create; covered by TestResumeCandidateSelectionStaleBeforeEffects and TestWindowIntentCLIParity.
 Placeholders	Project link rule API of internal/core/projectlinks, retained for the web backend that lists the placeholders a template may use; no in-tree caller until that backend lands.
 PlanKeymapMigration	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 PlanProjectCascadeDelete	Project cascade-delete planner retained as the decision proof for external-asset preservation and new-UID reopen.
@@ -482,6 +489,8 @@ ResumeAdapter.ResumeCommand	Shared Agent CLI resume command renderer retained wi
 ResumeCommand	Per-provider Agent CLI resume command wrappers retained as the tested adapter surface after snapshot replay, their only product caller, was removed.
 ResumeDefaultThread	The default-endpoint resume wrapper is retained for installed protocol qualification; generation-pinned product routing uses explicit routes.
 ResumeLaunchService.PlanAgentResume	Public v0 tmux Agent resume entrypoint or its external-only closure; SDK/CLI parity, refusal, rollback and boundary tests cover this path.
+ResumePickerCreate.Prepare	Public v0 Window create intent Resume closure for external frontends: commit-time candidate revalidation and the service resume-picker create; covered by TestResumeCandidateSelectionStaleBeforeEffects and TestWindowIntentCLIParity.
+ResumePickerSource	Public v0 Window create intent Resume closure for external frontends: commit-time candidate revalidation and the service resume-picker create; covered by TestResumeCandidateSelectionStaleBeforeEffects and TestWindowIntentCLIParity.
 ResumeProcessError.Error	Public ResumeAgent recovery cause preserves diagnostics with exact binding and owner through typed startup failures.
 ResumeProcessError.Unwrap	Public ResumeAgent recovery cause preserves errors.Is/errors.As across detached startup and cleanup failure.
 ResumeReceipt	Public v0 tmux Agent resume entrypoint or its external-only closure; SDK/CLI parity, refusal, rollback and boundary tests cover this path.
@@ -666,6 +675,7 @@ buildPopupToggle	Default-style entry point of buildPopupToggleWithStyle retained
 captureQuestionSource	Read-only opt-in SDK question source identity fence retained for external consumers; tested by pre/post ownership, lifetime, conversation, context and unrelated-progress fixtures.
 catalogRefusal	Public v0 Agent catalog SDK entrypoint or its read-only adapter; retained for external modules and exercised by catalog parity and GOWORK=off consumer tests.
 causalResourceRefusal	Public v0 cached Registry snapshot SDK entrypoint or its adapter (ReadRegistrySnapshotCached/RegistrySnapshot.Clone); reachable from external consumers rather than the CLI binary; covered by same-read identity, zero-decode reuse, cause-preserving refusal, nested Clone ownership and GOWORK=off consumer tests.
+checkResumeSelectionShape	Public v0 Window create intent Resume closure for external frontends: commit-time candidate revalidation and the service resume-picker create; covered by TestResumeCandidateSelectionStaleBeforeEffects and TestWindowIntentCLIParity.
 classifyCodexCommand	Test-only installed qualification helper retained for semantic mutation classification.
 classifyPeerPush	Client.SendMessage classifies native peer-context acceptance, known refusals and uncertain transport without replay.
 claudeCoordinationCallOutcome	Existing CLI projection/probe test seam retained across shared SDK service extraction; existing capability and bounded helper fixture tests verify unchanged behavior.
@@ -886,6 +896,7 @@ resolveProcessCodex	Client.SendMessage/MessageStatus prove the exact process Cod
 resolveSwitchProfile	Existing instructions-message or profile-project fixture calls this path/scope adapter; production resume now uses the shared implementation directly.
 resourceQuery	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 resourceRefusal	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
+resumeCandidateCwd	Public v0 resume candidate SDK closure for external frontends: the CLI resume picker's service discovery with its depth, limit, budgets and Codex catalog; covered by TestListResumeCandidatesMatchesPicker.
 resumeRefusal	Public v0 tmux Agent resume entrypoint or its external-only closure; SDK/CLI parity, refusal, rollback and boundary tests cover this path.
 rootDefaults	Root teardown defaults are retained inside the pure teardown decision authority.
 routedRunner.Run	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
@@ -895,6 +906,7 @@ runtimeMutationPlan.withoutEffects	Effect-free plan projection retained as the p
 sameQuestionSource	Read-only opt-in SDK question source identity fence retained for external consumers; tested by pre/post ownership, lifetime, conversation, context and unrelated-progress fixtures.
 saveCentralAINewWindowMode	Central new-AI-window-mode writer retained for front ends outside this tree (the web client) that write the central default; no in-tree command writes it yet.
 schemaBinding	Client.SendMessage/MessageStatus translate durable exact process bindings into the existing peer protocol authority.
+sdkCodexCatalog.CatalogRoutes	Public v0 resume candidate SDK closure for external frontends: the CLI resume picker's service discovery with its depth, limit, budgets and Codex catalog; covered by TestListResumeCandidatesMatchesPicker.
 selectorInputError	SDK selector parser input renderer; public resource, profile and Agent SDK adapters preserve resolution text and quoted input values.
 sessionReadRefusal	Public v0 Agent/Project session history SDK closure, consumed by TestExternalAgentSessionsConsumer and covered by TestSDKAgentSessionsCLIParityAndReadOnly and direct read admission tests; no transcript or writer API.
 settingsCommand.rootEntries	Fallback-locale entry point of the settings root entry builder retained as the axis metadata seam.

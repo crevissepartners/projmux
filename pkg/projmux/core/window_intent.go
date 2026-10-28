@@ -39,8 +39,12 @@ type WindowCreateIntent struct {
 // in-process operator client and takes precedence over Creator, as in
 // CreateAgentRequest; request data cannot produce one.
 //
-// Resume names an existing session to continue in the new Agent. It is
-// reserved: a non-nil Resume is refused before any effect.
+// Resume names a ResumeCandidate to continue in the new Agent, on tmux only.
+// The Agent inherits its launch values and profile from the Agents that
+// record the conversation, so Profile, Instructions, Model, Effort, Payload
+// and CwdFrom pane are refused with it; a selection that is no longer a
+// candidate, and a Codex app-server conversation, are refused before any
+// effect.
 type WindowIntentAgent struct {
 	Provider, Profile, Instructions, Model, Effort string
 	Payload                                        []string
@@ -52,7 +56,9 @@ type WindowIntentAgent struct {
 }
 
 // ResumeSelection names one recorded provider session by the provider, the
-// conversation id, the source that listed it and its working directory.
+// conversation id, the source that listed it and its working directory, the
+// fields of the ResumeCandidate it was picked from. An empty Cwd starts the
+// Agent in the Project root.
 type ResumeSelection struct {
 	Provider, Conversation, Source, Cwd string
 }

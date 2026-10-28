@@ -3,92 +3,29 @@ package app
 import (
 	"fmt"
 	"io"
-	"path/filepath"
 	"strconv"
 	"strings"
 
-	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 const (
-	// aiResumeScanDepthDefault is the cwd-tree depth the AI resume picker uses
-	// when nothing is configured. Zero preserves the historical exact-cwd
-	// behaviour (only sessions started in the current directory are listed).
-	aiResumeScanDepthDefault = 0
-	// aiResumeScanDepthEnv overrides the configured/default depth. It takes
-	// precedence over both project and global config, matching the source
-	// priority convention used by the other AI settings.
-	aiResumeScanDepthEnv = "PROJMUX_AI_RESUME_SCAN_DEPTH"
+	aiResumeScanDepthDefault = mutationruntime.ResumeScanDepthDefault
+	aiResumeScanDepthEnv     = mutationruntime.ResumeScanDepthEnv
 )
-
-type aiResumeScanDepthSource string
 
 const (
-	aiResumeScanDepthSourceEnv     aiResumeScanDepthSource = "env"
-	aiResumeScanDepthSourceProject aiResumeScanDepthSource = "project"
-	aiResumeScanDepthSourceGlobal  aiResumeScanDepthSource = "global"
-	aiResumeScanDepthSourceDefault aiResumeScanDepthSource = "default"
+	aiResumeScanDepthSourceEnv     = mutationruntime.ResumeScanDepthSourceEnv
+	aiResumeScanDepthSourceProject = mutationruntime.ResumeScanDepthSourceProject
+	aiResumeScanDepthSourceGlobal  = mutationruntime.ResumeScanDepthSourceGlobal
+	aiResumeScanDepthSourceDefault = mutationruntime.ResumeScanDepthSourceDefault
 )
 
-type aiResumeScanDepthResolution struct {
-	Depth  int
-	Source aiResumeScanDepthSource
-}
+type aiResumeScanDepthResolution = mutationruntime.ResumeScanDepthResolution
 
-// normalizeResumeScanDepth maps a raw depth to the value discovery applies:
-// negatives collapse to the exact-cwd default, oversized depths clamp to the
-// supported maximum, and in-range values pass through unchanged.
-func normalizeResumeScanDepth(depth int) int {
-	if depth < 0 {
-		return aiResumeScanDepthDefault
-	}
-	if depth > hooks.AIResumeScanDepthMax {
-		return hooks.AIResumeScanDepthMax
-	}
-	return depth
-}
-
-// resolveAIResumeScanDepth resolves the effective resume scan depth using the
-// standard source priority: env > project config > global config > built-in
-// default. cwd is the directory used to discover a project-local
-// .projmux/config.toml; an empty cwd skips the project tier.
 func resolveAIResumeScanDepth(homeDir func() (string, error), lookupEnv func(string) string, cwd string) aiResumeScanDepthResolution {
-	if lookupEnv != nil {
-		if raw := strings.TrimSpace(lookupEnv(aiResumeScanDepthEnv)); raw != "" {
-			if n, err := strconv.Atoi(raw); err == nil && n >= 0 {
-				return aiResumeScanDepthResolution{
-					Depth:  normalizeResumeScanDepth(n),
-					Source: aiResumeScanDepthSourceEnv,
-				}
-			}
-		}
-	}
-	if cwd = strings.TrimSpace(cwd); cwd != "" {
-		path := filepath.Join(cwd, ".projmux", "config.toml")
-		config.NoteFrontRead(config.SettingConfigAIResume, path)
-		if cfg, err := hooks.LoadProjectConfigFile(path); err == nil && cfg.AI.ResumeScanDepth > 0 {
-			return aiResumeScanDepthResolution{
-				Depth:  normalizeResumeScanDepth(cfg.AI.ResumeScanDepth),
-				Source: aiResumeScanDepthSourceProject,
-			}
-		}
-	}
-	if homeDir != nil {
-		if path, err := hooks.GlobalConfigPath(lookupEnv, homeDir); err == nil {
-			config.NoteFrontRead(config.SettingConfigAIResume, path)
-			if cfg, err := hooks.LoadGlobalConfig(path); err == nil && cfg.AI.ResumeScanDepth > 0 {
-				return aiResumeScanDepthResolution{
-					Depth:  normalizeResumeScanDepth(cfg.AI.ResumeScanDepth),
-					Source: aiResumeScanDepthSourceGlobal,
-				}
-			}
-		}
-	}
-	return aiResumeScanDepthResolution{
-		Depth:  aiResumeScanDepthDefault,
-		Source: aiResumeScanDepthSourceDefault,
-	}
+	return mutationruntime.ResolveResumeScanDepth(homeDir, lookupEnv, cwd)
 }
 
 // currentAIResumeScanDepth resolves the depth for the Settings UI, using the

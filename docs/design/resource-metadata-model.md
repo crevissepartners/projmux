@@ -672,14 +672,16 @@ Agent session history (Claude and Codex):
 - One line is appended each time a committed Registry write binds or replaces
   a Claude session id or Codex thread id. Re-observing the same conversation,
   including a same-thread Codex resume or endpoint handover, appends nothing.
-  The writers are a closed set of five functions: `persistAgentSessionRef`
+  The writers are a closed set of six functions: `persistAgentSessionRef`
   (hook ingest) and `persistManagedAgentInteractionWithActivationPolicy`
   (managed-Agent interaction commit) in `internal/app/agent_session_ref.go`,
   `openIntentAgent` (resume-picker create and intent native Codex create) in
   `internal/app/create_intent.go`, and `NativeCreationEngine.Create` (native Codex fresh
   create) in `internal/services/mutations/runtime/create_native_agent.go`, and `updateProcessAgentSession`
   in `internal/app/process_agent_session.go` (confirmed process owner binding
-  and writer backfill). Process initialization commits the existing SessionRef
+  and writer backfill), and `ResumePickerCreate.Prepare` (SDK resume-picker
+  create) in `internal/services/mutations/runtime/resume_picker_create.go`,
+  whose staged rows the SDK create appends after its commit. Process initialization commits the existing SessionRef
   alongside processSession; snapshot and Wait writers
   fill a missing ref from a session confirmed by the live provider. Resume
   reservation and history alone do not confirm legacy IDs; a missing ref waits
@@ -689,12 +691,13 @@ Agent session history (Claude and Codex):
   the state domain and version witnessed by its dedicated initialized wire.
   `TestClaudeSessionRefWritersRecordHistory` pins the callers of
   `RecordAgentSessionRef`, and
-  `TestSessionHistoryObservedRowWritersCarryAffiliation` pins the set of five,
+  `TestSessionHistoryObservedRowWritersCarryAffiliation` pins the set of six,
   that each builds its row with `sessionhistory.ObservedRecordFor` (directly or
   through `claudeSessionHistoryRecord`) from its transaction's `working`
   Registry, that each reaches a post-commit append helper (the native create
   carrier is appended by CLI `createAgent` or SDK `SDKNativeCreation.Observe`
-  only after the shared transaction returns successfully), and that no other
+  only after the shared transaction returns successfully, and the SDK
+  resume-picker create appends `ResumePickerCreate.History` the same way), and that no other
   code builds an `observed` row with `RecordFor`. The append runs after the
   commit and never fails its caller: a hook logs one `session-history` line to
   `ai-ingest.log`, a CLI create or process writer prints one

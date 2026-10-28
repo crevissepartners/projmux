@@ -2,11 +2,14 @@ package projmux
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/receipt"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
 	"github.com/crevissepartners/projmux/internal/integrations/tmux"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"github.com/crevissepartners/projmux/internal/services/resources"
@@ -87,7 +90,9 @@ func (c *Client) checkWindowIntent(ctx context.Context, intent core.WindowCreate
 	agent := intent.Agent
 	if agent != nil {
 		if agent.Resume != nil {
-			return checked, windowIntentRefusal("WindowCreateIntent.Agent.Resume is not supported yet; nothing was created")
+			if err := checkResumeSelectionShape(host, *agent); err != nil {
+				return checked, err
+			}
 		}
 		cwdFrom := strings.TrimSpace(agent.CwdFrom)
 		switch {
@@ -127,6 +132,9 @@ func (c *Client) checkWindowIntent(ctx context.Context, intent core.WindowCreate
 		return checked, ctx.Err()
 	}
 	req := core.CreateAgentRequest{Host: intent.Host, Detach: intent.Detach, Project: intent.Project, Provider: agent.Provider, Profile: agent.Profile, Instructions: agent.Instructions, Model: agent.Model, Effort: agent.Effort, Labels: agent.Labels, CwdFrom: agent.CwdFrom, Payload: agent.Payload, Creator: agent.Creator, SocketPath: intent.SocketPath, Operator: agent.Operator}
+	if agent.Resume != nil {
+		req.Provider, req.Cwd = agent.Resume.Provider, agent.Resume.Cwd
+	}
 	process := host == "process"
 	if process {
 		if err := processCreateShape(req); err != nil {
@@ -137,7 +145,7 @@ func (c *Client) checkWindowIntent(ctx context.Context, intent core.WindowCreate
 	// A tmux create always holds the providers setting, as CreateAgent does.
 	// The process creator does not, so a process intent asks for it.
 	skipEnabled := process && !intent.RequireEnabledProvider
-	if checked.agent, err = c.checkCreateAgent(ctx, req, runner, process, skipEnabled); err != nil {
+	if checked.agent, err = c.checkCreateAgent(ctx, req, runner, process, skipEnabled, agent.Resume != nil); err != nil {
 		return checked, err
 	}
 	planner := checked.agent.planner
@@ -160,12 +168,29 @@ func (c *Client) checkWindowIntent(ctx context.Context, intent core.WindowCreate
 			return checked, windowIntentRefusal("WindowCreateIntent.Agent.CwdPane uid:" + checked.cwdPane + " is not a Pane of the intent's Project; nothing was created")
 		}
 	}
+	if agent.Resume != nil {
+		if err := c.checkResumeCandidate(ctx, intent.Project, *agent.Resume); err != nil {
+			return checked, err
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return checked, err
 	}
 	checked.preview.Provider = checked.agent.provider
 	if profile := planner.ProfileReceipt(); profile != nil {
 		checked.preview.Profile = profile.Name
+	}
+	if selection := agent.Resume; selection != nil {
+		// A resume launches with the profile the recording Agents name.
+		reg, err := resources.Load(c.paths)
+		if err != nil {
+			return checked, resourceRefusal(err)
+		}
+		inherited, err := mutationruntime.InheritedResumeProfile(&reg, selection.Provider, strings.TrimSpace(selection.Conversation))
+		if err != nil {
+			return checked, createRefusal(errors.New("create agent: "+err.Error()), "WindowCreateIntent")
+		}
+		checked.preview.Profile = inherited[metadata.AnnotationAgentProfile]
 	}
 	checked.preview.CwdFrom = "project"
 	if checked.cwdPane != "" {
@@ -214,6 +239,14 @@ func (c *Client) createTmuxWindowFromIntent(ctx context.Context, intent core.Win
 		Agent:      mutationruntime.AgentCreateRequest{Provider: provider, Placement: "right", Payload: checked.agentReq.Payload, Labels: agent.labels},
 		CwdPaneUID: checked.cwdPane,
 	}
+	var resume *mutationruntime.ResumePickerCreate
+	if selection := intent.Agent.Resume; selection != nil {
+		resume = c.resumePickerCreate(planner, agent.execution, *selection)
+		machine.Prepare = resume.Prepare
+		if selection.Cwd != "" {
+			request.Agent.Cwd, request.Agent.CwdSet = selection.Cwd, true
+		}
+	}
 	var out mutationruntime.WindowAgentResult
 	err = agent.transaction.Transact(mutationruntime.CreateKindWindow, machine.WindowOperation(checked.scope, request, "create window", &out), agent.execution.ProjectOwnershipGuard(checked.scope))
 	if err != nil {
@@ -221,6 +254,15 @@ func (c *Client) createTmuxWindowFromIntent(ctx context.Context, intent core.Win
 	}
 	if native != nil {
 		native.Observe(out.Agent)
+	}
+	var historyNotice string
+	if resume != nil {
+		for _, row := range resume.History {
+			// As the CLI picker's create: the create stands, one line says so.
+			if err := sessionhistory.Append(c.paths.StateDir, row); err != nil {
+				historyNotice = strings.TrimSuffix(fmt.Sprintf(mutationruntime.SessionHistoryNotRecordedFmt, "append-failed"), "\n")
+			}
+		}
 	}
 	activationErr := c.confirmActivations(agent, out.Agent.ActivationTargets)
 	agentRow, err := createFirstResult(out.Agent.Results)
@@ -231,7 +273,14 @@ func (c *Client) createTmuxWindowFromIntent(ctx context.Context, intent core.Win
 	if declined != "" {
 		notices = append(notices, declined)
 	}
-	rcpt := windowIntentReceipt(out.Window, agentRow.UID, agentRow.Name, planner.ProfileReceipt())
+	if historyNotice != "" {
+		notices = append(notices, historyNotice)
+	}
+	profile := planner.ProfileReceipt()
+	if resume != nil {
+		profile = resume.Profile
+	}
+	rcpt := windowIntentReceipt(out.Window, agentRow.UID, agentRow.Name, profile)
 	if err := c.windowIntentProjection(&result, out.Window.UID, agentRow.UID, rcpt); err != nil {
 		return result, err
 	}

@@ -64,7 +64,7 @@ func TestWindowIntentPublicPreflight(t *testing.T) {
 		"process-shell":    {core.WindowCreateIntent{Project: ref, Host: "process", Detach: true}, projmux.CodeCreateRequestInvalid},
 		"process-attached": {core.WindowCreateIntent{Project: ref, Host: "process", Agent: &core.WindowIntentAgent{Provider: "claude"}}, projmux.CodeCreateRequestInvalid},
 		"tmux-detached":    {core.WindowCreateIntent{Project: ref, Detach: true, Agent: &core.WindowIntentAgent{Provider: "claude"}}, projmux.CodeCreateRequestInvalid},
-		"resume-reserved":  {core.WindowCreateIntent{Project: ref, Agent: &core.WindowIntentAgent{Provider: "claude", Resume: &core.ResumeSelection{Provider: "claude", Conversation: "c", Source: "s"}}}, projmux.CodeCreateRequestInvalid},
+		"resume-process":   {core.WindowCreateIntent{Project: ref, Host: "process", Detach: true, Agent: &core.WindowIntentAgent{Provider: "claude", Resume: &core.ResumeSelection{Provider: "claude", Conversation: "c", Source: "s"}}}, projmux.CodeCreateRequestInvalid},
 		"pane-not-exact":   {core.WindowCreateIntent{Project: ref, Agent: &core.WindowIntentAgent{Provider: "claude", CwdFrom: "pane", CwdPane: "shell"}}, projmux.CodeCreateRequestInvalid},
 		"profile-mismatch": {core.WindowCreateIntent{Project: ref, Agent: &core.WindowIntentAgent{Provider: "claude", Profile: "coder"}}, projmux.CodeProfileProviderMismatch},
 		"creator-shape":    {core.WindowCreateIntent{Project: ref, Agent: &core.WindowIntentAgent{Provider: "claude", Creator: "agent-x"}}, projmux.CodeCreateCreatorInvalid},

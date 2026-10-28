@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 func writeResumeDepthConfig(t *testing.T, path string, depth int) {
@@ -97,8 +98,8 @@ func TestNormalizeResumeScanDepth(t *testing.T) {
 		{in: hooks.AIResumeScanDepthMax, want: hooks.AIResumeScanDepthMax},
 		{in: hooks.AIResumeScanDepthMax + 1, want: hooks.AIResumeScanDepthMax},
 	} {
-		if got := normalizeResumeScanDepth(tc.in); got != tc.want {
-			t.Fatalf("normalizeResumeScanDepth(%d) = %d, want %d", tc.in, got, tc.want)
+		if got := mutationruntime.NormalizeResumeScanDepth(tc.in); got != tc.want {
+			t.Fatalf("NormalizeResumeScanDepth(%d) = %d, want %d", tc.in, got, tc.want)
 		}
 	}
 }

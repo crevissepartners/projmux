@@ -9,6 +9,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 // The Claude and Codex session history write.
@@ -19,7 +20,7 @@ import (
 // <state>/agent-session-history.jsonl, so the conversations it left stay
 // listable (`agent sessions list`, `agent sessions project`).
 //
-// The writers of observed rows are a closed set of five functions:
+// The writers of observed rows are a closed set of six functions:
 //
 //   - agent_session_ref.go persistAgentSessionRef (hook ingest);
 //   - agent_session_ref.go persistManagedAgentInteractionWithActivationPolicy
@@ -32,6 +33,10 @@ import (
 //
 //   - process_agent_session.go updateProcessAgentSession (process owner
 //     initialization and writer backfill).
+//
+//   - services/mutations/runtime/resume_picker_create.go ResumePickerCreate.Prepare
+//     (SDK resume-picker create through WindowCreateIntent.Agent.Resume); it
+//     stages its rows in History, which the SDK create appends after commit.
 //
 // Each follows the same two steps:
 //
@@ -46,7 +51,7 @@ import (
 //
 // TestClaudeSessionRefWritersRecordHistory pins the callers of
 // RecordAgentSessionRef, and
-// TestSessionHistoryObservedRowWritersCarryAffiliation pins the set of five
+// TestSessionHistoryObservedRowWritersCarryAffiliation pins the set of six
 // and that no other code builds an observed row with RecordFor, so a new
 // writer cannot land without the history or without its affiliation.
 //
@@ -57,7 +62,7 @@ import (
 
 // sessionHistoryNotRecordedFmt is the one stderr line a create prints when
 // its history line could not be written.
-const sessionHistoryNotRecordedFmt = "agent session history not recorded: %s\n"
+const sessionHistoryNotRecordedFmt = mutationruntime.SessionHistoryNotRecordedFmt
 
 // claudeSessionHistoryRecord is step 1. changed is RecordAgentSessionRef's
 // verdict, so "a different conversation" means exactly what the Registry

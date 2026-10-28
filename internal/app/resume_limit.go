@@ -3,11 +3,9 @@ package app
 import (
 	"fmt"
 	"io"
-	"path/filepath"
 	"strconv"
 	"strings"
 
-	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
@@ -17,25 +15,17 @@ const (
 	// picker shows when nothing is configured. This preserves the historical
 	// hardcoded behaviour (Phase 0 and earlier used a literal 30).
 	aiResumePickerLimitDefault = mutationruntime.ResumePickerLimitDefault
-	// aiResumePickerLimitEnv overrides the configured/default limit. It takes
-	// precedence over both project and global config, matching the source
-	// priority convention used by the other AI settings.
-	aiResumePickerLimitEnv = "PROJMUX_AI_RESUME_PICKER_LIMIT"
+	aiResumePickerLimitEnv     = mutationruntime.ResumePickerLimitEnv
 )
-
-type aiResumePickerLimitSource string
 
 const (
-	aiResumePickerLimitSourceEnv     aiResumePickerLimitSource = "env"
-	aiResumePickerLimitSourceProject aiResumePickerLimitSource = "project"
-	aiResumePickerLimitSourceGlobal  aiResumePickerLimitSource = "global"
-	aiResumePickerLimitSourceDefault aiResumePickerLimitSource = "default"
+	aiResumePickerLimitSourceEnv     = mutationruntime.ResumePickerLimitSourceEnv
+	aiResumePickerLimitSourceProject = mutationruntime.ResumePickerLimitSourceProject
+	aiResumePickerLimitSourceGlobal  = mutationruntime.ResumePickerLimitSourceGlobal
+	aiResumePickerLimitSourceDefault = mutationruntime.ResumePickerLimitSourceDefault
 )
 
-type aiResumePickerLimitResolution struct {
-	Limit  int
-	Source aiResumePickerLimitSource
-}
+type aiResumePickerLimitResolution = mutationruntime.ResumePickerLimitResolution
 
 // normalizeResumePickerLimit maps a raw limit to the value the picker actually
 // applies: non-positive falls back to the default, oversized clamps to the
@@ -44,46 +34,8 @@ func normalizeResumePickerLimit(limit int) int {
 	return mutationruntime.NormalizeResumePickerLimit(limit)
 }
 
-// resolveAIResumePickerLimit resolves the effective resume-picker limit using
-// the standard source priority: env > project config > global config >
-// built-in default. cwd is the directory used to discover a project-local
-// .projmux/config.toml; an empty cwd skips the project tier.
 func resolveAIResumePickerLimit(homeDir func() (string, error), lookupEnv func(string) string, cwd string) aiResumePickerLimitResolution {
-	if lookupEnv != nil {
-		if raw := strings.TrimSpace(lookupEnv(aiResumePickerLimitEnv)); raw != "" {
-			if n, err := strconv.Atoi(raw); err == nil && n > 0 {
-				return aiResumePickerLimitResolution{
-					Limit:  normalizeResumePickerLimit(n),
-					Source: aiResumePickerLimitSourceEnv,
-				}
-			}
-		}
-	}
-	if cwd = strings.TrimSpace(cwd); cwd != "" {
-		path := filepath.Join(cwd, ".projmux", "config.toml")
-		config.NoteFrontRead(config.SettingConfigAIResume, path)
-		if cfg, err := hooks.LoadProjectConfigFile(path); err == nil && cfg.AI.ResumePickerLimit > 0 {
-			return aiResumePickerLimitResolution{
-				Limit:  normalizeResumePickerLimit(cfg.AI.ResumePickerLimit),
-				Source: aiResumePickerLimitSourceProject,
-			}
-		}
-	}
-	if homeDir != nil {
-		if path, err := hooks.GlobalConfigPath(lookupEnv, homeDir); err == nil {
-			config.NoteFrontRead(config.SettingConfigAIResume, path)
-			if cfg, err := hooks.LoadGlobalConfig(path); err == nil && cfg.AI.ResumePickerLimit > 0 {
-				return aiResumePickerLimitResolution{
-					Limit:  normalizeResumePickerLimit(cfg.AI.ResumePickerLimit),
-					Source: aiResumePickerLimitSourceGlobal,
-				}
-			}
-		}
-	}
-	return aiResumePickerLimitResolution{
-		Limit:  aiResumePickerLimitDefault,
-		Source: aiResumePickerLimitSourceDefault,
-	}
+	return mutationruntime.ResolveResumePickerLimit(homeDir, lookupEnv, cwd)
 }
 
 // currentAIResumePickerLimit resolves the limit for the Settings UI, using the
