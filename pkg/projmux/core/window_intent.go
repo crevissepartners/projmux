@@ -43,8 +43,9 @@ type WindowCreateIntent struct {
 // The Agent inherits its launch values and profile from the Agents that
 // record the conversation, so Profile, Instructions, Model, Effort, Payload
 // and CwdFrom pane are refused with it; a selection that is no longer a
-// candidate, and a Codex app-server conversation, are refused before any
-// effect.
+// candidate is refused before any effect, and a Codex app-server
+// conversation has its endpoint and generation checked when the Window is
+// created.
 type WindowIntentAgent struct {
 	Provider, Profile, Instructions, Model, Effort string
 	Payload                                        []string
