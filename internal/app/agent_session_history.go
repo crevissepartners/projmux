@@ -9,6 +9,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 // The Claude and Codex session history write.
@@ -57,7 +58,7 @@ import (
 
 // sessionHistoryNotRecordedFmt is the one stderr line a create prints when
 // its history line could not be written.
-const sessionHistoryNotRecordedFmt = "agent session history not recorded: %s\n"
+const sessionHistoryNotRecordedFmt = mutationruntime.SessionHistoryNotRecordedFmt
 
 // claudeSessionHistoryRecord is step 1. changed is RecordAgentSessionRef's
 // verdict, so "a different conversation" means exactly what the Registry

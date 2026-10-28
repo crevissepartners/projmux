@@ -12,6 +12,10 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
 )
 
+// SessionHistoryNotRecordedFmt is the one line a create gives when its
+// session history line could not be written; the create still succeeds.
+const SessionHistoryNotRecordedFmt = "agent session history not recorded: %s\n"
+
 // ResumePickerCreate is the new Agent of a resume-picker create that
 // continues one recorded Claude, Antigravity or Codex rollout conversation,
 // the launch `create_intent.go`'s openIntentAgent plans for the same pick. Its

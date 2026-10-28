@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
 )
@@ -207,9 +209,18 @@ func TestResumeCandidateSelectionStaleBeforeEffects(t *testing.T) {
 	if err := os.Rename(path+".moved", path); err != nil {
 		t.Fatal(err)
 	}
+	// A history line that cannot be appended leaves the create standing
+	// with the CLI's one notice line.
+	if err := os.MkdirAll(sessionhistory.Path(f.state), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	result, err := f.c.CreateWindowFromIntent(ctx, intent)
 	if err != nil {
 		t.Fatal(err)
+	}
+	notice := strings.TrimSuffix(fmt.Sprintf(mutationruntime.SessionHistoryNotRecordedFmt, "append-failed"), "\n")
+	if !slices.Contains(result.Notices, notice) {
+		t.Fatalf("notices %q, want %q", result.Notices, notice)
 	}
 	reg := f.registry(t)
 	stored := requireAgentOnlyWindow(t, reg, result)

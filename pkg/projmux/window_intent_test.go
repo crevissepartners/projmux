@@ -247,6 +247,11 @@ func TestWindowIntentCLIParity(t *testing.T) {
 		if ref := stored.Status.SessionRef; ref == nil || ref.Claude == nil || ref.Claude.SessionID != id || stored.Spec.Workspace.CWD != cwd {
 			t.Fatalf("resumed Agent workspace %q session %+v", stored.Spec.Workspace.CWD, ref)
 		}
+		for _, notice := range result.Notices {
+			if strings.Contains(notice, "session history not recorded") {
+				t.Fatalf("history notice on a recorded create: %q", result.Notices)
+			}
+		}
 	})
 
 	t.Run("refusals", func(t *testing.T) {

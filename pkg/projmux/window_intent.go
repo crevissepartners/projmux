@@ -2,6 +2,7 @@ package projmux
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -246,9 +247,13 @@ func (c *Client) createTmuxWindowFromIntent(ctx context.Context, intent core.Win
 	if native != nil {
 		native.Observe(out.Agent)
 	}
+	var historyNotice string
 	if resume != nil {
 		for _, row := range resume.History {
-			_ = sessionhistory.Append(c.paths.StateDir, row)
+			// As the CLI picker's create: the create stands, one line says so.
+			if err := sessionhistory.Append(c.paths.StateDir, row); err != nil {
+				historyNotice = strings.TrimSuffix(fmt.Sprintf(mutationruntime.SessionHistoryNotRecordedFmt, "append-failed"), "\n")
+			}
 		}
 	}
 	activationErr := c.confirmActivations(agent, out.Agent.ActivationTargets)
@@ -259,6 +264,9 @@ func (c *Client) createTmuxWindowFromIntent(ctx context.Context, intent core.Win
 	notices := out.Agent.Notices
 	if declined != "" {
 		notices = append(notices, declined)
+	}
+	if historyNotice != "" {
+		notices = append(notices, historyNotice)
 	}
 	rcpt := windowIntentReceipt(out.Window, agentRow.UID, agentRow.Name, planner.ProfileReceipt())
 	if err := c.windowIntentProjection(&result, out.Window.UID, agentRow.UID, rcpt); err != nil {
