@@ -127,10 +127,18 @@ func NewResumeDiscovery(opts ResumeDiscoveryOptions) *ResumeDiscovery {
 		ctx = context.Background()
 	}
 	return &ResumeDiscovery{
-		cmd:  &resumeDiscoverySources{codexNative: opts.CodexNative, openCodexCatalog: opts.OpenCodexCatalog, loadRegistry: opts.LoadRegistry, discoverResumeSummaryProvider: opts.Discover},
-		ctx:  ctx, cwd: opts.Cwd, home: opts.Home, depth: opts.Depth, limit: NormalizeResumePickerLimit(opts.Limit),
-		providerEnabled: opts.ProviderEnabled, populationTimeout: opts.PopulationTimeout, populationContext: opts.PopulationContext,
-		budgets: opts.Budgets, handoffTimer: opts.HandoffTimer, recordElapsed: opts.RecordElapsed,
+		cmd:               &resumeDiscoverySources{codexNative: opts.CodexNative, openCodexCatalog: opts.OpenCodexCatalog, loadRegistry: opts.LoadRegistry, discoverResumeSummaryProvider: opts.Discover},
+		ctx:               ctx,
+		cwd:               opts.Cwd,
+		home:              opts.Home,
+		depth:             opts.Depth,
+		limit:             NormalizeResumePickerLimit(opts.Limit),
+		providerEnabled:   opts.ProviderEnabled,
+		populationTimeout: opts.PopulationTimeout,
+		populationContext: opts.PopulationContext,
+		budgets:           opts.Budgets,
+		handoffTimer:      opts.HandoffTimer,
+		recordElapsed:     opts.RecordElapsed,
 	}
 }
 
