@@ -1,5 +1,82 @@
 # Changelog
 
+## [0.18.0](https://github.com/crevissepartners/projmux/compare/v0.17.2...v0.18.0) (2026-10-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **agents:** deliver each question result as one compact message ([#1637](https://github.com/crevissepartners/projmux/issues/1637))
+
+### Features
+
+* **agents:** deliver each question result as one compact message ([#1637](https://github.com/crevissepartners/projmux/issues/1637)) ([23e7ce7](https://github.com/crevissepartners/projmux/commit/23e7ce7bcd4859b9d657fbf14d018fe06255a272))
+* **agents:** mark an Agent whose process host died offline without resuming it ([#1667](https://github.com/crevissepartners/projmux/issues/1667)) ([f08eb00](https://github.com/crevissepartners/projmux/commit/f08eb00a5bfe97c728ce2c68fa4a1690aaa3ecce))
+* **agents:** record explicit stop requests in process sessions ([#1686](https://github.com/crevissepartners/projmux/issues/1686)) ([5d1f2eb](https://github.com/crevissepartners/projmux/commit/5d1f2eb7f1facf0ac99cf230a16841d1177369a7))
+* **agents:** refresh managed Codex base instructions on restart ([#1643](https://github.com/crevissepartners/projmux/issues/1643)) ([ae77ee8](https://github.com/crevissepartners/projmux/commit/ae77ee8bb2f046d31cadb7448a97a90833124462))
+* **profiles:** recreate profiles with bounded original restoration ([#1622](https://github.com/crevissepartners/projmux/issues/1622)) ([4b138f0](https://github.com/crevissepartners/projmux/commit/4b138f03f3c6c08c9bc0c73bea7837d9fd751153))
+* **sdk:** create a Window with a new Agent from one intent ([#1689](https://github.com/crevissepartners/projmux/issues/1689)) ([70d3abc](https://github.com/crevissepartners/projmux/commit/70d3abced0339dd149366520919f8fda2602f5dc))
+* **sdk:** expose agent persona attach and detach ([#1627](https://github.com/crevissepartners/projmux/issues/1627)) ([5eb6a7e](https://github.com/crevissepartners/projmux/commit/5eb6a7e2597c417f5338fa64b79f82d5d127600d))
+* **sdk:** expose agent protection label changes ([#1623](https://github.com/crevissepartners/projmux/issues/1623)) ([e6aa0df](https://github.com/crevissepartners/projmux/commit/e6aa0dfea32b83296600b36ed09ed6b9b6523f37))
+* **sdk:** expose an effect-free registry snapshot ([#1630](https://github.com/crevissepartners/projmux/issues/1630)) ([3b626a3](https://github.com/crevissepartners/projmux/commit/3b626a38e3cb90f9e366beeb832454bab01b6c0b))
+* **sdk:** expose cached Registry snapshots and graph overlays ([#1683](https://github.com/crevissepartners/projmux/issues/1683)) ([cb4c92c](https://github.com/crevissepartners/projmux/commit/cb4c92c420a0a4793f1d47f980b0bac152cd9bf4))
+* **sdk:** expose display settings and identified link rule reads ([#1685](https://github.com/crevissepartners/projmux/issues/1685)) ([096547e](https://github.com/crevissepartners/projmux/commit/096547eb04938d115aa1b89a4e2f96ea9588616b))
+* **sdk:** expose effect-free resource support information ([#1628](https://github.com/crevissepartners/projmux/issues/1628)) ([5397873](https://github.com/crevissepartners/projmux/commit/539787318d2c20b60a5582b16628e1f32ec04bd1))
+* **sdk:** expose legacy AI split mode settings ([#1629](https://github.com/crevissepartners/projmux/issues/1629)) ([d69b50d](https://github.com/crevissepartners/projmux/commit/d69b50dfbe7776df53e593b43df5f7044b334bd6))
+* **sdk:** expose link rule directory and input size limits ([#1687](https://github.com/crevissepartners/projmux/issues/1687)) ([7abb856](https://github.com/crevissepartners/projmux/commit/7abb856f0eee4cb06df0227f5590925759855aff))
+* **sdk:** expose Pane runtime, process keys and classification helpers ([#1678](https://github.com/crevissepartners/projmux/issues/1678)) ([1e6a3de](https://github.com/crevissepartners/projmux/commit/1e6a3dec27c1fedb02e728066da9e47c68e99b77))
+* **sdk:** expose prepared process agent resumes ([#1626](https://github.com/crevissepartners/projmux/issues/1626)) ([b148339](https://github.com/crevissepartners/projmux/commit/b148339a9bf95cec998b09b62b442205b67fe5c4))
+* **sdk:** expose profile and persona directory paths ([#1632](https://github.com/crevissepartners/projmux/issues/1632)) ([948e2f2](https://github.com/crevissepartners/projmux/commit/948e2f22cda4de558681474c80331a074ff14878))
+* **sdk:** expose pure profile name validation ([#1625](https://github.com/crevissepartners/projmux/issues/1625)) ([e7639d2](https://github.com/crevissepartners/projmux/commit/e7639d218e7c6aac134615aafdf8f232c2a8bac5))
+* **sdk:** expose pure project label link resolution ([#1633](https://github.com/crevissepartners/projmux/issues/1633)) ([2d1a194](https://github.com/crevissepartners/projmux/commit/2d1a19455a4fc1f48a0d60c140947a44fec99bac))
+* **sdk:** expose question sources and file-only approval reads ([#1620](https://github.com/crevissepartners/projmux/issues/1620)) ([70aa784](https://github.com/crevissepartners/projmux/commit/70aa784584e80f3604a74bcdc5957abefa8bf6d1))
+* **sdk:** expose read-only agent message archives ([#1624](https://github.com/crevissepartners/projmux/issues/1624)) ([6925eb4](https://github.com/crevissepartners/projmux/commit/6925eb42c5bef4917a27ee72644b3ad69d42abce))
+* **sdk:** expose side-effect-free config and state path resolution ([#1618](https://github.com/crevissepartners/projmux/issues/1618)) ([ea6dca6](https://github.com/crevissepartners/projmux/commit/ea6dca623979669c83f493c43752e3b5f2f60499))
+* **sdk:** expose whole recorded session history ([#1635](https://github.com/crevissepartners/projmux/issues/1635)) ([8c96e79](https://github.com/crevissepartners/projmux/commit/8c96e79ca8682f0cc5ff0f03af6f78c7dad6e55a))
+* **sdk:** observe one coherent resource graph with its Registry file identity ([#1660](https://github.com/crevissepartners/projmux/issues/1660)) ([98afcef](https://github.com/crevissepartners/projmux/commit/98afcefa7d2f950633f01f56847afa2aedbfd0f9))
+* **sdk:** preflight an Agent's profile, instructions and model before its Window exists ([#1663](https://github.com/crevissepartners/projmux/issues/1663)) ([9a8a752](https://github.com/crevissepartners/projmux/commit/9a8a752665cc2d2bd8b3e73bc6aa2c9a766ec34c))
+* **sdk:** prepare registry snapshots and resolve supplied graph inventory ([#1690](https://github.com/crevissepartners/projmux/issues/1690)) ([70a1d74](https://github.com/crevissepartners/projmux/commit/70a1d74e68d1d5b7a71576a281f8acbc44098392))
+* **sdk:** preview and apply the Claude hook integration ([#1665](https://github.com/crevissepartners/projmux/issues/1665)) ([fb16739](https://github.com/crevissepartners/projmux/commit/fb16739d4ada33cdbe447d48a380ab6b4eb1049e))
+* **sdk:** read Agent settings resolution without relaunch admission ([#1662](https://github.com/crevissepartners/projmux/issues/1662)) ([41fa343](https://github.com/crevissepartners/projmux/commit/41fa34328a829d50c11cb194469b092942a5644a))
+* **sdk:** read central statusbar defaults with the legacy fallback ([#1650](https://github.com/crevissepartners/projmux/issues/1650)) ([2d0b0f2](https://github.com/crevissepartners/projmux/commit/2d0b0f2b30577a30f5a79c8ca9b1206338ecbe86))
+* **sdk:** record an in-process operator creator from CreateAgent ([#1661](https://github.com/crevissepartners/projmux/issues/1661)) ([92ec373](https://github.com/crevissepartners/projmux/commit/92ec373682f215f83bf21a2002865d0de8d4b77b))
+* **sdk:** report recorded model, effort and settings application from RelaunchAgent ([#1659](https://github.com/crevissepartners/projmux/issues/1659)) ([29fc466](https://github.com/crevissepartners/projmux/commit/29fc46639ba02b466c4545d0c24562d95be2efd0))
+* **sdk:** report the owner chain of each delete target ([#1653](https://github.com/crevissepartners/projmux/issues/1653)) ([aacf844](https://github.com/crevissepartners/projmux/commit/aacf844dfb0edf6bda2af7d4004eaf066a7d1f39))
+* **sdk:** save and apply the statusbar resources setting ([#1649](https://github.com/crevissepartners/projmux/issues/1649)) ([0e02143](https://github.com/crevissepartners/projmux/commit/0e021432231979dc513c8e1b7394674da3294b55))
+
+
+### Bug Fixes
+
+* **agents:** bound delivered-message reply protection per target ([f05dea3](https://github.com/crevissepartners/projmux/commit/f05dea35bb505a505308e5b3afc75e21a708265a))
+* **agents:** explain both process retirement conditions in relaunch errors ([#1682](https://github.com/crevissepartners/projmux/issues/1682)) ([b929982](https://github.com/crevissepartners/projmux/commit/b929982c0e80cf2cefd0da82b8bede1ed9cfd853))
+* **agents:** isolate process owner observation deadlines ([#1639](https://github.com/crevissepartners/projmux/issues/1639)) ([786389c](https://github.com/crevissepartners/projmux/commit/786389c395e84789eb0190517d4a4ed87e92bb0b))
+* **agents:** keep one target's delivered messages from filling the message store ([#1638](https://github.com/crevissepartners/projmux/issues/1638)) ([f05dea3](https://github.com/crevissepartners/projmux/commit/f05dea35bb505a505308e5b3afc75e21a708265a))
+* **agents:** keep the Claude endpoint helper registered after ready ([#1645](https://github.com/crevissepartners/projmux/issues/1645)) ([fad481a](https://github.com/crevissepartners/projmux/commit/fad481a568f2dfd8d47ace11448087f79c5ea756))
+* **agents:** normalize process window provider spellings ([#1656](https://github.com/crevissepartners/projmux/issues/1656)) ([37e107a](https://github.com/crevissepartners/projmux/commit/37e107aa4c6103e458c375f24681a6d6091dd0a1))
+* **agents:** resume an Agent marked offline after its host died without asking for a prompt ([#1672](https://github.com/crevissepartners/projmux/issues/1672)) ([828b6a0](https://github.com/crevissepartners/projmux/commit/828b6a01e5ecf8780519fb687225bd8454f18a34))
+* **ai:** replace Claude settings atomically and refuse a file changed since the plan ([#1664](https://github.com/crevissepartners/projmux/issues/1664)) ([552ca1f](https://github.com/crevissepartners/projmux/commit/552ca1fe358964f1d95aca07d7da04d949f290d8))
+* **approvals:** report the target agent provider ([#1655](https://github.com/crevissepartners/projmux/issues/1655)) ([7ff9862](https://github.com/crevissepartners/projmux/commit/7ff9862749b9a60f0a9540a2d846d796c582d1cd))
+* **build:** update Go and stabilize legacy outbox timing ([#1641](https://github.com/crevissepartners/projmux/issues/1641)) ([5814981](https://github.com/crevissepartners/projmux/commit/5814981ca5084a860b8245ea2d51b538e12342cb))
+* **ci:** split process host CLI suite time budgets ([#1634](https://github.com/crevissepartners/projmux/issues/1634)) ([d491b42](https://github.com/crevissepartners/projmux/commit/d491b429ba751ac9d8c8d49a82a3ee8b23c8736c))
+* **cli:** align deprecated project delete help with singular refs ([#1666](https://github.com/crevissepartners/projmux/issues/1666)) ([cc5ae9e](https://github.com/crevissepartners/projmux/commit/cc5ae9edfa49e04d7f3e7b95d67cea5a3e937b6a))
+* **cli:** honor advertised rename output and unregister project refs ([#1657](https://github.com/crevissepartners/projmux/issues/1657)) ([dcf4238](https://github.com/crevissepartners/projmux/commit/dcf4238d845a836cc076fc1ad5b7c8756a9361db))
+* **config:** keep repeated tmux option updates idempotent ([#1658](https://github.com/crevissepartners/projmux/issues/1658)) ([aa73114](https://github.com/crevissepartners/projmux/commit/aa731145d2673aa493fbc82269a7d81cf990e0b1))
+* **diagnostics:** distinguish detached peer source proof refusals ([#1688](https://github.com/crevissepartners/projmux/issues/1688)) ([e6569f6](https://github.com/crevissepartners/projmux/commit/e6569f604e763983d9ef7d2e77379a6afd971fdf))
+* **guidance:** recover oversized stored project guidance ([#1621](https://github.com/crevissepartners/projmux/issues/1621)) ([8d6cb38](https://github.com/crevissepartners/projmux/commit/8d6cb38a30bcd124759719fb98dcc04ceb19af9f))
+* **hooks:** clear the approval badge after a subagent's permission request is answered ([#1652](https://github.com/crevissepartners/projmux/issues/1652)) ([b7acf8e](https://github.com/crevissepartners/projmux/commit/b7acf8ef3d476e0b2209ddf6e2ed736eefc6d044))
+* **hooks:** route managed hook notifications through the app socket ([#1673](https://github.com/crevissepartners/projmux/issues/1673)) ([64dc0f7](https://github.com/crevissepartners/projmux/commit/64dc0f7304cda022f4bcdc32adc079c465370834))
+* **receipt:** report partial and agent-only project stops accurately ([#1677](https://github.com/crevissepartners/projmux/issues/1677)) ([af675f2](https://github.com/crevissepartners/projmux/commit/af675f2ad677446e86caf5dc122efd5761fb5ba6))
+* **registry:** hand primary window to an Agent-anchored sibling ([#1674](https://github.com/crevissepartners/projmux/issues/1674)) ([fed8263](https://github.com/crevissepartners/projmux/commit/fed8263bc9af4a431fbbdf73db9daf31744177b6))
+* **registryview:** show resume for retired resumable process agents ([#1676](https://github.com/crevissepartners/projmux/issues/1676)) ([530c573](https://github.com/crevissepartners/projmux/commit/530c5731c2ccc178b0305dc237d1f1da78f40ae7))
+* **sdk:** distinguish Claude settings change reasons ([#1679](https://github.com/crevissepartners/projmux/issues/1679)) ([2844c86](https://github.com/crevissepartners/projmux/commit/2844c862163e25614b208565d5140fec064c52a9))
+* **sdk:** handle an unfinished Codex host transfer on tmux relaunch the way the CLI does ([#1668](https://github.com/crevissepartners/projmux/issues/1668)) ([3de51e1](https://github.com/crevissepartners/projmux/commit/3de51e168b9f8ed83444e5dca58dcefdb5dd5a69))
+* **sdk:** plan Codex relaunch settings and dry run reasons the way the CLI does ([#1670](https://github.com/crevissepartners/projmux/issues/1670)) ([d1ca076](https://github.com/crevissepartners/projmux/commit/d1ca07638aebbe69fcea2d1d5c7fc0c4a31f6883))
+* **sdk:** preserve runtime facts for relaunch and capabilities ([#1684](https://github.com/crevissepartners/projmux/issues/1684)) ([9712a83](https://github.com/crevissepartners/projmux/commit/9712a834112725b853507df602af34408c341a04))
+* **sdk:** refuse a relaunch blocked by an unfinished Codex transfer as an invalid request the way the CLI does ([#1671](https://github.com/crevissepartners/projmux/issues/1671)) ([61c886e](https://github.com/crevissepartners/projmux/commit/61c886e40ab1dd66bebd417054baa989b0cafc24))
+* **sdk:** use captured PATH for Agent tmux deletion ([#1675](https://github.com/crevissepartners/projmux/issues/1675)) ([565f8b2](https://github.com/crevissepartners/projmux/commit/565f8b238d2d4f500a61e491ac30fbe95d9dfddb))
+* **test:** clean up pmxb fixture roots after test runs ([#1654](https://github.com/crevissepartners/projmux/issues/1654)) ([9daaf70](https://github.com/crevissepartners/projmux/commit/9daaf70e79084728eeb9681a61a80f544f384d02))
+* **tmux:** turn on focus-events so pane focus hooks clear the response-complete badge ([#1651](https://github.com/crevissepartners/projmux/issues/1651)) ([426b194](https://github.com/crevissepartners/projmux/commit/426b1940b741ecc061e2d427dc8788fcd48229b8))
+* **usage:** use unknown for unclassified Codex refresh failures ([#1680](https://github.com/crevissepartners/projmux/issues/1680)) ([875b272](https://github.com/crevissepartners/projmux/commit/875b272e36796f3a9fd6b856fb9a5ee16d18719a))
+
 ## [0.17.2](https://github.com/crevissepartners/projmux/compare/v0.17.1...v0.17.2) (2026-10-18)
 
 
