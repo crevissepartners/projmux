@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -29,6 +30,23 @@ func sdkProcessObserveClient(t *testing.T, path, root string) *projmux.Client {
 	return client
 }
 
+// sameJSONValue reports whether two provider frames hold the same JSON value;
+// both empty is the same.
+func sameJSONValue(t *testing.T, got, want []byte) bool {
+	t.Helper()
+	if len(got) == 0 || len(want) == 0 {
+		return len(got) == len(want)
+	}
+	var g, w any
+	if err := json.Unmarshal(got, &g); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(want, &w); err != nil {
+		t.Fatal(err)
+	}
+	return reflect.DeepEqual(g, w)
+}
+
 // The public observer reads a live owner by its exact Binding, reports the
 // host's own gap, continues from Next, refuses another generation, and ends
 // with the final Snapshot once the provider's Wait is recorded.
@@ -39,7 +57,7 @@ func TestPublicProcessObserverGenerationGapAndTerminal(t *testing.T) {
 	var direct []processhost.Event
 	for i := 0; i < 8 && (len(direct) == 0 || direct[0].Kind != "stream-gap"); i++ {
 		after := snap.Sequence
-		f.turn(t, fmt.Sprintf("public-gap-%d", i), "fixture")
+		f.turn(t, fmt.Sprintf("public-gap-%d", i), fmt.Sprintf("echo:<b> & %d", i))
 		snap = f.wait(t, func(s processhost.Snapshot) bool { return s.Turn == "" && s.Sequence > after })
 		var err error
 		if direct, _, err = f.endpoint.handle.Events(b, 0); err != nil {
@@ -63,17 +81,19 @@ func TestPublicProcessObserverGenerationGapAndTerminal(t *testing.T) {
 	if err != nil || !batch.Gap || batch.Terminal || len(batch.Events) != len(direct) || batch.Events[0].Kind != "stream-gap" || batch.Next != direct[len(direct)-1].Sequence || batch.Snapshot.Sequence != batch.Next {
 		t.Fatalf("gap batch: %+v %v", batch, err)
 	}
-	// The owner answer frame re-encodes each provider frame as compact JSON.
+	// The owner answer frame re-encodes each provider frame: whitespace is
+	// compacted and < > & are escaped, so Payload is compared as JSON values.
+	escaped := 0
 	for i, event := range batch.Events {
-		var raw bytes.Buffer
-		if len(direct[i].Raw) > 0 {
-			if err := json.Compact(&raw, direct[i].Raw); err != nil {
-				t.Fatal(err)
-			}
+		if event.Sequence != direct[i].Sequence || event.Kind != direct[i].Kind || !sameJSONValue(t, event.Payload, direct[i].Raw) {
+			t.Fatalf("event %d: %s want %s", i, event.Payload, direct[i].Raw)
 		}
-		if event.Sequence != direct[i].Sequence || event.Kind != direct[i].Kind || !bytes.Equal(event.Payload, raw.Bytes()) {
-			t.Fatalf("event %d: %s want %s", i, event.Payload, raw.Bytes())
+		if bytes.Contains(direct[i].Raw, []byte("<b> &")) {
+			escaped++
 		}
+	}
+	if escaped == 0 {
+		t.Fatalf("no returned provider frame carried < or &: %+v", direct)
 	}
 	// Continuing from Next repeats nothing; a bounded Wait returns empty.
 	started := time.Now()

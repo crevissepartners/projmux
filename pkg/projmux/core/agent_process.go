@@ -66,9 +66,11 @@ type AgentProcessSnapshot struct {
 	Exit      *AgentProcessExit   `json:"exit,omitempty"`
 }
 
-// AgentProcessEvent is one provider event. Payload is the provider's own frame,
-// re-encoded as compact JSON by the owner's answer; it never carries projmux
-// control requests. Exit is set on a provider exit event.
+// AgentProcessEvent is one provider event. Payload is JSON with the same value
+// as the provider's own frame. The owner's answer frame re-encodes it, which
+// compacts whitespace and may escape HTML characters such as < > &, so compare
+// it as a JSON value, never byte for byte. It never carries projmux control
+// requests. Exit is set on a provider exit event.
 type AgentProcessEvent struct {
 	Sequence uint64            `json:"sequence"`
 	Kind     string            `json:"kind"`
