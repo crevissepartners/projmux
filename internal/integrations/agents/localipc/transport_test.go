@@ -2,6 +2,7 @@ package localipc
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -356,5 +357,88 @@ func TestBoundedJSONNativeReadDeadlinePreservesPartialFrame(t *testing.T) {
 				t.Fatalf("native deadline: value=%v error=%v", got, err)
 			}
 		})
+	}
+}
+
+// A read ends at the caller's cancel even while the owner keeps holding its
+// answer, and an answer sent right after the cancel is not a success. An
+// exchange with an effect keeps reading its receipt after the cancel.
+func TestReadOwnedJSONCancelEndsConnectedRead(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "pmx-localipc-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	listener, err := Listen(filepath.Join(root, "private", "read.sock"))
+	if errors.Is(err, syscall.EPERM) {
+		t.Skip("Unix sockets unavailable")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	host, _, err := Process(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		read bool
+		// held keeps the answer until the call has returned, so only the
+		// wake can end the read; otherwise the answer follows the cancel.
+		held bool
+	}{
+		{name: "read held", read: true, held: true},
+		{name: "read late answer", read: true},
+		{name: "exchange late answer"},
+	} {
+		accepted, release := make(chan struct{}), make(chan struct{})
+		served := make(chan error, 1)
+		go func() {
+			conn, err := listener.Unix.AcceptUnix()
+			if err != nil {
+				served <- err
+				return
+			}
+			defer conn.Close()
+			var request map[string]string
+			if err := ReadJSON(conn, &request); err != nil {
+				served <- err
+				return
+			}
+			close(accepted)
+			select {
+			case <-release:
+			case <-time.After(10 * time.Second):
+			}
+			served <- WriteJSON(conn, map[string]string{"reply": request["request"]})
+		}()
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			<-accepted
+			cancel()
+			if !tc.held {
+				close(release)
+			}
+		}()
+		exchange := ExchangeOwnedJSON
+		if tc.read {
+			exchange = ReadOwnedJSON
+		}
+		var response map[string]string
+		started := time.Now()
+		err := exchange(ctx, listener.Path, listener.Identity(), host, map[string]string{"request": "exact"}, &response)
+		elapsed := time.Since(started)
+		cancel()
+		if tc.held {
+			close(release)
+		}
+		<-served
+		if tc.read && (!errors.Is(err, context.Canceled) || elapsed > 3*time.Second) {
+			t.Fatalf("%s: %v after %s, response %v", tc.name, err, elapsed, response)
+		}
+		if !tc.read && (err != nil || response["reply"] != "exact") {
+			t.Fatalf("%s lost its receipt: %v %v", tc.name, err, response)
+		}
 	}
 }

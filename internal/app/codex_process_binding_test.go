@@ -63,6 +63,7 @@ for line in sys.stdin:
    a={'id':turn,'method':'item/commandExecution/requestApproval','params':{'threadId':'process-thread','turnId':current,'itemId':'command','startedAtMs':1,'command':'echo fixture','cwd':'/fixture','availableDecisions':['accept','decline','cancel']}}
    q={'id':str(turn),'method':'item/tool/requestUserInput','params':{'threadId':'process-thread','turnId':current,'itemId':'question','isBlocking':True,'questions':[{'id':'q','question':'Color?','options':[{'label':'blue'},{'label':'red'}]}]}}
    emit(a);emit(q);emit(a);emit(q)
+  elif prompt.startswith('echo:'):notify('item/agentMessage/delta',{'threadId':'process-thread','turnId':current,'itemId':'echo','delta':prompt[5:]});complete()
   elif prompt!='hold':complete()
  elif method=='turn/interrupt':reply({});complete()
  elif 'result' in n:

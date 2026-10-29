@@ -166,7 +166,7 @@ func (r ProcessObserver) ObserveHostView(binding processhost.Binding, activation
 		return ProcessHostObservation{}, err
 	}
 	var result processObservationResult
-	err = localipc.ExchangeOwnedJSON(r.Ctx, socket, identity, activation.HostProcess, ProcessObservationRequest(provider, binding), &result)
+	err = localipc.ReadOwnedJSON(r.Ctx, socket, identity, activation.HostProcess, ProcessObservationRequest(provider, binding), &result)
 	// Socket inode replacement and PID reuse are refusal, never a reason to
 	// rediscover another host or replay.
 	if errors.Is(err, localipc.ErrSocketReplaced) {

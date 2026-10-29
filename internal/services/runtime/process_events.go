@@ -86,7 +86,7 @@ func (r ProcessObserver) ReadProcessHostEvents(after uint64) (ProcessHostEvents,
 		return ProcessHostEvents{}, err
 	}
 	var result processEventsResult
-	err = localipc.ExchangeOwnedJSON(r.Ctx, socket, identity, activation.HostProcess, processEventsWireRequest(provider, ProcessEventsRequest{Binding: binding, After: after}), &result)
+	err = localipc.ReadOwnedJSON(r.Ctx, socket, identity, activation.HostProcess, processEventsWireRequest(provider, ProcessEventsRequest{Binding: binding, After: after}), &result)
 	if errors.Is(err, localipc.ErrSocketReplaced) {
 		err = processhost.ErrStale
 	}
