@@ -556,6 +556,43 @@ public resume or delete recovery; uncertain retirement is not automatically
 retried. Claim lock admission honors caller cancellation and deadlines, including
 when another birth or claim release holds the guard.
 
+## Observe a process Agent
+
+`Client.ReadAgentProcess(ctx, core.AgentProcessRequest{Agent: "uid:..."})`
+observes one exact process Agent generation, and
+`Client.ReadAgentProcessEvents(ctx, core.AgentProcessEventsRequest{...})` reads
+its events after a sequence cursor. Both read the generation's owner without
+changing it: cancelling a read or losing the connection never stops the owner
+or provider and never records a Wait.
+
+- `Agent` must be one exact `uid:` reference. A zero `Binding` reads the
+  current generation once and returns its `Binding` (Host, Pane, Generation);
+  pass it to later reads. A Binding built from a graph `GraphProcessKey` is a
+  request, not authority: each read compares it again with the live host and
+  generation and never follows a newer generation.
+- The Snapshot carries the state, whether a turn is running, the number of open
+  control requests, the CLI's attention projection, the owner mode, the host and
+  child process identities, and `Exit` from actual Wait evidence only. Session,
+  connection and turn identifiers and request content are not part of it; read
+  session IDs with `ListAgentSessions` and open requests with `ListQuestions`
+  and `ListApprovals`.
+- An event batch lists ascending events after `After`; `Next` is the next
+  `After`. `Gap` reports events the host itself dropped (its `stream-gap` event
+  is in the batch) and `Snapshot` resynchronizes. `More` reports that the
+  answer frame left events for the next read. `Omitted` names returned events
+  whose provider payload did not fit one frame; their identity and `Exit` are
+  kept. `Terminal` reports a generation that ended with its final Snapshot.
+- `Wait` bounds a long poll when no event follows `After`: zero reads once, and
+  any value is capped by the owner read deadline (5s). The SDK repeats the
+  read without starting a goroutine.
+- Refusals are `*Refusal` values whose `Unwrap` reaches both a sentinel and the
+  original cause: `stale-binding` (`ErrProcessStale`) for another generation,
+  `process-closed` (`ErrProcessClosed`) for a retired generation with no final
+  evidence, `process-host-unsupported-read` (`ErrProcessReadUnsupported`) for an
+  owner built before it served event reads (no request is sent to it), and
+  `process-owner-unreachable` (`ErrProcessOwnerUnreachable`) for an owner that
+  did not answer, which is not a provider exit.
+
 ## Mark a process Agent whose host died offline
 
 `Client.MarkAgentOffline(ctx, core.MarkAgentOfflineRequest{Ref: "uid:..."})`
