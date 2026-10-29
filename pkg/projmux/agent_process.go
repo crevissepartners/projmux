@@ -215,7 +215,12 @@ func (r agentProcessRead) batch(events runtimeservice.ProcessHostEvents) core.Ag
 		Terminal: snapshot.State == "exited" && snapshot.Exit != nil, Omitted: append([]uint64(nil), events.Omitted...),
 	}
 	for _, event := range events.Events {
-		batch.Events = append(batch.Events, core.AgentProcessEvent{Sequence: event.Sequence, Kind: event.Kind, Payload: append([]byte(nil), event.Raw...), Exit: publicProcessExit(event.Exit)})
+		public := core.AgentProcessEvent{Sequence: event.Sequence, Kind: event.Kind, Exit: publicProcessExit(event.Exit)}
+		// An event without a provider frame crosses the owner frame as JSON null.
+		if len(event.Raw) > 0 && string(event.Raw) != "null" {
+			public.Payload = append([]byte(nil), event.Raw...)
+		}
+		batch.Events = append(batch.Events, public)
 	}
 	return batch
 }

@@ -232,7 +232,7 @@ func TestPublicProcessEventBatchCarriesOwnerBatch(t *testing.T) {
 	raw := json.RawMessage(`{"method":"item/agentMessage/delta"}`)
 	owner := runtimeservice.ProcessHostEvents{
 		Events: []processhost.Event{
-			{Binding: b, Sequence: 4, Kind: "stream-gap"},
+			{Binding: b, Sequence: 4, Kind: "stream-gap", Raw: json.RawMessage("null")},
 			{Binding: b, Session: "secret-session", Connection: "secret-connection", Turn: "secret-turn", Sequence: 5, Kind: "provider", Raw: raw, Request: &processhost.Request{ID: "secret-request", Input: raw}},
 			{Binding: b, Sequence: 6, Kind: "exit", Exit: &processhost.Exit{Code: 1}},
 		},
@@ -243,7 +243,7 @@ func TestPublicProcessEventBatchCarriesOwnerBatch(t *testing.T) {
 	if batch.Next != 6 || !batch.Gap || !batch.More || !batch.Terminal || len(batch.Omitted) != 1 || batch.Omitted[0] != 6 || len(batch.Events) != 3 {
 		t.Fatalf("batch: %+v", batch)
 	}
-	if batch.Events[0].Kind != "stream-gap" || !bytes.Equal(batch.Events[1].Payload, raw) || batch.Events[2].Exit == nil || batch.Events[2].Exit.Code != 1 {
+	if batch.Events[0].Kind != "stream-gap" || batch.Events[0].Payload != nil || batch.Events[2].Payload != nil || !bytes.Equal(batch.Events[1].Payload, raw) || batch.Events[2].Exit == nil || batch.Events[2].Exit.Code != 1 {
 		t.Fatalf("events: %+v", batch.Events)
 	}
 	s := batch.Snapshot
@@ -251,6 +251,9 @@ func TestPublicProcessEventBatchCarriesOwnerBatch(t *testing.T) {
 		t.Fatalf("snapshot: %+v", s)
 	}
 	encoded, _ := json.Marshal(batch)
+	if bytes.Contains(encoded, []byte(`"payload":null`)) {
+		t.Fatalf("an event without a provider frame carried a payload: %s", encoded)
+	}
 	for _, secret := range []string{"secret-session", "secret-connection", "secret-turn", "secret-request"} {
 		if bytes.Contains(encoded, []byte(secret)) {
 			t.Fatalf("public batch carried %q: %s", secret, encoded)
