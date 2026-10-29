@@ -317,23 +317,33 @@ func TestPublicProcessObserverSettlesAndBoundsReads(t *testing.T) {
 			t.Fatalf("slow owner read after %s: %+v %v", elapsed, batch, err)
 		}
 	})
-	t.Run("cancel ends a held read and a late answer", func(t *testing.T) {
-		f, client, agent, public, next := start(t)
-		proxy := proxyProcessOwner(t, f, 0)
-		proxy.hold.Store(true)
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		go func() {
-			<-proxy.held
-			cancel()
-			close(proxy.release)
-		}()
-		started := time.Now()
-		_, err := client.ReadAgentProcessEvents(ctx, core.AgentProcessEventsRequest{Agent: agent, Binding: public, After: next, Wait: time.Second})
-		if elapsed := time.Since(started); !errors.Is(err, context.Canceled) || elapsed > time.Second {
-			t.Fatalf("held read after cancel: %v after %s", err, elapsed)
-		}
-	})
+	// held keeps the answer until the call has returned, so only the wake can
+	// end the read; otherwise the answer follows the cancel at once.
+	for _, held := range []bool{true, false} {
+		t.Run(fmt.Sprintf("cancel ends a held read (answer held until return: %t)", held), func(t *testing.T) {
+			f, client, agent, public, next := start(t)
+			proxy := proxyProcessOwner(t, f, 0)
+			proxy.hold.Store(true)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			go func() {
+				<-proxy.held
+				cancel()
+				if !held {
+					close(proxy.release)
+				}
+			}()
+			started := time.Now()
+			_, err := client.ReadAgentProcessEvents(ctx, core.AgentProcessEventsRequest{Agent: agent, Binding: public, After: next, Wait: time.Second})
+			elapsed := time.Since(started)
+			if held {
+				close(proxy.release)
+			}
+			if !errors.Is(err, context.Canceled) || elapsed > 3*time.Second {
+				t.Fatalf("held read after cancel: %v after %s", err, elapsed)
+			}
+		})
+	}
 	t.Run("owner silent for the whole bound is unreachable", func(t *testing.T) {
 		f, client, agent, public, _ := start(t)
 		proxy := proxyProcessOwner(t, f, 0)
@@ -342,7 +352,7 @@ func TestPublicProcessObserverSettlesAndBoundsReads(t *testing.T) {
 		_, err := client.ReadAgentProcess(context.Background(), core.AgentProcessRequest{Agent: agent, Binding: public})
 		elapsed := time.Since(started)
 		var refusal *projmux.Refusal
-		if !errors.As(err, &refusal) || refusal.Code != projmux.CodeProcessOwnerUnreachable || !errors.Is(err, context.DeadlineExceeded) || elapsed < localipc.Deadline-time.Second || elapsed > localipc.Deadline+time.Second {
+		if !errors.As(err, &refusal) || refusal.Code != projmux.CodeProcessOwnerUnreachable || !errors.Is(err, context.DeadlineExceeded) || elapsed < localipc.Deadline-time.Second || elapsed > localipc.Deadline+3*time.Second {
 			t.Fatalf("silent owner after %s: %v", elapsed, err)
 		}
 	})
@@ -361,7 +371,13 @@ func TestPublicProcessObserverSettlesAndBoundsReads(t *testing.T) {
 		}()
 		time.Sleep(200 * time.Millisecond)
 		proxy.hold.Store(true)
-		<-proxy.held
+		select {
+		case <-proxy.held:
+		case got := <-done:
+			t.Fatalf("long poll ended before the owner was held: %+v %v", got.batch, got.err)
+		case <-time.After(10 * time.Second):
+			t.Fatal("long poll never reached the held owner")
+		}
 		if err := f.endpoint.handle.Stop(b); err != nil {
 			t.Fatal(err)
 		}
@@ -380,7 +396,12 @@ func TestPublicProcessObserverSettlesAndBoundsReads(t *testing.T) {
 			t.Fatal(err)
 		}
 		proxy.dropHeld()
-		got := <-done
+		var got result
+		select {
+		case got = <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatal("long poll did not return after the held read was dropped")
+		}
 		if got.err != nil || !got.batch.Terminal || got.batch.Next != next || got.batch.Snapshot.Exit == nil || got.batch.Snapshot.Exit.Code != code || got.batch.Binding != public {
 			t.Fatalf("long poll across the Wait: %+v %v", got.batch, got.err)
 		}

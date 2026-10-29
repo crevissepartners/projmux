@@ -52,7 +52,8 @@ const agentProcessPollInterval = 50 * time.Millisecond
 // never stops the owner or provider, and never records a Wait. A generation
 // that ended returns its final Snapshot with Exit; a retired generation with
 // no final evidence is ErrProcessClosed, and an owner that does not answer is
-// ErrProcessOwnerUnreachable. The call returns within localipc.Deadline (5s).
+// ErrProcessOwnerUnreachable. The owner read shares one localipc.Deadline (5s)
+// budget; Registry file reads are outside it.
 func (c *Client) ReadAgentProcess(ctx context.Context, req core.AgentProcessRequest) (core.AgentProcessSnapshot, error) {
 	const field = "AgentProcessRequest"
 	read, err := c.resolveAgentProcess(ctx, req.Agent, req.Binding, field)
@@ -82,11 +83,12 @@ func (c *Client) ReadAgentProcess(ctx context.Context, req core.AgentProcessRequ
 // the same owner lock. When no event follows After, it repeats the read until
 // one does, the generation ends, or req.Wait passes, and then returns an empty
 // batch. Wait only waits for new events; it never shortens a read of a slow
-// owner. The call returns within localipc.Deadline (5s), and an owner that
-// never answers in that time is ErrProcessOwnerUnreachable. It starts no
-// goroutine, and cancellation ends only the read. An owner built before it
-// served event reads is ErrProcessReadUnsupported, and no request is sent to
-// it.
+// owner. The owner reads and repeats share one localipc.Deadline (5s) budget,
+// and an owner that never answers within it is ErrProcessOwnerUnreachable;
+// Registry file reads and scheduling delay are outside that budget. It starts
+// no polling goroutine, and cancellation ends only the read. An owner built
+// before it served event reads is ErrProcessReadUnsupported, and no request is
+// sent to it.
 func (c *Client) ReadAgentProcessEvents(ctx context.Context, req core.AgentProcessEventsRequest) (core.AgentProcessEventBatch, error) {
 	const field = "AgentProcessEventsRequest"
 	read, err := c.resolveAgentProcess(ctx, req.Agent, req.Binding, field)
@@ -291,8 +293,10 @@ func (r agentProcessRead) refusal(ctx, bounded context.Context, err error) error
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return ctxErr
 	}
-	if boundErr := bounded.Err(); boundErr != nil {
-		return r.refusalCode(CodeProcessOwnerUnreachable, ErrProcessOwnerUnreachable, errors.Join(boundErr, err))
+	// The socket deadline can fire just before the context's timer runs, so
+	// a reached deadline counts as well.
+	if deadline, ok := bounded.Deadline(); bounded.Err() != nil || (ok && !time.Now().Before(deadline)) {
+		return r.refusalCode(CodeProcessOwnerUnreachable, ErrProcessOwnerUnreachable, errors.Join(context.DeadlineExceeded, err))
 	}
 	switch {
 	case errors.Is(err, processhost.ErrStale):

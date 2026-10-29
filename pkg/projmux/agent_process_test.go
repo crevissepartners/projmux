@@ -12,6 +12,7 @@ import (
 	"time"
 
 	m "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	store "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 	runtimeservice "github.com/crevissepartners/projmux/internal/services/runtime"
@@ -273,6 +274,43 @@ func TestPublicProcessSettleClassifiesEndedGeneration(t *testing.T) {
 	f := agentProcessRegistryFixture(t, fixtureCurrentExited)
 	if _, done, err := f.client.settleAgentProcess(cancelled, "uid:"+f.agent, "AgentProcessEventsRequest", agentProcessRead{public: f.public}); done || err != nil {
 		t.Fatalf("cancelled settle: %t %v", done, err)
+	}
+}
+
+// reachedDeadlineContext has a deadline in the past whose timer has not run
+// yet: Err is still nil, as when the socket deadline fires first.
+type reachedDeadlineContext struct {
+	context.Context
+	deadline time.Time
+}
+
+func (c reachedDeadlineContext) Deadline() (time.Time, bool) { return c.deadline, true }
+
+// An owner read that failed at the call's deadline keeps
+// context.DeadlineExceeded as its cause even before the context's timer runs;
+// a failure before the deadline does not invent it, and a cancelled caller
+// still gets its own error.
+func TestPublicProcessRefusalKeepsReachedDeadline(t *testing.T) {
+	read := agentProcessRead{}
+	reached := reachedDeadlineContext{Context: context.Background(), deadline: time.Now().Add(-time.Millisecond)}
+	if reached.Err() != nil {
+		t.Fatal("fixture context already reports its deadline")
+	}
+	err := read.refusal(context.Background(), reached, localipc.ErrFrameReadDeadline)
+	requireAgentProcessRefusal(t, err, CodeProcessOwnerUnreachable, ErrProcessOwnerUnreachable)
+	if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, localipc.ErrFrameReadDeadline) {
+		t.Fatalf("reached deadline lost its causes: %v", err)
+	}
+	pending := reachedDeadlineContext{Context: context.Background(), deadline: time.Now().Add(time.Hour)}
+	err = read.refusal(context.Background(), pending, localipc.ErrFrameReadDeadline)
+	requireAgentProcessRefusal(t, err, CodeProcessOwnerUnreachable, ErrProcessOwnerUnreachable)
+	if errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("deadline invented before it was reached: %v", err)
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err = read.refusal(cancelled, reached, localipc.ErrFrameReadDeadline); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled caller: %v", err)
 	}
 }
 

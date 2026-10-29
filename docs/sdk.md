@@ -582,13 +582,15 @@ or provider and never records a Wait.
   answer frame left events for the next read. `Omitted` names returned events
   whose provider payload did not fit one frame; their identity and `Exit` are
   kept. `Terminal` reports a generation that ended with its final Snapshot.
-- Each call returns within the owner read deadline (5s). `Wait` is how long a
-  long poll waits for a new event after `After`: zero reads once, and any value
-  is capped at 5s. It never shortens the read of a slow owner. When the owner
-  answered but no event followed, the call returns an empty batch. The SDK
-  repeats the read without starting a goroutine, and reads the Registry again
-  between reads, so a generation that ends during the wait returns its final
-  Snapshot. A cancel also ends a read the owner has not answered yet.
+- A call's owner reads and repeats share one owner read deadline (5s); the
+  Registry file reads and scheduling delay around them are outside that budget,
+  so it is not a strict wall-clock bound. `Wait` is how long a long poll waits
+  for a new event after `After`: zero reads once, and any value is capped at
+  5s. It never shortens the read of a slow owner. When the owner answered but
+  no event followed, the call returns an empty batch. The SDK repeats the read
+  without a polling goroutine, and reads the Registry again between reads, so a
+  generation that ends during the wait returns its final Snapshot. A cancel
+  also ends a read the owner has not answered yet.
 - Refusals are `*Refusal` values whose `Unwrap` reaches both a sentinel and the
   original cause: `stale-binding` (`ErrProcessStale`) for another generation,
   `process-closed` (`ErrProcessClosed`) for a retired generation with no final

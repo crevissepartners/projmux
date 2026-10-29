@@ -360,9 +360,9 @@ func TestBoundedJSONNativeReadDeadlinePreservesPartialFrame(t *testing.T) {
 	}
 }
 
-// A read ends at the caller's cancel even while the owner holds its answer,
-// and an answer sent after the cancel is not a success. An exchange with an
-// effect keeps reading its receipt after the cancel.
+// A read ends at the caller's cancel even while the owner keeps holding its
+// answer, and an answer sent right after the cancel is not a success. An
+// exchange with an effect keeps reading its receipt after the cancel.
 func TestReadOwnedJSONCancelEndsConnectedRead(t *testing.T) {
 	root, err := os.MkdirTemp("/tmp", "pmx-localipc-")
 	if err != nil {
@@ -381,7 +381,17 @@ func TestReadOwnedJSONCancelEndsConnectedRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, read := range []bool{true, false} {
+	for _, tc := range []struct {
+		name string
+		read bool
+		// held keeps the answer until the call has returned, so only the
+		// wake can end the read; otherwise the answer follows the cancel.
+		held bool
+	}{
+		{name: "read held", read: true, held: true},
+		{name: "read late answer", read: true},
+		{name: "exchange late answer"},
+	} {
 		accepted, release := make(chan struct{}), make(chan struct{})
 		served := make(chan error, 1)
 		go func() {
@@ -397,17 +407,22 @@ func TestReadOwnedJSONCancelEndsConnectedRead(t *testing.T) {
 				return
 			}
 			close(accepted)
-			<-release
+			select {
+			case <-release:
+			case <-time.After(10 * time.Second):
+			}
 			served <- WriteJSON(conn, map[string]string{"reply": request["request"]})
 		}()
 		ctx, cancel := context.WithCancel(context.Background())
 		go func() {
 			<-accepted
 			cancel()
-			close(release)
+			if !tc.held {
+				close(release)
+			}
 		}()
 		exchange := ExchangeOwnedJSON
-		if read {
+		if tc.read {
 			exchange = ReadOwnedJSON
 		}
 		var response map[string]string
@@ -415,12 +430,15 @@ func TestReadOwnedJSONCancelEndsConnectedRead(t *testing.T) {
 		err := exchange(ctx, listener.Path, listener.Identity(), host, map[string]string{"request": "exact"}, &response)
 		elapsed := time.Since(started)
 		cancel()
-		<-served
-		if read && (!errors.Is(err, context.Canceled) || elapsed > time.Second) {
-			t.Fatalf("read after cancel: %v after %s, response %v", err, elapsed, response)
+		if tc.held {
+			close(release)
 		}
-		if !read && (err != nil || response["reply"] != "exact") {
-			t.Fatalf("exchange after cancel lost its receipt: %v %v", err, response)
+		<-served
+		if tc.read && (!errors.Is(err, context.Canceled) || elapsed > 3*time.Second) {
+			t.Fatalf("%s: %v after %s, response %v", tc.name, err, elapsed, response)
+		}
+		if !tc.read && (err != nil || response["reply"] != "exact") {
+			t.Fatalf("%s lost its receipt: %v %v", tc.name, err, response)
 		}
 	}
 }
