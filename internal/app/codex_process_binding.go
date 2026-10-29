@@ -338,7 +338,7 @@ func (e *codexProcessEndpoint) exchangeEvents(conn *net.UnixConn, peer coremetad
 	view := newProcessHostObservation(read.Binding, e.evidence.HostProcess, e.evidence.Process, snap, codexForegroundActions)
 	view.OwnerMode = e.ownerMode
 	if readErr == nil && regErr == nil && read.Binding == e.binding && snap.PID == e.evidence.Process.PID && processObservationMatches(reg, read.Binding, view) {
-		if batch, ok := fitProcessHostEvents(events, view, read.After); ok {
+		if batch, ok := fitProcessHostEvents(events, view, snap.Sequence, read.After); ok {
 			result = processForegroundResult{Accepted: true, Events: &batch}
 		}
 	}

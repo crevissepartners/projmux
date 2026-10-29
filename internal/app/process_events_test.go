@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -116,13 +117,13 @@ func testProcessHostEventsOwnerRead(t *testing.T, provider string) {
 		t.Fatalf("events read: %+v", got)
 	}
 	for i, event := range batch.Events {
-		if event.Sequence != want[i].Sequence || event.Kind != want[i].Kind || event.Binding != binding || !bytes.Equal(event.Raw, want[i].Raw) {
+		if event.Sequence != want[i].Sequence || event.Kind != want[i].Kind || event.Binding != binding || !sameProcessEventJSON(event, want[i]) {
 			t.Fatalf("event %d: %+v want %+v", i, event, want[i])
 		}
 	}
 	view := batch.Observation
 	if view.Binding != binding || view.Provider != provider || view.State != "ready" || view.Protocol != processHostProtocol ||
-		view.Session != current.Session || view.Connection != current.Connection || view.TurnID != current.Turn || view.Sequence != batch.Last ||
+		batch.Sequence != current.Sequence || batch.Sequence != batch.Last ||
 		view.Pending != len(current.Pending) || strings.Join(view.Reads, ",") != runtimeservice.ProcessHostEventsRead {
 		t.Fatalf("same-lock observation: %+v snapshot %+v", view, current)
 	}
@@ -164,6 +165,14 @@ func testProcessHostEventsOwnerRead(t *testing.T, provider string) {
 	}
 }
 
+// sameProcessEventJSON compares events as they cross the owner frame, where
+// an absent Raw reads back as JSON null.
+func sameProcessEventJSON(got, want processhost.Event) bool {
+	a, errA := json.Marshal(got)
+	b, errB := json.Marshal(want)
+	return errA == nil && errB == nil && bytes.Equal(a, b)
+}
+
 func canceledContext() context.Context {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -173,15 +182,24 @@ func canceledContext() context.Context {
 // The host's own dropped range reaches the reader as Gap with the stream-gap
 // event; the read continues after it.
 func TestCodexProcessHostEventsHostGap(t *testing.T) {
-	f := newProcessCodexFixtureWithEvents(t, nil, 2)
-	f.turn(t, "events-gap", "controls")
-	snap := f.wait(t, func(s processhost.Snapshot) bool { return len(s.Pending) == 2 })
+	f := newProcessCodexFixtureWithEvents(t, nil, 8)
 	binding := f.endpoint.binding
-	installProcessObservationSchema(t, f.store, binding, snap)
-	direct, _, err := f.endpoint.handle.Events(binding, 0)
-	if err != nil || len(direct) == 0 || direct[0].Kind != "stream-gap" {
-		t.Fatalf("fixture did not exercise host ring gap: %+v %v", direct, err)
+	// Completed turns fill the small output ring until the host drops events.
+	var snap processhost.Snapshot
+	var direct []processhost.Event
+	for i := 0; i < 8 && (len(direct) == 0 || direct[0].Kind != "stream-gap"); i++ {
+		after := snap.Sequence
+		f.turn(t, fmt.Sprintf("events-gap-%d", i), "fixture")
+		snap = f.wait(t, func(s processhost.Snapshot) bool { return s.Turn == "" && s.Sequence > after })
+		var err error
+		if direct, _, err = f.endpoint.handle.Events(binding, 0); err != nil {
+			t.Fatal(err)
+		}
 	}
+	if len(direct) == 0 || direct[0].Kind != "stream-gap" {
+		t.Fatalf("fixture did not exercise host ring gap: %+v", direct)
+	}
+	installProcessObservationSchema(t, f.store, binding, snap)
 	got := readProcessEventsFromPeer(t, f.binary, f.path, binding, 0)
 	if got.Error != "" || !got.Batch.Gap || got.Batch.More || len(got.Batch.Events) == 0 || got.Batch.Events[0].Kind != "stream-gap" || got.Batch.Events[0].Sequence != direct[0].Sequence {
 		t.Fatalf("host gap read: %+v", got)
@@ -223,7 +241,7 @@ func TestFitProcessHostEventsKeepsHeadAndContinues(t *testing.T) {
 				rest = append(rest, event)
 			}
 		}
-		batch, ok := fitProcessHostEvents(rest, view, after)
+		batch, ok := fitProcessHostEvents(rest, view, 99, after)
 		if !ok || batch.Gap || len(batch.Omitted) != 0 {
 			t.Fatalf("fit: %+v %v", batch, ok)
 		}
@@ -258,7 +276,7 @@ func TestFitProcessHostEventsOmitsOversizePayload(t *testing.T) {
 	view := processEventsTestView()
 	all := processEventsFixture(view.Binding, 1, localipc.MaxFrameBytes+1, 16, 16)
 	all[0].Exit = &processhost.Exit{Code: 3}
-	batch, ok := fitProcessHostEvents(all, view, 0)
+	batch, ok := fitProcessHostEvents(all, view, 99, 0)
 	if !ok || batch.Gap || batch.More || len(batch.Events) != 3 || batch.Last != 3 || len(batch.Omitted) != 1 || batch.Omitted[0] != 1 {
 		t.Fatalf("oversize fit: %+v %v", batch, ok)
 	}
@@ -272,11 +290,11 @@ func TestFitProcessHostEventsOmitsOversizePayload(t *testing.T) {
 	// A following oversize event is left for the next read, where it is the
 	// head and is omitted in turn; Omitted stays ascending without repeats.
 	all = processEventsFixture(view.Binding, 1, localipc.MaxFrameBytes+1, localipc.MaxFrameBytes+1, 16)
-	batch, ok = fitProcessHostEvents(all, view, 0)
+	batch, ok = fitProcessHostEvents(all, view, 99, 0)
 	if !ok || !batch.More || batch.Last != 1 || len(batch.Events) != 1 || len(batch.Omitted) != 1 || batch.Omitted[0] != 1 {
 		t.Fatalf("second oversize fit: %+v %v", batch, ok)
 	}
-	batch, ok = fitProcessHostEvents(all[1:], view, 1)
+	batch, ok = fitProcessHostEvents(all[1:], view, 99, 1)
 	if !ok || batch.More || batch.Last != 3 || len(batch.Omitted) != 1 || batch.Omitted[0] != 2 || batch.Events[1].Raw == nil {
 		t.Fatalf("continued oversize fit: %+v %v", batch, ok)
 	}
@@ -286,7 +304,7 @@ func TestFitProcessHostEventsOmitsOversizePayload(t *testing.T) {
 func TestFitProcessHostEventsHostGap(t *testing.T) {
 	view := processEventsTestView()
 	events := append([]processhost.Event{{Binding: view.Binding, Sequence: 5, Kind: "stream-gap"}}, processEventsFixture(view.Binding, 6, 16)...)
-	batch, ok := fitProcessHostEvents(events, view, 0)
+	batch, ok := fitProcessHostEvents(events, view, 99, 0)
 	if !ok || !batch.Gap || batch.More || batch.Last != 6 || len(batch.Events) != 2 {
 		t.Fatalf("host gap fit: %+v %v", batch, ok)
 	}

@@ -54,7 +54,11 @@ func TestValidProcessHostEventsShape(t *testing.T) {
 		{"gap event hidden", ProcessHostEvents{Events: []processhost.Event{ev(5, "stream-gap")}, Last: 5}, false},
 		{"omitted repeat", ProcessHostEvents{Events: []processhost.Event{ev(5, "x")}, Last: 5, Omitted: []uint64{5, 5}}, false},
 		{"omitted foreign", ProcessHostEvents{Events: []processhost.Event{ev(5, "x")}, Last: 5, Omitted: []uint64{7}}, false},
+		{"snapshot behind", ProcessHostEvents{Events: []processhost.Event{ev(5, "x"), ev(6, "x")}, Last: 6, Sequence: 5}, false},
 	} {
+		if tc.batch.Sequence == 0 {
+			tc.batch.Sequence = 100
+		}
 		if got := validProcessHostEvents(b, 4, tc.batch); got != tc.want {
 			t.Fatalf("%s: %v", tc.name, got)
 		}

@@ -39,11 +39,6 @@ type ProcessHostObservation struct {
 	// Reads are the read requests the owner serves, separate from Actions;
 	// an owner that leaves them out serves none (ProcessHostReads).
 	Reads []string `json:",omitempty"`
-	// Session, Connection, Sequence and TurnID copy the owner's snapshot:
-	// the provider session, its connection, the last event sequence and the
-	// running turn. An owner that leaves them out predates the fields.
-	Session, Connection, TurnID string `json:",omitempty"`
-	Sequence                    uint64 `json:",omitempty"`
 }
 
 // ProcessSchemaBinding converts a Registry process binding to the host's

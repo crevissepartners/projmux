@@ -220,7 +220,7 @@ func (s *claudeProcessService) exchange(ctx context.Context, conn *net.UnixConn)
 		view := newProcessHostObservation(read.Binding, host, s.ownedProcess, snap, claudeForegroundActions)
 		view.OwnerMode = s.ownerMode
 		if readErr == nil && hostErr == nil && regErr == nil && read.Binding == s.binding && snap.PID == s.ownedProcess.PID && processObservationMatches(reg, read.Binding, view) {
-			if batch, ok := fitProcessHostEvents(events, view, read.After); ok {
+			if batch, ok := fitProcessHostEvents(events, view, snap.Sequence, read.After); ok {
 				result = processForegroundResult{Accepted: true, Events: &batch}
 			}
 		}

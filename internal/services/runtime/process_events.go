@@ -30,7 +30,8 @@ type ProcessEventsRequest struct {
 }
 
 // ProcessHostEvents is one bounded event batch and the owner's observation of
-// the snapshot taken under the same lock.
+// the snapshot taken under the same lock; Sequence is that snapshot's last
+// event sequence.
 //
 // Events are ascending and all follow After. Gap is set only when the host
 // itself dropped events after After; its stream-gap event stays in Events.
@@ -42,6 +43,7 @@ type ProcessEventsRequest struct {
 type ProcessHostEvents struct {
 	Events      []processhost.Event `json:",omitempty"`
 	Observation ProcessHostObservation
+	Sequence    uint64
 	Gap, More   bool
 	Last        uint64
 	Omitted     []uint64 `json:",omitempty"`
@@ -114,7 +116,7 @@ func validProcessHostEvents(binding processhost.Binding, after uint64, batch Pro
 		last = event.Sequence
 		gap = gap || event.Kind == "stream-gap"
 	}
-	if batch.Last != last || batch.Gap != gap || (batch.More && len(batch.Events) == 0) {
+	if batch.Last != last || batch.Gap != gap || batch.Sequence < last || (batch.More && len(batch.Events) == 0) {
 		return false
 	}
 	for i, sequence := range batch.Omitted {

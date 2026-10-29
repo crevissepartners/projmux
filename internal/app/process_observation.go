@@ -27,7 +27,6 @@ func newProcessHostObservation(binding processhost.Binding, host, child coremeta
 		Turn: snap.Turn != "", Pending: len(snap.Pending),
 		Coordination: claudeCoordinationVersion,
 		Reads:        advertisedProcessHostReads(),
-		Session:      snap.Session, Connection: snap.Connection, TurnID: snap.Turn, Sequence: snap.Sequence,
 	}
 }
 

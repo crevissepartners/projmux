@@ -40,10 +40,10 @@ const processEventsFrameSlack = 64
 // listed in Omitted; its Exit evidence and identity are kept. Gap reports only
 // the host's own stream-gap. ok is false when the answer cannot be framed at
 // all.
-func fitProcessHostEvents(events []processhost.Event, view processHostObservation, after uint64) (runtimeservice.ProcessHostEvents, bool) {
-	batch := runtimeservice.ProcessHostEvents{Observation: runtimeservice.ProcessHostObservation(view), Last: after}
+func fitProcessHostEvents(events []processhost.Event, view processHostObservation, sequence, after uint64) (runtimeservice.ProcessHostEvents, bool) {
+	batch := runtimeservice.ProcessHostEvents{Observation: runtimeservice.ProcessHostObservation(view), Sequence: sequence, Last: after}
 	bound := batch
-	bound.Gap, bound.More, bound.Last = true, true, math.MaxUint64
+	bound.Gap, bound.More, bound.Sequence, bound.Last = true, true, math.MaxUint64, math.MaxUint64
 	base, err := json.Marshal(processForegroundResult{Accepted: true, Events: &bound})
 	if err != nil {
 		return runtimeservice.ProcessHostEvents{}, false
