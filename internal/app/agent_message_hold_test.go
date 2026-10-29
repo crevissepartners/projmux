@@ -13,6 +13,7 @@ import (
 	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
+	"github.com/crevissepartners/projmux/internal/services/agentmessages"
 )
 
 // holdClaudeAdapter delivers every Submit and counts it. Status must never be
@@ -232,7 +233,7 @@ func (f *holdFixture) putHeld(t *testing.T, ref string, acceptedAt, deadline tim
 
 func wantHeldReceipt(t *testing.T, stdout string, err error, ref string) {
 	t.Helper()
-	want := ref + "\theld\t" + claudeHoldReasonAwaitingOperator + "\t" + agentMessageHeldAction(ref) + "\n"
+	want := ref + "\theld\t" + claudeHoldReasonAwaitingOperator + "\t" + agentmessages.HeldReceiptAction(agentmessages.Receipt{MessageRef: ref, Delivery: coremessage.Delivery{Reason: claudeHoldReasonAwaitingOperator}}) + "\n"
 	if err != nil || stdout != want {
 		t.Fatalf("stdout=%q err=%v, want %q and exit 0", stdout, err, want)
 	}

@@ -69,12 +69,6 @@ func claudeAgentAwaitsOperator(agent coremetadata.Agent, now time.Time) bool {
 	return agentInteractionAwaitsOperator(agent.EffectiveInteraction(now).Kind)
 }
 
-// agentMessageHeldAction is the action a held receipt names.
-func agentMessageHeldAction(messageRef string) string {
-	return "delivery resumes automatically when the target Agent's dialog closes; check projmux agent message status " +
-		messageRef + "; do not resend"
-}
-
 type agentMessageHeldLister interface {
 	HeldFor(string) ([]messagestore.Record, error)
 }

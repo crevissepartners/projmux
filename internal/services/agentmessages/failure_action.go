@@ -73,3 +73,29 @@ func FailureAction(delivery coremessage.Delivery) string {
 		return "check message status and target availability before retrying"
 	}
 }
+
+// HeldReceiptAction is the action a held receipt names. It is the one source
+// of that text: the CLI receipt and the SDK operator send both read it.
+func HeldReceiptAction(receipt Receipt) string {
+	switch receipt.Delivery.Reason {
+	case deferredHoldReason:
+		return "delivery resumes when the claimant wakes this Agent; check projmux agent message status " + receipt.MessageRef + "; do not resend"
+	case claudeHoldReasonTurnActive:
+		return "delivery resumes automatically when the target Agent's active turn ends; check projmux agent message status " + receipt.MessageRef + "; do not resend"
+	}
+	return "delivery resumes automatically when the target Agent's dialog closes; check projmux agent message status " +
+		receipt.MessageRef + "; do not resend"
+}
+
+// ReceiptAction is the action a receipt names: the failure action of a
+// terminal undelivered receipt, the held action of a held one, and nothing
+// for a delivered or still accepted one.
+func ReceiptAction(receipt Receipt, claudeContentBytes int) string {
+	switch {
+	case agentMessageUndelivered(receipt.Delivery):
+		return ReceiptFailureAction(receipt, claudeContentBytes)
+	case receipt.Delivery.State == coremessage.StateHeld:
+		return HeldReceiptAction(receipt)
+	}
+	return ""
+}

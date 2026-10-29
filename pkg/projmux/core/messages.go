@@ -52,3 +52,19 @@ type MessageReceipt struct {
 	Delivery        MessageDelivery `json:"delivery"`
 	Deadline        time.Time       `json:"deadline"`
 }
+
+// MessageOperator names the in-process operator client an operator message is
+// sent through. Its client name is unexported, so decoding request data (JSON,
+// a form, a peer envelope or a Source string) never produces one; only
+// in-process code that calls NewMessageOperator does. SendOperatorMessage
+// checks the name against the operator client rule (1-32 bytes of lowercase
+// ASCII letters, digits and '-', starting with a letter) before anything is
+// read or written. The zero value names no operator. A MessageOperator is not
+// authentication: the caller has already confirmed who the person is.
+type MessageOperator struct{ client string }
+
+// NewMessageOperator names client as the operator a message is sent through.
+func NewMessageOperator(client string) MessageOperator { return MessageOperator{client: client} }
+
+// Client is the operator client name, or empty for the zero value.
+func (o MessageOperator) Client() string { return o.client }

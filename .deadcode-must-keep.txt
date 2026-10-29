@@ -130,6 +130,7 @@ Client.ResumeAgent	Public v0 tmux Agent resume entrypoint or its external-only c
 Client.ReviewApproval	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.SampleSystem	Public v0 host system sampler facade; retained for external consumers and covered by producer parity, path isolation, cancellation and caller ownership fixtures.
 Client.SendMessage	Public SDK Client.SendMessage entrypoint; external consumers submit explicit untrusted peer coordination.
+Client.SendOperatorMessage	Public v0 operator message SDK closure for external frontends (Client.SendOperatorMessage); the binary does not import pkg/projmux; covered by TestPublicOperatorCoordinationParity, TestOperatorOriginCannotBeDecodedFromPeerInput and TestPublicOperatorMessageRefusals.
 Client.SetAISplitMode	Public v0 legacy AI split mode plain-write setter; parity, refusal and external consumer tests.
 Client.SetAgentGuidanceEnabled	Public v0 global guidance editing SDK entrypoint or adapter; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
 Client.SetAgentProtection	Public v0 exact Agent protection label facade; verified by CLI/SDK parity, locked transaction refusals and public-only consumers.
@@ -374,6 +375,7 @@ LookupCanonicalRoute	Canonical spelling lookup is retained for route coverage an
 Matrix	Whole cardinality table copy retained as the test seam that pins the declared verb-kind cells and their canonical route adoption.
 MeasureSameTickReplacement	Test-only host probe retained: socket-replacement tests skip only where a same-path replacement shares the original socket identity.
 MergeKeymapOverrides	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+MessageOperator.Client	Public v0 operator message SDK closure for external frontends (Client.SendOperatorMessage); the binary does not import pkg/projmux; covered by TestPublicOperatorCoordinationParity, TestOperatorOriginCannotBeDecodedFromPeerInput and TestPublicOperatorMessageRefusals.
 MigrateGlobalLegacyScripts	Global legacy hook migration must remain available while old installations can still be upgraded.
 MigrateKeymapForWrite	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 MigrateProjectLegacyScripts	Project legacy hook migration must remain available while old repositories can still be upgraded.
@@ -388,6 +390,7 @@ NewClean	Test-only installed qualification API retained for canonical clean-root
 NewClient	Public v0 instruction SDK entrypoint or its typed-refusal adapter, retained for external modules; exercised by test/sdk/consumer with GOWORK=off.
 NewExisting	Test-only installed qualification API retained for unchanged model-dependent broker smoke containment.
 NewGraphReader	Public v0 coherent resource graph SDK entrypoint or its adapter (ObserveResourceGraph/ReadRegistryFileIdentity); reachable from external consumers rather than the CLI binary; covered by resourcegraph JSON parity, single-read, identity, field coverage and GOWORK=off consumer tests.
+NewMessageOperator	Public v0 operator message SDK closure for external frontends (Client.SendOperatorMessage); the binary does not import pkg/projmux; covered by TestPublicOperatorCoordinationParity, TestOperatorOriginCannotBeDecodedFromPeerInput and TestPublicOperatorMessageRefusals.
 NewMutationLockPolicy	Internal immutable acquisition-site policy constructor; verified by caller-copy, invalid-token and Store reader rejection tests.
 NewMutationLockRecorder	Internal caller-declared mutation lock aggregation constructor; exercised by fake clock/writer and concurrency tests.
 NewOperatorCreator	Public CreateAgentRequest.Operator constructor for an in-process operator client; TestCreateAgentOperatorCreatorMatchesCLI and TestCreateAgentOperatorCreatorMatchesCLIProcess compare its record with the CLI operator seam.
@@ -456,6 +459,7 @@ ReadLifecycleSnapshotOn	The shared requester lifecycle decoder remains a compati
 ReadRuntimeHealth	The typed no-write runtime-health seam is retained for diagnostics tests and the planned doctor consumer.
 Reader.ResolveIdentified	Public v0 coherent resource graph SDK entrypoint or its adapter (ObserveResourceGraph/ReadRegistryFileIdentity); reachable from external consumers rather than the CLI binary; covered by resourcegraph JSON parity, single-read, identity, field coverage and GOWORK=off consumer tests.
 Reader.ResolveSupplied	Public v0 supplied-snapshot resource graph SDK entrypoint or its adapter (ObserveResourceGraphFromSnapshot); reachable from external consumers rather than the CLI binary; covered by resolver JSON/process key parity, zero Registry/process probe, ownership and GOWORK=off consumer tests.
+ReceiptAction	Public v0 operator message SDK closure for external frontends (Client.SendOperatorMessage); the binary does not import pkg/projmux; covered by TestPublicOperatorCoordinationParity, TestOperatorOriginCannotBeDecodedFromPeerInput and TestPublicOperatorMessageRefusals.
 RecordSession	Internal content-free provider session persistence seam retained until the foreground consumer records explicit resume state.
 Recovery	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Refusal.Error	Public v0 instruction SDK entrypoint or its typed-refusal adapter, retained for external modules; exercised by test/sdk/consumer with GOWORK=off.
@@ -541,7 +545,9 @@ Service.ProjectClaudeSend	Client.SendMessage preserves an exact partial receipt 
 Service.Read	Strict Project link rules service compatibility entrypoint; retained for existing internal consumers and exercised by service contract tests.
 Service.Recreate	Public SDK bounded profile replacement executes existing store operations after ordered admission; covered by SDK refusal and restoration tests.
 Service.Send	Client.SendMessage uses this typed wrapper to preserve partial or uncertain receipts alongside errors.
+Service.SendOperator	Public v0 operator message SDK closure for external frontends (Client.SendOperatorMessage); the binary does not import pkg/projmux; covered by TestPublicOperatorCoordinationParity, TestOperatorOriginCannotBeDecodedFromPeerInput and TestPublicOperatorMessageRefusals.
 Service.Write	Strict Project link rules service compatibility entrypoint; retained for existing internal consumers and exercised by service contract tests.
+Service.executeOperatorSend	Public v0 operator message SDK closure for external frontends (Client.SendOperatorMessage); the binary does not import pkg/projmux; covered by TestPublicOperatorCoordinationParity, TestOperatorOriginCannotBeDecodedFromPeerInput and TestPublicOperatorMessageRefusals.
 Service.pushNative	Client.SendMessage dispatches the native Codex peer-context operation without user-turn fallback through this adapter.
 Service.pushProcessCodex	Client.SendMessage dispatches an existing exact process Codex peer-message and reloads its receipt through this adapter.
 Service.terminal	Client.SendMessage preserves known and uncertain terminal receipt projections when transport or persistence fails.

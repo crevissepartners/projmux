@@ -15,10 +15,12 @@ import (
 const agentMessageImportPath = "github.com/crevissepartners/projmux/internal/core/agentmessage"
 
 // operatorOriginProducers lists the non-test files outside this package that
-// may build an operator origin, keyed by repository-relative path. It is empty
-// on purpose: no product path in this build writes operator input. An
-// in-process operator client's sender adds itself here when it lands.
-var operatorOriginProducers = map[string]bool{}
+// may build an operator origin, keyed by repository-relative path. The one
+// product path that writes operator input is the in-process operator send the
+// SDK's SendOperatorMessage reaches; another sender adds itself here.
+var operatorOriginProducers = map[string]bool{
+	"internal/services/agentmessages/operator.go": true,
+}
 
 // TestNoProductPathBuildsAnOperatorOrigin is the negative audit for operator
 // input. Outside this package, a non-test Go file that calls OperatorOrigin

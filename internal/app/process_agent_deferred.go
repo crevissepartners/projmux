@@ -9,6 +9,7 @@ import (
 	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	"github.com/crevissepartners/projmux/internal/services/agentmessages"
 )
 
 type processResumeSynchronization struct {
@@ -18,13 +19,7 @@ type processResumeSynchronization struct {
 }
 
 func agentMessageHeldReceiptAction(receipt agentMessageReceipt) string {
-	if receipt.Delivery.Reason == deferredHoldReason {
-		return "delivery resumes when the claimant wakes this Agent; check projmux agent message status " + receipt.MessageRef + "; do not resend"
-	}
-	if receipt.Delivery.Reason == claudeHoldReasonTurnActive {
-		return "delivery resumes automatically when the target Agent's active turn ends; check projmux agent message status " + receipt.MessageRef + "; do not resend"
-	}
-	return agentMessageHeldAction(receipt.MessageRef)
+	return agentmessages.HeldReceiptAction(receipt)
 }
 
 func (claim *deferredProcessClaim) held() ([]messagestore.Record, error) {
