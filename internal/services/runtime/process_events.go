@@ -67,16 +67,12 @@ func (r ProcessObserver) ReadProcessHostEvents(after uint64) (ProcessHostEvents,
 	if r.Ctx.Err() != nil {
 		return ProcessHostEvents{}, processhost.ErrStale
 	}
-	pane, ok := r.Registry.Pane(binding.Pane)
-	if !ok || pane.Status.Activation.Process == nil {
-		return ProcessHostEvents{}, processhost.ErrStale
-	}
-	activation := *pane.Status.Activation.Process
-	agent, ok := r.Registry.Agent(binding.Agent)
+	// Only the Registry's current activation is read; another generation's
+	// socket is never contacted.
+	activation, provider, ok := r.Registry.CurrentProcessActivation(MetadataProcessBinding(binding))
 	if !ok {
 		return ProcessHostEvents{}, processhost.ErrStale
 	}
-	provider := agent.Spec.Provider
 	view, err := r.ObserveHostView(binding, activation, provider)
 	if err != nil {
 		return ProcessHostEvents{}, err
