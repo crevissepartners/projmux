@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -25,13 +26,29 @@ type agentProcessFixture struct {
 	public core.AgentProcessBinding
 }
 
-// agentProcessRegistryFixture records one process Agent whose generation is
-// current (an owner that is not running) or retired, with or without its
-// supervisor Wait receipt. No owner listens.
-func agentProcessRegistryFixture(t *testing.T, current, receipt bool) agentProcessFixture {
+// agentProcessFixtureState is the generation an agentProcessRegistryFixture
+// records. No owner listens in any of them.
+type agentProcessFixtureState int
+
+const (
+	// fixtureCurrent: a current activation whose owner is not running.
+	fixtureCurrent agentProcessFixtureState = iota
+	// fixtureCurrentExited: a current activation with its supervisor Wait.
+	fixtureCurrentExited
+	// fixtureRetiredExited: a retired generation with its supervisor Wait.
+	fixtureRetiredExited
+	// fixtureRetiredBare: a retired generation without any final evidence.
+	fixtureRetiredBare
+	// fixtureHostLost: the owner vanished and the generation was retired as
+	// host-lost, which proves absence, not an exit.
+	fixtureHostLost
+)
+
+// agentProcessRegistryFixture records one Codex process Agent in state.
+func agentProcessRegistryFixture(t *testing.T, state agentProcessFixtureState) agentProcessFixture {
 	t.Helper()
-	state := t.TempDir()
-	storage := store.NewStore(store.PathFor(state))
+	dir := t.TempDir()
+	storage := store.NewStore(store.PathFor(dir))
 	var f agentProcessFixture
 	_, err := storage.Update(func(reg *m.Registry) error {
 		mut := store.DefaultMutator()
@@ -45,31 +62,40 @@ func agentProcessRegistryFixture(t *testing.T, current, receipt bool) agentProce
 		}
 		f.agent, f.pane = a.Metadata.UID, p.Metadata.UID
 		pane, _ := reg.Pane(f.pane)
-		agent, _ := reg.Agent(f.agent)
 		b := pane.Status.ProcessSession.Binding
 		f.public = core.AgentProcessBinding{Host: b.HostInstanceID, Pane: b.PaneUID, Generation: b.Generation}
 		dead := func(pid int, start string) m.ProcessIdentity {
 			return m.ProcessIdentity{PID: pid, OwnerUID: uint32(os.Getuid()), Start: start}
 		}
-		if current {
-			pane.Status.Activation = m.PaneActivation{Kind: m.RuntimeProcess, Process: &m.ProcessActivation{Binding: b, HostProcess: dead(2000000000, "owner"), Child: dead(2000000001, "child")}}
-		} else {
+		agent, _ := reg.Agent(f.agent)
+		agent.Status.Phase = m.PhaseRunning
+		activation := m.ProcessActivation{Binding: b, HostProcess: dead(2000000000, "owner"), Child: dead(2000000001, "child")}
+		if e = mut.RecordProcessActivation(reg, activation, "conversation"); e != nil {
+			return e
+		}
+		switch state {
+		case fixtureHostLost:
+			return mut.MarkProcessHostLostOffline(reg, activation)
+		case fixtureCurrentExited, fixtureRetiredExited:
+			code := 3
+			wait := m.TerminationEvidence{Source: m.TerminationSourceSupervisor, Classification: m.ClassifyProcessExit(code, ""), ObservedAt: time.Now(), AgentUID: f.agent, PaneUID: f.pane, Generation: b.Generation, OperationID: b.OperationID, ExitCode: &code}
+			if outcome, e := mut.RecordTermination(reg, wait); e != nil || !outcome.Applied {
+				return fmt.Errorf("record wait: %+v %v", outcome, e)
+			}
+		}
+		if state == fixtureRetiredExited || state == fixtureRetiredBare {
+			pane, _ = reg.Pane(f.pane)
+			agent, _ = reg.Agent(f.agent)
 			pane.Status.Activation = m.PaneActivation{}
 			agent.Status.Phase = m.PhaseOffline
-		}
-		if receipt {
-			code := 3
-			wait := &m.TerminationEvidence{Source: m.TerminationSourceSupervisor, Classification: m.ClassifyProcessExit(code, ""), ObservedAt: time.Now(), AgentUID: f.agent, PaneUID: f.pane, Generation: b.Generation, OperationID: b.OperationID, ExitCode: &code}
-			pane.Status.LastTermination = wait
-			agent.Status.LastTermination = wait
 		}
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.state = state
-	f.client, err = NewClient(Options{ConfigDir: filepath.Join(state, "config"), StateDir: state, HomeDir: state})
+	f.state = dir
+	f.client, err = NewClient(Options{ConfigDir: filepath.Join(dir, "config"), StateDir: dir, HomeDir: dir})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +115,7 @@ func requireAgentProcessRefusal(t *testing.T, err error, code Code, sentinel err
 // and none of them has an effect on the Registry.
 func TestPublicProcessFailureCodesAndCauses(t *testing.T) {
 	ctx := context.Background()
-	live := agentProcessRegistryFixture(t, true, false)
+	live := agentProcessRegistryFixture(t, fixtureCurrent)
 	before, err := os.ReadFile(store.PathFor(live.state))
 	if err != nil {
 		t.Fatal(err)
@@ -139,8 +165,9 @@ func TestPublicProcessFailureCodesAndCauses(t *testing.T) {
 
 	// A generation with its supervisor Wait receipt ends with its final
 	// Snapshot, whether the activation is still current or retired.
-	for _, current := range []bool{true, false} {
-		ended := agentProcessRegistryFixture(t, current, true)
+	for _, state := range []agentProcessFixtureState{fixtureCurrentExited, fixtureRetiredExited} {
+		current := state == fixtureCurrentExited
+		ended := agentProcessRegistryFixture(t, state)
 		ref := "uid:" + ended.agent
 		snapshot, err := ended.client.ReadAgentProcess(ctx, core.AgentProcessRequest{Agent: ref})
 		if err != nil || snapshot.State != "exited" || snapshot.Exit == nil || snapshot.Exit.Code != 3 || snapshot.Binding != ended.public || snapshot.Provider != "codex" {
@@ -152,11 +179,48 @@ func TestPublicProcessFailureCodesAndCauses(t *testing.T) {
 		}
 	}
 	// A retired generation without final evidence has nothing left to read.
-	closed := agentProcessRegistryFixture(t, false, false)
+	closed := agentProcessRegistryFixture(t, fixtureRetiredBare)
 	_, err = closed.client.ReadAgentProcess(ctx, core.AgentProcessRequest{Agent: "uid:" + closed.agent})
 	requireAgentProcessRefusal(t, err, CodeProcessClosed, ErrProcessClosed)
 	_, err = closed.client.ReadAgentProcessEvents(ctx, core.AgentProcessEventsRequest{Agent: "uid:" + closed.agent, Binding: closed.public})
 	requireAgentProcessRefusal(t, err, CodeProcessClosed, ErrProcessClosed)
+}
+
+// A Binding whose owner vanished and was retired as host-lost reads as closed:
+// absence is never a provider exit, and the read records nothing.
+func TestPublicProcessHostLostReadsClosedWithoutExit(t *testing.T) {
+	ctx := context.Background()
+	lost := agentProcessRegistryFixture(t, fixtureHostLost)
+	path := store.PathFor(lost.state)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := "uid:" + lost.agent
+	for _, binding := range []core.AgentProcessBinding{{}, lost.public} {
+		snapshot, err := lost.client.ReadAgentProcess(ctx, core.AgentProcessRequest{Agent: ref, Binding: binding})
+		requireAgentProcessRefusal(t, err, CodeProcessClosed, ErrProcessClosed)
+		if snapshot.Exit != nil || errors.Is(err, ErrProcessOwnerUnreachable) {
+			t.Fatalf("host-lost read reported an exit: %+v %v", snapshot, err)
+		}
+		batch, err := lost.client.ReadAgentProcessEvents(ctx, core.AgentProcessEventsRequest{Agent: ref, Binding: binding, Wait: time.Second})
+		requireAgentProcessRefusal(t, err, CodeProcessClosed, ErrProcessClosed)
+		if batch.Terminal || batch.Snapshot.Exit != nil {
+			t.Fatalf("host-lost batch reported an exit: %+v", batch)
+		}
+	}
+	after, _ := os.ReadFile(path)
+	if !bytes.Equal(before, after) {
+		t.Fatal("host-lost reads wrote the Registry")
+	}
+	reg, err := store.NewStore(path).LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pane, _ := reg.Pane(lost.pane)
+	if !reg.ProcessHostLostOffline(lost.pane) || pane.Status.LastTermination == nil || pane.Status.LastTermination.ExitCode != nil || pane.Status.LastTermination.Source != m.TerminationSourceReconcile {
+		t.Fatalf("host-lost evidence changed: %+v", pane.Status.LastTermination)
+	}
 }
 
 // An owner batch reaches the public batch field by field: Next is the next
