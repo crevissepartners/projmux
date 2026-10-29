@@ -2,6 +2,7 @@ package localipc
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -356,5 +357,70 @@ func TestBoundedJSONNativeReadDeadlinePreservesPartialFrame(t *testing.T) {
 				t.Fatalf("native deadline: value=%v error=%v", got, err)
 			}
 		})
+	}
+}
+
+// A read ends at the caller's cancel even while the owner holds its answer,
+// and an answer sent after the cancel is not a success. An exchange with an
+// effect keeps reading its receipt after the cancel.
+func TestReadOwnedJSONCancelEndsConnectedRead(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "pmx-localipc-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	listener, err := Listen(filepath.Join(root, "private", "read.sock"))
+	if errors.Is(err, syscall.EPERM) {
+		t.Skip("Unix sockets unavailable")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	host, _, err := Process(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, read := range []bool{true, false} {
+		accepted, release := make(chan struct{}), make(chan struct{})
+		served := make(chan error, 1)
+		go func() {
+			conn, err := listener.Unix.AcceptUnix()
+			if err != nil {
+				served <- err
+				return
+			}
+			defer conn.Close()
+			var request map[string]string
+			if err := ReadJSON(conn, &request); err != nil {
+				served <- err
+				return
+			}
+			close(accepted)
+			<-release
+			served <- WriteJSON(conn, map[string]string{"reply": request["request"]})
+		}()
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			<-accepted
+			cancel()
+			close(release)
+		}()
+		exchange := ExchangeOwnedJSON
+		if read {
+			exchange = ReadOwnedJSON
+		}
+		var response map[string]string
+		started := time.Now()
+		err := exchange(ctx, listener.Path, listener.Identity(), host, map[string]string{"request": "exact"}, &response)
+		elapsed := time.Since(started)
+		cancel()
+		<-served
+		if read && (!errors.Is(err, context.Canceled) || elapsed > time.Second) {
+			t.Fatalf("read after cancel: %v after %s, response %v", err, elapsed, response)
+		}
+		if !read && (err != nil || response["reply"] != "exact") {
+			t.Fatalf("exchange after cancel lost its receipt: %v %v", err, response)
+		}
 	}
 }

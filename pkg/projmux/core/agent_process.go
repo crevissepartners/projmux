@@ -28,8 +28,9 @@ type AgentProcessRequest struct {
 }
 
 // AgentProcessEventsRequest reads the events after the sequence After. Wait
-// bounds a long poll when no event follows After: zero reads once, and any
-// value is capped by the owner read deadline (5s).
+// is how long a long poll waits for a new event when none follows After: zero
+// reads once, and any value is capped at the owner read deadline (5s), which
+// also bounds the whole call.
 type AgentProcessEventsRequest struct {
 	Agent   string
 	Binding AgentProcessBinding

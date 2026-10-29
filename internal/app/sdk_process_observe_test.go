@@ -6,15 +6,21 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	runtimeservice "github.com/crevissepartners/projmux/internal/services/runtime"
 	"github.com/crevissepartners/projmux/pkg/projmux"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
 )
@@ -200,4 +206,173 @@ func TestPublicProcessObserverCancelDoesNotStop(t *testing.T) {
 			}
 		})
 	}
+}
+
+// processOwnerProxy stands in front of a fixture owner's socket. It forwards
+// each request after delay; while hold is set it signals held and keeps the
+// request until release forwards it or drop closes it unanswered.
+type processOwnerProxy struct {
+	delay   time.Duration
+	hold    atomic.Bool
+	held    chan struct{}
+	release chan struct{}
+	drop    chan struct{}
+	dropped sync.Once
+}
+
+// dropHeld closes every held request unanswered.
+func (p *processOwnerProxy) dropHeld() { p.dropped.Do(func() { close(p.drop) }) }
+
+func proxyProcessOwner(t *testing.T, socket string, delay time.Duration) *processOwnerProxy {
+	t.Helper()
+	p := &processOwnerProxy{delay: delay, held: make(chan struct{}, 64), release: make(chan struct{}), drop: make(chan struct{})}
+	ownerSocket := socket + ".ownerSocket"
+	if err := os.Rename(socket, ownerSocket); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := localipc.Listen(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		p.dropHeld()
+		_ = listener.Close()
+		_ = os.Rename(ownerSocket, socket)
+	})
+	go func() {
+		for {
+			conn, err := listener.Unix.AcceptUnix()
+			if err != nil {
+				return
+			}
+			go p.serve(conn, ownerSocket)
+		}
+	}()
+	return p
+}
+
+func (p *processOwnerProxy) serve(conn *net.UnixConn, ownerSocket string) {
+	defer conn.Close()
+	request, err := io.ReadAll(conn)
+	if err != nil {
+		return
+	}
+	if p.hold.Load() {
+		p.held <- struct{}{}
+		select {
+		case <-p.release:
+		case <-p.drop:
+			return
+		}
+	}
+	time.Sleep(p.delay)
+	owner, err := net.Dial("unix", ownerSocket)
+	if err != nil {
+		return
+	}
+	defer owner.Close()
+	if _, err = owner.Write(request); err != nil {
+		return
+	}
+	_ = owner.(*net.UnixConn).CloseWrite()
+	answer, _ := io.ReadAll(owner)
+	_, _ = conn.Write(answer)
+}
+
+// The call is bounded by localipc.Deadline, not by Wait; a cancel ends a read
+// the owner holds, even if its answer follows; and a generation that ends
+// while a long poll waits returns its final Snapshot.
+func TestPublicProcessObserverSettlesAndBoundsReads(t *testing.T) {
+	start := func(t *testing.T) (*processCodexFixture, *projmux.Client, string, core.AgentProcessBinding, uint64, string) {
+		f := newProcessCodexFixture(t, nil)
+		b := f.endpoint.binding
+		f.turn(t, "public-bound", "fixture")
+		snap := f.wait(t, func(s processhost.Snapshot) bool { return s.Turn == "" && s.Sequence > 0 })
+		installProcessObservationSchema(t, f.store, b, snap)
+		client := sdkProcessObserveClient(t, f.path, f.root)
+		agent := "uid:" + b.Agent
+		public := core.AgentProcessBinding{Host: b.Host, Pane: b.Pane, Generation: b.Generation}
+		first, err := client.ReadAgentProcessEvents(context.Background(), core.AgentProcessEventsRequest{Agent: agent, Binding: public})
+		if err != nil || len(first.Events) == 0 {
+			t.Fatalf("first read: %+v %v", first, err)
+		}
+		return f, client, agent, public, first.Next, runtimeservice.ProcessHostSocket(aiModeCodex, f.path, b.Pane, b.Generation)
+	}
+	t.Run("slow owner is not cut short by Wait", func(t *testing.T) {
+		_, client, agent, public, next, socket := start(t)
+		proxyProcessOwner(t, socket, 300*time.Millisecond)
+		started := time.Now()
+		batch, err := client.ReadAgentProcessEvents(context.Background(), core.AgentProcessEventsRequest{Agent: agent, Binding: public, After: next, Wait: 100 * time.Millisecond})
+		if elapsed := time.Since(started); err != nil || len(batch.Events) != 0 || batch.Next != next || elapsed < 600*time.Millisecond || elapsed > localipc.Deadline {
+			t.Fatalf("slow owner read after %s: %+v %v", elapsed, batch, err)
+		}
+	})
+	t.Run("cancel ends a held read and a late answer", func(t *testing.T) {
+		_, client, agent, public, next, socket := start(t)
+		proxy := proxyProcessOwner(t, socket, 0)
+		proxy.hold.Store(true)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go func() {
+			<-proxy.held
+			cancel()
+			close(proxy.release)
+		}()
+		started := time.Now()
+		_, err := client.ReadAgentProcessEvents(ctx, core.AgentProcessEventsRequest{Agent: agent, Binding: public, After: next, Wait: time.Second})
+		if elapsed := time.Since(started); !errors.Is(err, context.Canceled) || elapsed > time.Second {
+			t.Fatalf("held read after cancel: %v after %s", err, elapsed)
+		}
+	})
+	t.Run("owner silent for the whole bound is unreachable", func(t *testing.T) {
+		_, client, agent, public, _, socket := start(t)
+		proxy := proxyProcessOwner(t, socket, 0)
+		proxy.hold.Store(true)
+		started := time.Now()
+		_, err := client.ReadAgentProcess(context.Background(), core.AgentProcessRequest{Agent: agent, Binding: public})
+		elapsed := time.Since(started)
+		var refusal *projmux.Refusal
+		if !errors.As(err, &refusal) || refusal.Code != projmux.CodeProcessOwnerUnreachable || !errors.Is(err, context.DeadlineExceeded) || elapsed < localipc.Deadline-time.Second || elapsed > localipc.Deadline+time.Second {
+			t.Fatalf("silent owner after %s: %v", elapsed, err)
+		}
+	})
+	t.Run("wait recorded during a long poll is terminal", func(t *testing.T) {
+		f, client, agent, public, next, socket := start(t)
+		b := f.endpoint.binding
+		proxy := proxyProcessOwner(t, socket, 0)
+		type result struct {
+			batch core.AgentProcessEventBatch
+			err   error
+		}
+		done := make(chan result, 1)
+		go func() {
+			batch, err := client.ReadAgentProcessEvents(context.Background(), core.AgentProcessEventsRequest{Agent: agent, Binding: public, After: next, Wait: localipc.Deadline})
+			done <- result{batch, err}
+		}()
+		time.Sleep(200 * time.Millisecond)
+		proxy.hold.Store(true)
+		<-proxy.held
+		if err := f.endpoint.handle.Stop(b); err != nil {
+			t.Fatal(err)
+		}
+		waitCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		exited, err := f.endpoint.handle.Wait(waitCtx, b)
+		cancel()
+		if err != nil || exited.Exit == nil {
+			t.Fatalf("actual Wait: %+v %v", exited, err)
+		}
+		code := exited.Exit.Code
+		if _, err = f.store.Update(func(reg *coremetadata.Registry) error {
+			pane, _ := reg.Pane(b.Pane)
+			pane.Status.LastTermination = &coremetadata.TerminationEvidence{Source: coremetadata.TerminationSourceSupervisor, Classification: coremetadata.ClassifyProcessExit(code, exited.Exit.Signal), ObservedAt: time.Now(), PaneUID: b.Pane, AgentUID: b.Agent, Generation: b.Generation, OperationID: b.Operation, ExitCode: &code, Signal: exited.Exit.Signal}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		proxy.dropHeld()
+		got := <-done
+		if got.err != nil || !got.batch.Terminal || got.batch.Next != next || got.batch.Snapshot.Exit == nil || got.batch.Snapshot.Exit.Code != code || got.batch.Binding != public {
+			t.Fatalf("long poll across the Wait: %+v %v", got.batch, got.err)
+		}
+	})
 }

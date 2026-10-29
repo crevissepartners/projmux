@@ -223,6 +223,59 @@ func TestPublicProcessHostLostReadsClosedWithoutExit(t *testing.T) {
 	}
 }
 
+// After an owner read fails, the Registry is read again for the fixed
+// Binding: a recorded Wait is final, a host-lost or bare retirement is
+// closed, a newer generation is stale, and a generation still current
+// without final evidence is left to the unreachable refusal.
+func TestPublicProcessSettleClassifiesEndedGeneration(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name     string
+		state    agentProcessFixtureState
+		replaced bool
+		code     Code
+		sentinel error
+		done     bool
+	}{
+		{name: "current", state: fixtureCurrent},
+		{name: "current-exited", state: fixtureCurrentExited, done: true},
+		{name: "retired-exited", state: fixtureRetiredExited, done: true},
+		{name: "host-lost", state: fixtureHostLost, done: true, code: CodeProcessClosed, sentinel: ErrProcessClosed},
+		{name: "retired-bare", state: fixtureRetiredBare, done: true, code: CodeProcessClosed, sentinel: ErrProcessClosed},
+		{name: "replaced", state: fixtureCurrent, replaced: true, done: true, code: CodeProcessStale, sentinel: ErrProcessStale},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := agentProcessRegistryFixture(t, tc.state)
+			fixed := f.public
+			if tc.replaced {
+				fixed.Generation = "replaced"
+			}
+			before, _ := os.ReadFile(store.PathFor(f.state))
+			snapshot, done, err := f.client.settleAgentProcess(ctx, "uid:"+f.agent, "AgentProcessEventsRequest", agentProcessRead{public: fixed})
+			if done != tc.done {
+				t.Fatalf("done = %t, want %t (%+v %v)", done, tc.done, snapshot, err)
+			}
+			if tc.sentinel != nil {
+				requireAgentProcessRefusal(t, err, tc.code, tc.sentinel)
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if tc.done && tc.sentinel == nil && (snapshot.Exit == nil || snapshot.Exit.Code != 3 || snapshot.Binding != f.public) {
+				t.Fatalf("final snapshot: %+v", snapshot)
+			}
+			if after, _ := os.ReadFile(store.PathFor(f.state)); !bytes.Equal(before, after) {
+				t.Fatal("settling wrote the Registry")
+			}
+		})
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	f := agentProcessRegistryFixture(t, fixtureCurrentExited)
+	if _, done, err := f.client.settleAgentProcess(cancelled, "uid:"+f.agent, "AgentProcessEventsRequest", agentProcessRead{public: f.public}); done || err != nil {
+		t.Fatalf("cancelled settle: %t %v", done, err)
+	}
+}
+
 // An owner batch reaches the public batch field by field: Next is the next
 // After, and Gap, More and Omitted cross unchanged. No session, connection,
 // turn or request content crosses.

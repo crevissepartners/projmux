@@ -52,18 +52,27 @@ const agentProcessPollInterval = 50 * time.Millisecond
 // never stops the owner or provider, and never records a Wait. A generation
 // that ended returns its final Snapshot with Exit; a retired generation with
 // no final evidence is ErrProcessClosed, and an owner that does not answer is
-// ErrProcessOwnerUnreachable.
+// ErrProcessOwnerUnreachable. The call returns within localipc.Deadline (5s).
 func (c *Client) ReadAgentProcess(ctx context.Context, req core.AgentProcessRequest) (core.AgentProcessSnapshot, error) {
-	read, err := c.resolveAgentProcess(ctx, req.Agent, req.Binding, "AgentProcessRequest")
+	const field = "AgentProcessRequest"
+	read, err := c.resolveAgentProcess(ctx, req.Agent, req.Binding, field)
 	if err != nil {
 		return core.AgentProcessSnapshot{}, err
 	}
 	if snapshot, done, err := read.final(); done || err != nil {
 		return snapshot, err
 	}
-	view, err := read.observer(ctx).ObserveHostView(read.binding, read.activation, read.provider)
+	bounded, cancel := context.WithTimeout(ctx, localipc.Deadline)
+	defer cancel()
+	view, err := read.observer(bounded).ObserveHostView(read.binding, read.activation, read.provider)
 	if err != nil {
-		return core.AgentProcessSnapshot{}, read.refusal(ctx, err)
+		if snapshot, done, err := c.settleAgentProcess(ctx, req.Agent, field, read); done {
+			return snapshot, err
+		}
+		return core.AgentProcessSnapshot{}, read.refusal(ctx, bounded, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return core.AgentProcessSnapshot{}, err
 	}
 	return read.snapshot(view, 0), nil
 }
@@ -71,41 +80,75 @@ func (c *Client) ReadAgentProcess(ctx context.Context, req core.AgentProcessRequ
 // ReadAgentProcessEvents reads the events after req.After from one exact
 // process Agent generation, with the observation of the snapshot taken under
 // the same owner lock. When no event follows After, it repeats the read until
-// one does, the generation ends, or req.Wait passes; the Wait is capped by the
-// owner read deadline (5s) and starts no goroutine. Cancellation ends only the
-// read. An owner built before it served event reads is
-// ErrProcessReadUnsupported, and no request is sent to it.
+// one does, the generation ends, or req.Wait passes, and then returns an empty
+// batch. Wait only waits for new events; it never shortens a read of a slow
+// owner. The call returns within localipc.Deadline (5s), and an owner that
+// never answers in that time is ErrProcessOwnerUnreachable. It starts no
+// goroutine, and cancellation ends only the read. An owner built before it
+// served event reads is ErrProcessReadUnsupported, and no request is sent to
+// it.
 func (c *Client) ReadAgentProcessEvents(ctx context.Context, req core.AgentProcessEventsRequest) (core.AgentProcessEventBatch, error) {
-	read, err := c.resolveAgentProcess(ctx, req.Agent, req.Binding, "AgentProcessEventsRequest")
+	const field = "AgentProcessEventsRequest"
+	read, err := c.resolveAgentProcess(ctx, req.Agent, req.Binding, field)
 	if err != nil {
 		return core.AgentProcessEventBatch{}, err
 	}
-	if snapshot, done, err := read.final(); done || err != nil {
-		if err != nil {
-			return core.AgentProcessEventBatch{}, err
-		}
-		return core.AgentProcessEventBatch{Binding: read.public, Snapshot: snapshot, Next: req.After, Terminal: true}, nil
-	}
-	wait := min(max(req.Wait, 0), localipc.Deadline)
-	deadline := time.Now().Add(wait)
-	observer := read.observer(ctx)
+	bounded, cancel := context.WithTimeout(ctx, localipc.Deadline)
+	defer cancel()
+	waitUntil := time.Now().Add(min(max(req.Wait, 0), localipc.Deadline))
 	for {
-		events, err := observer.ReadProcessHostEvents(req.After)
+		if snapshot, done, err := read.final(); done || err != nil {
+			return read.terminal(snapshot, req.After, err)
+		}
+		events, err := read.observer(bounded).ReadProcessHostEvents(req.After)
 		if err != nil {
-			return core.AgentProcessEventBatch{}, read.refusal(ctx, err)
+			if snapshot, done, err := c.settleAgentProcess(ctx, req.Agent, field, read); done {
+				return read.terminal(snapshot, req.After, err)
+			}
+			return core.AgentProcessEventBatch{}, read.refusal(ctx, bounded, err)
 		}
 		batch := read.batch(events)
-		if len(batch.Events) > 0 || batch.Terminal || !time.Now().Add(agentProcessPollInterval).Before(deadline) {
+		if len(batch.Events) > 0 || batch.Terminal || !time.Now().Add(agentProcessPollInterval).Before(waitUntil) {
+			if err := ctx.Err(); err != nil {
+				return core.AgentProcessEventBatch{}, err
+			}
 			return batch, nil
 		}
 		timer := time.NewTimer(agentProcessPollInterval)
 		select {
-		case <-ctx.Done():
+		case <-bounded.Done():
 			timer.Stop()
-			return core.AgentProcessEventBatch{}, ctx.Err()
+			if err := ctx.Err(); err != nil {
+				return core.AgentProcessEventBatch{}, err
+			}
+			return batch, nil
 		case <-timer.C:
 		}
+		// The generation may end between reads: read the Registry again for
+		// the Binding fixed by the first read, never a newer one.
+		if read, err = c.resolveAgentProcess(ctx, req.Agent, read.public, field); err != nil {
+			return core.AgentProcessEventBatch{}, err
+		}
 	}
+}
+
+// settleAgentProcess reads the Registry again after an owner read failed. The
+// fixed Binding may have ended meanwhile: its recorded Wait is the final
+// Snapshot, a host-lost or bare retirement is ErrProcessClosed, and a newer
+// generation is ErrProcessStale. done is false while the same generation is
+// still current without final evidence; the owner is then unreachable.
+func (c *Client) settleAgentProcess(ctx context.Context, ref, field string, read agentProcessRead) (core.AgentProcessSnapshot, bool, error) {
+	if ctx.Err() != nil {
+		return core.AgentProcessSnapshot{}, false, nil
+	}
+	next, err := c.resolveAgentProcess(ctx, ref, read.public, field)
+	if err != nil {
+		return core.AgentProcessSnapshot{}, true, err
+	}
+	if snapshot, done, err := next.final(); done || err != nil {
+		return snapshot, true, err
+	}
+	return core.AgentProcessSnapshot{}, false, nil
 }
 
 // agentProcessRead is one resolved process Agent generation. current reports
@@ -155,16 +198,16 @@ func (c *Client) resolveAgentProcess(ctx context.Context, ref string, want core.
 	case pane.Status.Activation.IsZero() && pane.Status.ProcessSession != nil:
 		stored = pane.Status.ProcessSession.Binding
 	default:
-		return read, read.refusal(ctx, processhost.ErrStale)
+		return read, read.refusal(ctx, ctx, processhost.ErrStale)
 	}
 	read.binding = runtimeservice.ProcessSchemaBinding(stored)
 	read.public = core.AgentProcessBinding{Host: stored.HostInstanceID, Pane: stored.PaneUID, Generation: stored.Generation}
 	if !want.IsZero() && want != read.public {
-		return read, read.refusal(ctx, processhost.ErrStale)
+		return read, read.refusal(ctx, ctx, processhost.ErrStale)
 	}
 	if read.current {
 		if _, _, ok := reg.CurrentProcessActivation(stored); !ok {
-			return read, read.refusal(ctx, processhost.ErrStale)
+			return read, read.refusal(ctx, ctx, processhost.ErrStale)
 		}
 	}
 	return read, nil
@@ -225,6 +268,15 @@ func (r agentProcessRead) batch(events runtimeservice.ProcessHostEvents) core.Ag
 	return batch
 }
 
+// terminal is the last batch of a generation that ended with its final
+// Snapshot; a closed or stale generation returns err instead.
+func (r agentProcessRead) terminal(snapshot core.AgentProcessSnapshot, after uint64, err error) (core.AgentProcessEventBatch, error) {
+	if err != nil {
+		return core.AgentProcessEventBatch{}, err
+	}
+	return core.AgentProcessEventBatch{Binding: r.public, Snapshot: snapshot, Next: after, Terminal: true}, nil
+}
+
 // attention is the CLI's Registry interaction projection of the Agent.
 func (r agentProcessRead) attention() string {
 	kind := r.agent.EffectiveInteraction(time.Now()).Kind
@@ -232,11 +284,15 @@ func (r agentProcessRead) attention() string {
 }
 
 // refusal classifies an owner read failure. A cancelled caller gets its own
-// context error; any failure other than a stale binding or an unsupported
-// read means the owner did not answer, which is not a provider exit.
-func (r agentProcessRead) refusal(ctx context.Context, err error) error {
+// context error. An owner that did not answer within the call's bound, or
+// any failure other than a stale binding or an unsupported read, is
+// unreachable, which is not a provider exit.
+func (r agentProcessRead) refusal(ctx, bounded context.Context, err error) error {
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return ctxErr
+	}
+	if boundErr := bounded.Err(); boundErr != nil {
+		return r.refusalCode(CodeProcessOwnerUnreachable, ErrProcessOwnerUnreachable, errors.Join(boundErr, err))
 	}
 	switch {
 	case errors.Is(err, processhost.ErrStale):
