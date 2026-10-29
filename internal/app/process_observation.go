@@ -26,6 +26,7 @@ func newProcessHostObservation(binding processhost.Binding, host, child coremeta
 		Protocol: processHostProtocol, Revision: processHostRevision(), Actions: slices.Clone(actions),
 		Turn: snap.Turn != "", Pending: len(snap.Pending),
 		Coordination: claudeCoordinationVersion,
+		Reads:        advertisedProcessHostReads(),
 	}
 }
 
