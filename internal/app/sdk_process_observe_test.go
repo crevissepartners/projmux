@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -62,9 +63,16 @@ func TestPublicProcessObserverGenerationGapAndTerminal(t *testing.T) {
 	if err != nil || !batch.Gap || batch.Terminal || len(batch.Events) != len(direct) || batch.Events[0].Kind != "stream-gap" || batch.Next != direct[len(direct)-1].Sequence || batch.Snapshot.Sequence != batch.Next {
 		t.Fatalf("gap batch: %+v %v", batch, err)
 	}
+	// The owner answer frame re-encodes each provider frame as compact JSON.
 	for i, event := range batch.Events {
-		if event.Sequence != direct[i].Sequence || event.Kind != direct[i].Kind || (len(direct[i].Raw) > 0 && !bytes.Equal(event.Payload, direct[i].Raw)) {
-			t.Fatalf("event %d: %+v want %+v", i, event, direct[i])
+		var raw bytes.Buffer
+		if len(direct[i].Raw) > 0 {
+			if err := json.Compact(&raw, direct[i].Raw); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if event.Sequence != direct[i].Sequence || event.Kind != direct[i].Kind || !bytes.Equal(event.Payload, raw.Bytes()) {
+			t.Fatalf("event %d: %s want %s", i, event.Payload, raw.Bytes())
 		}
 	}
 	// Continuing from Next repeats nothing; a bounded Wait returns empty.
