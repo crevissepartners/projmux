@@ -223,8 +223,10 @@ type processOwnerProxy struct {
 // dropHeld closes every held request unanswered.
 func (p *processOwnerProxy) dropHeld() { p.dropped.Do(func() { close(p.drop) }) }
 
-func proxyProcessOwner(t *testing.T, socket string, delay time.Duration) *processOwnerProxy {
+func proxyProcessOwner(t *testing.T, f *processCodexFixture, delay time.Duration) *processOwnerProxy {
 	t.Helper()
+	b := f.endpoint.binding
+	socket := runtimeservice.ProcessHostSocket(aiModeCodex, f.path, b.Pane, b.Generation)
 	p := &processOwnerProxy{delay: delay, held: make(chan struct{}, 64), release: make(chan struct{}), drop: make(chan struct{})}
 	ownerSocket := socket + ".ownerSocket"
 	if err := os.Rename(socket, ownerSocket); err != nil {
@@ -234,10 +236,18 @@ func proxyProcessOwner(t *testing.T, socket string, delay time.Duration) *proces
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The moved socket no longer matches the identity the owner removes on
+	// exit, so stop the owner here and remove what the proxy moved; the
+	// fixture's own cleanup then finds the lease gone.
 	t.Cleanup(func() {
 		p.dropHeld()
 		_ = listener.Close()
-		_ = os.Rename(ownerSocket, socket)
+		_ = f.endpoint.handle.Stop(b)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = f.endpoint.handle.Wait(ctx, b)
+		_ = os.Remove(ownerSocket)
+		_ = os.Remove(filepath.Dir(socket))
 	})
 	go func() {
 		for {
@@ -283,7 +293,7 @@ func (p *processOwnerProxy) serve(conn *net.UnixConn, ownerSocket string) {
 // the owner holds, even if its answer follows; and a generation that ends
 // while a long poll waits returns its final Snapshot.
 func TestPublicProcessObserverSettlesAndBoundsReads(t *testing.T) {
-	start := func(t *testing.T) (*processCodexFixture, *projmux.Client, string, core.AgentProcessBinding, uint64, string) {
+	start := func(t *testing.T) (*processCodexFixture, *projmux.Client, string, core.AgentProcessBinding, uint64) {
 		f := newProcessCodexFixture(t, nil)
 		b := f.endpoint.binding
 		f.turn(t, "public-bound", "fixture")
@@ -296,11 +306,11 @@ func TestPublicProcessObserverSettlesAndBoundsReads(t *testing.T) {
 		if err != nil || len(first.Events) == 0 {
 			t.Fatalf("first read: %+v %v", first, err)
 		}
-		return f, client, agent, public, first.Next, runtimeservice.ProcessHostSocket(aiModeCodex, f.path, b.Pane, b.Generation)
+		return f, client, agent, public, first.Next
 	}
 	t.Run("slow owner is not cut short by Wait", func(t *testing.T) {
-		_, client, agent, public, next, socket := start(t)
-		proxyProcessOwner(t, socket, 300*time.Millisecond)
+		f, client, agent, public, next := start(t)
+		proxyProcessOwner(t, f, 300*time.Millisecond)
 		started := time.Now()
 		batch, err := client.ReadAgentProcessEvents(context.Background(), core.AgentProcessEventsRequest{Agent: agent, Binding: public, After: next, Wait: 100 * time.Millisecond})
 		if elapsed := time.Since(started); err != nil || len(batch.Events) != 0 || batch.Next != next || elapsed < 600*time.Millisecond || elapsed > localipc.Deadline {
@@ -308,8 +318,8 @@ func TestPublicProcessObserverSettlesAndBoundsReads(t *testing.T) {
 		}
 	})
 	t.Run("cancel ends a held read and a late answer", func(t *testing.T) {
-		_, client, agent, public, next, socket := start(t)
-		proxy := proxyProcessOwner(t, socket, 0)
+		f, client, agent, public, next := start(t)
+		proxy := proxyProcessOwner(t, f, 0)
 		proxy.hold.Store(true)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -325,8 +335,8 @@ func TestPublicProcessObserverSettlesAndBoundsReads(t *testing.T) {
 		}
 	})
 	t.Run("owner silent for the whole bound is unreachable", func(t *testing.T) {
-		_, client, agent, public, _, socket := start(t)
-		proxy := proxyProcessOwner(t, socket, 0)
+		f, client, agent, public, _ := start(t)
+		proxy := proxyProcessOwner(t, f, 0)
 		proxy.hold.Store(true)
 		started := time.Now()
 		_, err := client.ReadAgentProcess(context.Background(), core.AgentProcessRequest{Agent: agent, Binding: public})
@@ -337,9 +347,9 @@ func TestPublicProcessObserverSettlesAndBoundsReads(t *testing.T) {
 		}
 	})
 	t.Run("wait recorded during a long poll is terminal", func(t *testing.T) {
-		f, client, agent, public, next, socket := start(t)
+		f, client, agent, public, next := start(t)
 		b := f.endpoint.binding
-		proxy := proxyProcessOwner(t, socket, 0)
+		proxy := proxyProcessOwner(t, f, 0)
 		type result struct {
 			batch core.AgentProcessEventBatch
 			err   error
