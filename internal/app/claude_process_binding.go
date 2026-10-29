@@ -51,6 +51,7 @@ type claudeProcessCheck struct {
 	Helper     *claudeProcessRegistration
 	Questions  *processQuestionRequest
 	Foreground *processForegroundRequest
+	Events     *runtimeservice.ProcessEventsRequest `json:",omitempty"`
 }
 
 // Helper registration authority is live host state, never a durable Registry
@@ -191,7 +192,7 @@ func (s *claudeProcessService) exchange(ctx context.Context, conn *net.UnixConn)
 	bounded, cancel := context.WithTimeout(ctx, localipc.Deadline)
 	defer cancel()
 	if request.Questions != nil {
-		if request.Observe != nil || request.Foreground != nil || request.Helper != nil || request.Input != nil || request.Register || request.Lookup || request.Session != "" || request.Binding != (processhost.Binding{}) {
+		if request.Observe != nil || request.Events != nil || request.Foreground != nil || request.Helper != nil || request.Input != nil || request.Register || request.Lookup || request.Session != "" || request.Binding != (processhost.Binding{}) {
 			return
 		}
 		result := applyExactProcessQuestions(bounded, peer, *request.Questions, func(ctx context.Context, b processhost.Binding) error {
@@ -204,6 +205,25 @@ func (s *claudeProcessService) exchange(ctx context.Context, conn *net.UnixConn)
 			}
 			return currentExactQuestionSession(s.registryPath, b, snap)
 		})
+		_ = localipc.WriteJSON(conn, result)
+		return
+	}
+	if request.Events != nil {
+		if request.Observe != nil || request.Foreground != nil || request.Helper != nil || request.Input != nil || request.Register || request.Lookup || request.Session != "" || request.Binding != (processhost.Binding{}) {
+			return
+		}
+		result := processForegroundResult{Stale: true}
+		read := *request.Events
+		events, snap, readErr := s.handle.Events(read.Binding, read.After)
+		host, _, hostErr := localipc.Process(os.Getpid())
+		reg, regErr := intmetadata.NewStore(s.registryPath).LoadDegradedReadOnly()
+		view := newProcessHostObservation(read.Binding, host, s.ownedProcess, snap, claudeForegroundActions)
+		view.OwnerMode = s.ownerMode
+		if readErr == nil && hostErr == nil && regErr == nil && read.Binding == s.binding && snap.PID == s.ownedProcess.PID && processObservationMatches(reg, read.Binding, view) {
+			if batch, ok := fitProcessHostEvents(events, view, read.After); ok {
+				result = processForegroundResult{Accepted: true, Events: &batch}
+			}
+		}
 		_ = localipc.WriteJSON(conn, result)
 		return
 	}

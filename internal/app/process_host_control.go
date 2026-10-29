@@ -17,6 +17,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 	"github.com/crevissepartners/projmux/internal/integrations/processquestions"
+	runtimeservice "github.com/crevissepartners/projmux/internal/services/runtime"
 )
 
 // The kernel's per-user socket credentials admit short-lived terminal clients.
@@ -71,13 +72,16 @@ type processForegroundResult struct {
 	Join          *processTurnJoin `json:",omitempty"`
 	DeleteRefusal string           `json:",omitempty"`
 	BusyReason    string           `json:",omitempty"`
+	// Events answers an events read, which only a client that saw the
+	// owner's Reads sends.
+	Events *runtimeservice.ProcessHostEvents `json:",omitempty"`
 }
 
 // Control protocol v1. An owner reports these in its observation; an answer
 // without Protocol comes from an owner built before the protocol had a version
 // and is read as protocol 0.
 const (
-	processHostProtocol = 1
+	processHostProtocol = runtimeservice.ProcessHostProtocol
 	// processHostOwnerForeground is the owner mode of a host whose lifetime is
 	// its foreground creator, resumer, or relauncher.
 	processHostOwnerForeground = "foreground"

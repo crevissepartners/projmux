@@ -429,6 +429,8 @@ PreviousWindow	Direction-bound entry point of cycleWindow retained as the test s
 ProcessAlive	Public v0 Agent catalog SDK entrypoint or its read-only adapter; retained for external modules and exercised by catalog parity and GOWORK=off consumer tests.
 ProcessCreateFailure.Error	Public detached SDK execution cause adapter retains exact owner/binding startup evidence; exercised by typed rollback fixtures.
 ProcessCreateFailure.Unwrap	Public detached SDK execution cause adapter preserves cancellation and cleanup causes; exercised by typed cancellation and rollback fixtures.
+ProcessHostReads	Detached process owner events read for the public SDK observation of Task 2a-ii; no non-test caller until then, covered by TestClaudeProcessHostEventsOwnerRead, TestCodexProcessHostEventsOwnerRead and TestValidProcessHostEventsShape.
+ProcessObserver.ReadProcessHostEvents	Detached process owner events read for the public SDK observation of Task 2a-ii; no non-test caller until then, covered by TestClaudeProcessHostEventsOwnerRead, TestCodexProcessHostEventsOwnerRead and TestValidProcessHostEventsShape.
 ProcessQuestionDispatcher.AnswerExactProcessQuestion	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
 ProcessQuestionDispatcher.AnswerExactProcessQuestionReceipt	Optional async question receipt adapter preserves external SDK/private consumers and legacy dispatcher compatibility; verified by TestSDKOptionalPublicQuestionReceiptDispatcher and TestAsyncAnswerAppDispatcherOptionalReceipt.
 ProcessQuestionDispatcher.DeclineExactProcessQuestionReceipt	Preserved app exact-question optional decline adapter for private consumers; exercised by TestAsyncDeclineCLIAndSDKSubmittedReadbackOnce and TestAsyncDeclineUnsupportedAndSecretEffects.
@@ -833,6 +835,7 @@ processApproval	Public v0 approval SDK entrypoint or native transport adapter; e
 processCodexLaunchEnv	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 processCodexSelections	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 processCreateShape	Public v0 pre-Window Agent create preflight closure for external frontends; runs CreateAgent's effect-free checks and is covered by TestPreflightCreateAgentMatchesCreateAgent, TestPreflightCreateAgentLeavesNoEffects and the protected SDK surface.
+processEventsWireRequest	Detached process owner events read for the public SDK observation of Task 2a-ii; no non-test caller until then, covered by TestClaudeProcessHostEventsOwnerRead, TestCodexProcessHostEventsOwnerRead and TestValidProcessHostEventsShape.
 processUserDeliveryAcceptance	Retained typed receipt validation for the planned foreign-owned Codex deliverProcessUserInput consumer rejects missing or malformed actual Mode/Operation/TurnID without replay or fallback.
 processWaitRetired	Metadata predicate adapter retained for exact owned process control consumers; deletion also proves kernel retirement in the shared executor.
 profileRefusal	Public v0 profile SDK entrypoint or refusal adapter; exercised by CLI parity and GOWORK=off external consumer tests.
@@ -975,6 +978,7 @@ turnRunner.Run	Public v0 exact turn SDK entrypoint or its external-only executio
 unregisterCopy	Public v0 Project unregister JSON projection conversion; verified by Registry, receipt and record parity.
 unsupportedRootsError	The default-endpoint roots refusal helper remains part of the retained installed protocol qualification contract.
 validOwnerChain	Owner-chain validation is retained inside the pure teardown decision authority.
+validProcessHostEvents	Detached process owner events read for the public SDK observation of Task 2a-ii; no non-test caller until then, covered by TestClaudeProcessHostEventsOwnerRead, TestCodexProcessHostEventsOwnerRead and TestValidProcessHostEventsShape.
 validTeardownEventKind	The closed event-kind validator is retained inside the pure teardown decision authority.
 validTeardownObservation	The closed observation validator is retained inside the pure teardown decision authority.
 validateCapabilityTMUXSocketRoot	Test-only installed qualification helper retained to reject overlong private tmux routes before lifecycle mutation.

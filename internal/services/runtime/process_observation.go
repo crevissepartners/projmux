@@ -23,7 +23,7 @@ type ProcessHostObservation struct {
 	Host, Child     coremetadata.ProcessIdentity
 	Provider, State string
 	Exit            *processhost.Exit `json:",omitempty"`
-	// Control protocol v1 (processHostProtocol). Revision is the owner's build
+	// Control protocol v1 (ProcessHostProtocol). Revision is the owner's build
 	// revision, Actions its supported actions, Turn whether a provider turn is
 	// running, and Pending the count of open control requests; their content
 	// never crosses. An answer without Protocol is a protocol-0 owner.
@@ -36,6 +36,14 @@ type ProcessHostObservation struct {
 	Pending      int      `json:",omitempty"`
 	OwnerMode    string   `json:",omitempty"`
 	Coordination int      `json:",omitempty"`
+	// Reads are the read requests the owner serves, separate from Actions;
+	// an owner that leaves them out serves none (ProcessHostReads).
+	Reads []string `json:",omitempty"`
+	// Session, Connection, Sequence and TurnID copy the owner's snapshot:
+	// the provider session, its connection, the last event sequence and the
+	// running turn. An owner that leaves them out predates the fields.
+	Session, Connection, TurnID string `json:",omitempty"`
+	Sequence                    uint64 `json:",omitempty"`
 }
 
 // ProcessSchemaBinding converts a Registry process binding to the host's
@@ -207,8 +215,9 @@ func ProcessHostSocket(provider, registryPath, pane, generation string) string {
 const codexProvider = "codex"
 
 // The observation request is the provider host's own wire envelope with only
-// Observe set. The other members are always empty here and keep their exact
-// JSON spelling, so the bytes an owner reads are those it always read.
+// Observe (or, for an owner advertising it, Events) set. The other members are
+// always empty here and keep their exact JSON spelling, so the bytes an owner
+// reads for an observation are those it always read.
 type claudeObservationRequest struct {
 	Observe    *processhost.Binding `json:",omitempty"`
 	Binding    processhost.Binding
@@ -219,6 +228,7 @@ type claudeObservationRequest struct {
 	Helper     *struct{}
 	Questions  *struct{}
 	Foreground *struct{}
+	Events     *ProcessEventsRequest `json:",omitempty"`
 }
 
 type codexObservationRequest struct {
@@ -228,6 +238,7 @@ type codexObservationRequest struct {
 	MessageRef string
 	Questions  *struct{}
 	Foreground *struct{}
+	Events     *ProcessEventsRequest `json:",omitempty"`
 }
 
 // ProcessObservationRequest wraps one observation in the provider host's wire

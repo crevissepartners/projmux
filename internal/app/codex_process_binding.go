@@ -243,6 +243,7 @@ type codexProcessExchange struct {
 	MessageRef string
 	Questions  *processQuestionRequest
 	Foreground *processForegroundRequest
+	Events     *runtimeservice.ProcessEventsRequest `json:",omitempty"`
 }
 type codexProcessExchangeResult struct {
 	Valid   bool
@@ -275,7 +276,7 @@ func (e *codexProcessEndpoint) exchange(ctx context.Context, conn *net.UnixConn)
 	}
 	switch {
 	case request.Questions != nil:
-		if request.Observe != nil || request.Foreground != nil || request.MessageRef != "" || request.Binding != (processhost.Binding{}) || request.Evidence != (coremetadata.CodexProcessRouteEvidence{}) {
+		if request.Observe != nil || request.Events != nil || request.Foreground != nil || request.MessageRef != "" || request.Binding != (processhost.Binding{}) || request.Evidence != (coremetadata.CodexProcessRouteEvidence{}) {
 			return
 		}
 		result := applyExactProcessQuestions(bounded, peer, *request.Questions, func(ctx context.Context, b processhost.Binding) error {
@@ -292,6 +293,8 @@ func (e *codexProcessEndpoint) exchange(ctx context.Context, conn *net.UnixConn)
 			return currentExactQuestionSession(e.registryPath, b, snap)
 		})
 		_ = localipc.WriteJSON(conn, result)
+	case request.Events != nil:
+		e.exchangeEvents(conn, peer, request)
 	case request.Observe != nil:
 		e.exchangeObservation(conn, peer, request)
 	case request.Foreground != nil:
@@ -317,6 +320,27 @@ func (e *codexProcessEndpoint) exchangeObservation(conn *net.UnixConn, peer core
 	view.OwnerMode = e.ownerMode
 	if readErr == nil && regErr == nil && binding == e.binding && snap.PID == e.evidence.Process.PID && processObservationMatches(reg, binding, view) {
 		result = processForegroundResult{Accepted: true, Observation: &view}
+	}
+	_ = localipc.WriteJSON(conn, result)
+}
+
+// exchangeEvents answers one bounded events read with the observation of the
+// snapshot taken under the same lock. Like observation it carries no control
+// and requires the same user.
+func (e *codexProcessEndpoint) exchangeEvents(conn *net.UnixConn, peer coremetadata.ProcessIdentity, request codexProcessExchange) {
+	if int64(peer.OwnerUID) != int64(os.Getuid()) || request.Observe != nil || request.Foreground != nil || request.MessageRef != "" || request.Binding != (processhost.Binding{}) || request.Evidence != (coremetadata.CodexProcessRouteEvidence{}) {
+		return
+	}
+	result := processForegroundResult{Stale: true}
+	read := *request.Events
+	events, snap, readErr := e.handle.Events(read.Binding, read.After)
+	reg, regErr := intmetadata.NewStore(e.registryPath).LoadDegradedReadOnly()
+	view := newProcessHostObservation(read.Binding, e.evidence.HostProcess, e.evidence.Process, snap, codexForegroundActions)
+	view.OwnerMode = e.ownerMode
+	if readErr == nil && regErr == nil && read.Binding == e.binding && snap.PID == e.evidence.Process.PID && processObservationMatches(reg, read.Binding, view) {
+		if batch, ok := fitProcessHostEvents(events, view, read.After); ok {
+			result = processForegroundResult{Accepted: true, Events: &batch}
+		}
 	}
 	_ = localipc.WriteJSON(conn, result)
 }
