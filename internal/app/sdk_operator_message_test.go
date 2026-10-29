@@ -20,9 +20,8 @@ import (
 )
 
 // sendOperatorFixture sends operator input through the service the CLI builds
-// from f's command: the same Registry, store, route resolver and Claude
-// adapter the web client's send ran on, and the one Client.SendOperatorMessage
-// runs on its own captured paths.
+// from a command's Registry, store, route resolver and Claude adapter: the one
+// Client.SendOperatorMessage runs on its own captured paths.
 func sendOperatorFixture(command *agentCommand, client, target, ref, payload string, ttl time.Duration) (agentmessages.Result, error) {
 	return command.peerMessageService().SendOperator(context.Background(), agentmessages.OperatorSendRequest{
 		Client: client, Target: target, Payload: payload, MessageRef: ref, TTL: ttl})
@@ -59,10 +58,10 @@ func wantNoOperatorRecord(t *testing.T, store *messagestore.Store, ref string) {
 	}
 }
 
-// TestPublicOperatorCoordinationParity sends the web client's inputs
-// (web_operator_message_test.go on the web branch) through the operator send
-// Client.SendOperatorMessage runs, on the same fixture, and requires the same
-// receipts, reasons, actions and refusals, and the CLI's held action.
+// TestPublicOperatorCoordinationParity sends an in-process operator client's
+// inputs through the operator send Client.SendOperatorMessage runs, on the
+// CLI's hold fixture, and requires the receipts, reasons, actions and refusals
+// of the existing send rules, and the CLI's held action.
 func TestPublicOperatorCoordinationParity(t *testing.T) {
 	target := func(f *holdFixture) string { return "uid:" + f.claudeUID }
 
