@@ -188,6 +188,11 @@ func newProcessCodexFixtureInDomain(t *testing.T, command func(string, string, [
 		return nil
 	}
 	tx := processhost.Transactions{Reserve: current, Current: current, Commit: func(ctx context.Context, b processhost.Binding, session string) error { return current(ctx, b) }}
+	// Mark before the environment is copied: the supervisor and every snapshot
+	// taken from env must carry the guard's marked PATH.
+	if os.Getenv("PMX_TEST_CLI") != "" {
+		liveguard.MarkTest(t)
+	}
 	var env []string
 	for _, v := range os.Environ() {
 		key, _, _ := strings.Cut(v, "=")
@@ -206,7 +211,6 @@ func newProcessCodexFixtureInDomain(t *testing.T, command func(string, string, [
 	limits.Startup = 8 * time.Second
 	supervisor := processhost.Command{Path: binary, Args: []string{"internal", "codex-process-test-supervisor"}, Env: env}
 	if product := os.Getenv("PMX_TEST_CLI"); product != "" {
-		liveguard.MarkTest(t)
 		supervisor.Path = product
 		supervisor.Args = []string{"internal", "process-host-supervisor"}
 	}
@@ -425,7 +429,11 @@ func TestCodexProcessBindingSingleWriterAndExactTokens(t *testing.T) {
 			return processhost.Command{Path: "python3", Args: []string{"-u", "-c", processCodexProviderFixture}, Dir: root, Env: env}
 		})
 		if product := os.Getenv("PMX_TEST_CLI"); product != "" {
-			liveguard.MarkTest(t)
+			// The fixture marked this test before it copied its environment, so
+			// the snapshot the usage call starts from carries the marked PATH.
+			if got, want := pathEntry(fixtureEnv), os.Getenv("PATH"); got != want {
+				t.Fatalf("fixture environment PATH = %q, want the marked PATH %q", got, want)
+			}
 			// Reject before inherited FD admission: this is a separate bounded
 			// usage call, not the fixture's live owned supervisor.
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1114,4 +1122,14 @@ func TestCodexProcessReceiptDeadlineUsesInjectedClock(t *testing.T) {
 			t.Fatal("expired message reached provider")
 		}
 	}
+}
+
+// pathEntry returns the PATH value of env, or "" when it has none.
+func pathEntry(env []string) string {
+	for _, entry := range env {
+		if value, ok := strings.CutPrefix(entry, "PATH="); ok {
+			return value
+		}
+	}
+	return ""
 }
