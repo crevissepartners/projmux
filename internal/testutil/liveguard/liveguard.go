@@ -465,10 +465,16 @@ func guardInstallProviderStandIns(dir string) error {
 	}
 	record := filepath.Join(dir, providerRecordName)
 	for _, name := range []string{"codex", "claude"} {
-		// One printf of the whole record keeps concurrent appends whole.
+		// The minimal record, argv with the stand-in's pid, ppid, owner and parent
+		// test, is written first by the shell's own printf, before any external
+		// command or command substitution: a provider context cancelled while ps
+		// or date runs must still leave the invocation on record. The ancestry and
+		// time follow as a second record carrying the same stand-in pid. One
+		// printf per record keeps concurrent appends whole.
 		script := "#!/bin/sh\nline='" + name + "'\n" +
 			"for arg in \"$@\"; do line=\"$line $arg\"; done\n" +
 			"owner=" + strconv.Itoa(os.Getpid()) + "\n" +
+			"printf '%s\\n' \"$line\n\tstand-in pid=$$ ppid=$PPID owner=$owner parent-test=${PMX_TEST_PARENT_TEST:-unmarked}\" >> '" + record + "'\n" +
 			"under=unknown\n" +
 			"chain=\n" +
 			"pid=$$\n" +
@@ -484,7 +490,7 @@ func guardInstallProviderStandIns(dir string) error {
 			"  pid=$ppid\n" +
 			"  depth=$((depth+1))\n" +
 			"done\n" +
-			"printf '%s\\n' \"$line\n\tstand-in pid=$$ ppid=$PPID owner=$owner parent-test=${PMX_TEST_PARENT_TEST:-unmarked} owner-is-ancestor=$under (only no-chain-reached-init rules the owner out; unknown means ps failed or the chain exceeded 8) at=$(date -u +%Y-%m-%dT%H:%M:%SZ)$chain\" >> '" + record + "'\n" +
+			"printf '%s\\n' \"\tstand-in pid=$$ owner-is-ancestor=$under (only no-chain-reached-init rules the owner out; unknown means ps failed or the chain exceeded 8) at=$(date -u +%Y-%m-%dT%H:%M:%SZ)$chain\" >> '" + record + "'\n" +
 			"echo 'provider guard: refused to run the real " + name + "' >&2\nexit 1\n"
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil { // #nosec G306 -- the stand-in must be executable.
 			return fmt.Errorf("write %s stand-in: %w", name, err)
