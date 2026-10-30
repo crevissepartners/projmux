@@ -380,6 +380,7 @@ LoadStatusbarRowOneVisibilitySet	Internal configuration-generation compatibility
 LoadStatusbarRowOneVisibilityState	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
 Localizer.Styled	Styled-fragment lookup retained as the test seam that pins the kind-mismatch error of the live catalog lookup.
 LookupCanonicalRoute	Canonical spelling lookup is retained for route coverage and generated-reference consumers.
+MarkTest	Test-only CLI attribution proof: liveguard.MarkTest names the calling test in the provider stand-in guard log so a PATH codex/claude invocation is attributed to its parent test; called only from process-host CLI tests and covered by TestMarkTestNamesTheCallerInTheGuardLog, TestMarkTestRefusesAParallelTest and TestMarkedWrapperSurvivesAnAllowlistedEnvironment.
 Matrix	Whole cardinality table copy retained as the test seam that pins the declared verb-kind cells and their canonical route adoption.
 MeasureSameTickReplacement	Test-only host probe retained: socket-replacement tests skip only where a same-path replacement shares the original socket identity.
 MergeKeymapOverrides	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
@@ -783,6 +784,7 @@ genericTeardownRefusal	The generic refusal constructor is retained inside the pu
 guardAuditRoot	Test-only guard helper retained behind the shared guard API that every test package linking the Registry store, a tmux runner, or provider exec code runs behind.
 guardInstallProviderStandIns	Test-only guard helper retained behind the shared guard API that every test package linking the Registry store, a tmux runner, or provider exec code runs behind.
 guardLockRoot	Test-only guard helper retained behind the shared guard API that every test package linking the Registry store, a tmux runner, or provider exec code runs behind.
+guardMarkWrapperDir	Test-only CLI attribution proof: writes the per-test PATH wrapper behind liveguard.MarkTest that carries the parent test name through the provider env allowlist; covered by TestMarkTestNamesTheCallerInTheGuardLog and TestMarkedWrapperSurvivesAnAllowlistedEnvironment.
 guardOptedIn	Test-only guard helper retained behind the shared guard API that every test package linking the Registry store, a tmux runner, or provider exec code runs behind.
 guardPinToolchainEnv	Test-only guard helper retained behind the shared guard API that every test package linking the Registry store, a tmux runner, or provider exec code runs behind.
 guardPrivateRoot	Test-only guard helper retained behind the shared guard API that every test package linking the Registry store, a tmux runner, or provider exec code runs behind.
