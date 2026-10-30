@@ -28,4 +28,14 @@ func TestExternalPeerMessages(t *testing.T) {
 	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeMessageNotFound || receipt.MessageRef != "" {
 		t.Fatalf("missing receipt: %+v %v", receipt, err)
 	}
+	// An operator send takes an in-process MessageOperator; a zero one names no
+	// operator and is refused before anything is read.
+	var result projmux.OperatorMessageResult
+	result, err = client.SendOperatorMessage(context.Background(), projmux.OperatorMessageRequest{Target: "uid:agent-missing", Payload: "operator input"})
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeMessageInvalidInput || result.Receipt.MessageRef != "" || result.Action != "" {
+		t.Fatalf("zero operator: %+v %v", result, err)
+	}
+	if operator := core.NewMessageOperator("console"); operator.Client() != "console" {
+		t.Fatalf("operator client = %q", operator.Client())
+	}
 }

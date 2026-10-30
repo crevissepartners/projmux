@@ -190,17 +190,9 @@ func (s Service) ExecuteSend(ctx context.Context, req SendRequest, report func(R
 		return fmt.Errorf("%s: refused before acceptance: %w", spelling, err)
 	}
 	// A Claude target's push frame is judged here, before any receipt exists.
-	claudeContentBytes := 0
-	if target.Spec.Provider == string(aiprovider.Claude) {
-		render, renderErr := s.Render(ctx, targetRoute, envelope)
-		if renderErr != nil {
-			return fmt.Errorf("%s: claude push frame unavailable before acceptance: %w", spelling, renderErr)
-		}
-		if render.FrameBytes > FrameMaxBytes {
-			return fmt.Errorf("%s: refused before acceptance: %s; reduce payload before retrying; frame bytes include auth and serialized content",
-				spelling, FrameSizeReason(render.FrameBytes))
-		}
-		claudeContentBytes = render.ContentBytes
+	claudeContentBytes, err := s.claudeSendPrecheck(ctx, spelling, target, targetRoute, envelope)
+	if err != nil {
+		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -253,6 +245,41 @@ func (s Service) ExecuteSend(ctx context.Context, req SendRequest, report func(R
 		}
 		return fmt.Errorf("%s: exact explicit reply adapter is unavailable", spelling)
 	}
+	// Only an accepted send is judged. The reply above needs no warning: its
+	// coordination server already refuses a caller outside the provider.
+	return s.acceptAndDeliver(ctx, spelling, envelope, target, targetRoute, claudeContentBytes,
+		func() { s.accepted(registry, source, sourceRoute) }, report)
+}
+
+// claudeSendPrecheck judges a Claude target's push frame before any receipt
+// exists, and returns the rendered content size the receipt's action is chosen
+// by. Any other target has no frame to judge.
+func (s Service) claudeSendPrecheck(ctx context.Context, spelling string, target metadata.Agent, targetRoute metadata.AgentRouteRef,
+	envelope message.Envelope,
+) (int, error) {
+	if target.Spec.Provider != string(aiprovider.Claude) {
+		return 0, nil
+	}
+	render, err := s.Render(ctx, targetRoute, envelope)
+	if err != nil {
+		return 0, fmt.Errorf("%s: claude push frame unavailable before acceptance: %w", spelling, err)
+	}
+	if render.FrameBytes > FrameMaxBytes {
+		return 0, fmt.Errorf("%s: refused before acceptance: %s; reduce payload before retrying; frame bytes include auth and serialized content",
+			spelling, FrameSizeReason(render.FrameBytes))
+	}
+	return render.ContentBytes, nil
+}
+
+// acceptAndDeliver is the tail every send but an explicit Claude reply shares:
+// accept the envelope, deliver or hold it, hand its receipt to report, and only
+// then return a failure, so the sender sees the terminal state, reason, and
+// action and still fails. A store refusal has no receipt and reaches neither
+// accepted nor report. accepted, when set, runs once the store has accepted
+// the envelope and before any delivery.
+func (s Service) acceptAndDeliver(ctx context.Context, spelling string, envelope message.Envelope, target metadata.Agent,
+	targetRoute metadata.AgentRouteRef, claudeContentBytes int, accepted func(), report func(Receipt, int) error,
+) error {
 	adapter := "codex-inbox"
 	if target.Spec.Provider == string(aiprovider.Claude) {
 		adapter = "claude-coordination"
@@ -261,9 +288,9 @@ func (s Service) ExecuteSend(ctx context.Context, req SendRequest, report func(R
 	if err != nil {
 		return fmt.Errorf("%s: %w", spelling, err)
 	}
-	// Only an accepted send is judged. The reply above needs no warning: its
-	// coordination server already refuses a caller outside the provider.
-	s.accepted(registry, source, sourceRoute)
+	if accepted != nil {
+		accepted()
+	}
 	var pushErr error
 	if created {
 		record, pushErr = s.Deliver(ctx, record, target, targetRoute, envelope)

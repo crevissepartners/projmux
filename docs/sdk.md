@@ -1157,11 +1157,36 @@ route unavailability and delivery failures. Context cancellation remains availab
 through `errors.Is`. Qualification, provider creation, user turn input and
 operator authentication are separate APIs and are not added by peer messaging.
 
+### Operator messages
+
+`Client.SendOperatorMessage(ctx, projmux.OperatorMessageRequest{Operator:
+core.NewMessageOperator("<client>"), Target: "uid:agent-…", Payload: "…"})` sends
+operator coordination input to one Claude Agent: the operator origin
+(`{"kind":"operator","client":"<client>"}`) and operator authority, no source
+route and no reply. `core.MessageOperator` has an unexported client name, so
+decoding request data (JSON, a form, a peer envelope or a `Source` string) never
+produces one; its zero value names none and is refused. A client name outside
+the operator client rule refuses with `CodeMessageInvalidInput` before anything
+is read or written. The SDK does not authenticate the person: confirm who the
+operator is before you attach `Operator`, as with `CreateAgentRequest.Operator`.
+
+The send runs the same target resolution, capability and route refusals, frame
+pre-check, acceptance, delivery or hold as a peer send, with errors spelled
+`<client> message send`. `MessageRef`, `TTL`, the payload and frame limits and
+`Options.ProjmuxExecutable` behave as for `SendMessage`. The result carries the
+`core.MessageReceipt`, the rendered Claude push `ContentBytes`, and the `Action`
+the receipt names: the held action of a held receipt, the failure action of a
+terminal undelivered one, and empty otherwise. An error with a receipt
+`MessageRef` means the message was accepted; never resend it, and read an
+uncertain outcome with `MessageStatus`.
+
 Operator input to any target but Claude is refused with the reason
-`operator-origin-target-not-claude`. `projmux.CodeOperatorOriginTargetNotClaude`
-is that reason, and `projmux.ErrOperatorOriginTargetNotClaude` matches the
-refusal under `errors.Is`, including through wrapping. They classify an error
-returned by the existing operator path; the SDK adds no operator send method.
+`operator-origin-target-not-claude` before the target's route is resolved or
+anything is written; a Codex Agent takes operator input as native turns instead.
+`projmux.CodeOperatorOriginTargetNotClaude` is that reason and the refusal's
+`Code`, and `projmux.ErrOperatorOriginTargetNotClaude` matches it under
+`errors.Is`, including through wrapping. `SendMessage` never sends operator
+input.
 
 ### Read-only message archives
 

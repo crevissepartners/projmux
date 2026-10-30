@@ -27,12 +27,14 @@ const (
 )
 
 // CodeOperatorOriginTargetNotClaude classifies the refusal of operator input
-// to any target but Claude. It is the reason string that refusal carries.
+// to any target but Claude. It is the reason string that refusal carries, and
+// the Code SendOperatorMessage refuses such a target with.
 const CodeOperatorOriginTargetNotClaude Code = message.ReasonOperatorOriginTargetNotClaude
 
-// ErrOperatorOriginTargetNotClaude matches, under errors.Is, the existing
-// refusal of operator input to any target but Claude. It classifies an error
-// only; the SDK adds no operator send path.
+// ErrOperatorOriginTargetNotClaude matches, under errors.Is, the refusal of
+// operator input to any target but Claude, including SendOperatorMessage's.
+// The only SDK operator send path is SendOperatorMessage; SendMessage never
+// sends operator input.
 var ErrOperatorOriginTargetNotClaude = message.ErrOperatorOriginTargetNotClaude
 
 // SendMessageRequest names exact source and target Agents explicitly. References
