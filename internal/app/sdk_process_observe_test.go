@@ -407,3 +407,45 @@ func TestPublicProcessObserverSettlesAndBoundsReads(t *testing.T) {
 		}
 	})
 }
+
+// A successful read of a live owner reports the identity of the socket its
+// exchange used. The service read returns that same identity, which an
+// expected identity is compared against; a different expected identity is
+// refused with the replaced reason, and the same one reads as before.
+func TestPublicProcessOwnerSocketIdentityComesFromExchange(t *testing.T) {
+	f := newProcessCodexFixtureWithEvents(t, nil, 8)
+	b := f.endpoint.binding
+	snap := f.wait(t, func(s processhost.Snapshot) bool { return s.State == "ready" })
+	reg := installProcessObservationSchema(t, f.store, b, snap)
+	client := sdkProcessObserveClient(t, f.path, f.root)
+	ctx := context.Background()
+	agent := "uid:" + b.Agent
+
+	socket := runtimeservice.ProcessHostSocket(aiModeCodex, f.path, b.Pane, b.Generation)
+	want, err := localipc.InspectOwnedSocket(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := client.ReadAgentProcess(ctx, core.AgentProcessRequest{Agent: agent})
+	if err != nil || first.OwnerSocket == nil || *first.OwnerSocket != (core.AgentProcessSocket{Device: want.Device, Inode: want.Inode}) {
+		t.Fatalf("snapshot socket identity: %+v want %+v (%v)", first.OwnerSocket, want, err)
+	}
+	pane, _ := reg.Pane(b.Pane)
+	observer := runtimeservice.ProcessObserver{Ctx: ctx, Registry: reg, RegistryPath: f.path, Binding: b}
+	view, identity, err := observer.ObserveHostViewSocket(b, *pane.Status.Activation.Process, aiModeCodex)
+	plain, plainErr := observer.ObserveHostView(b, *pane.Status.Activation.Process, aiModeCodex)
+	if err != nil || plainErr != nil || identity != want || !reflect.DeepEqual(view, plain) {
+		t.Fatalf("service read identity %+v want %+v view %+v plain %+v (%v %v)", identity, want, view, plain, err, plainErr)
+	}
+	same, err := client.ReadAgentProcess(ctx, core.AgentProcessRequest{Agent: agent, OwnerSocket: *first.OwnerSocket})
+	if err != nil || same.OwnerSocket == nil || *same.OwnerSocket != *first.OwnerSocket || same.State != first.State {
+		t.Fatalf("read with the same expected identity: %+v %v", same, err)
+	}
+	other := *first.OwnerSocket
+	other.Inode++
+	_, err = client.ReadAgentProcess(ctx, core.AgentProcessRequest{Agent: agent, OwnerSocket: other})
+	var refusal *projmux.Refusal
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeProcessOwnerUnreachable || refusal.Reason != projmux.ProcessOwnerSocketReplaced || !errors.Is(err, projmux.ErrProcessOwnerUnreachable) {
+		t.Fatalf("read with another expected identity: %v", err)
+	}
+}

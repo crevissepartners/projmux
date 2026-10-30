@@ -404,9 +404,9 @@ func listenStaleSocket(t *testing.T, path string) localipc.SocketIdentity {
 	return identity
 }
 
-// The unreachable refusal says why the current owner is gone, in the order
-// the web liveness check decides: owner identity, socket path, socket type,
-// then socket identity. The Code and sentinel never change, an empty Reason
+// The unreachable refusal says why the current owner is gone, in the order of
+// the process identity and socket evidence: owner identity, socket path,
+// socket type, then socket identity. The Code and sentinel never change, an empty Reason
 // is a transient failure, and a recorded Wait wins over any reason.
 func TestPublicProcessOwnerGoneReasons(t *testing.T) {
 	ctx := context.Background()
@@ -464,11 +464,11 @@ func TestPublicProcessOwnerGoneReasons(t *testing.T) {
 	requireAgentProcessRefusal(t, err, CodeProcessClosed, ErrProcessClosed)
 }
 
-// The snapshot carries the owner's Protocol and Actions with Running as the
-// owner's Turn, and Protocol >= 1 && Running && Actions contains "interrupt"
-// equals the web's CanInterrupt (without its provider condition) on the same
-// observation. The Actions slice is a copy.
-func TestPublicProcessSnapshotInterruptParity(t *testing.T) {
+// The snapshot carries the owner's advertised Protocol and Actions with
+// Running as the owner's Turn, and the interrupt projection
+// (Protocol >= 1 && Running && Actions contains "interrupt") follows the
+// advertised values on the same observation. The Actions slice is a copy.
+func TestPublicProcessSnapshotInterruptProjection(t *testing.T) {
 	read := agentProcessRead{}
 	for _, view := range []runtimeservice.ProcessHostObservation{
 		{},
@@ -479,11 +479,11 @@ func TestPublicProcessSnapshotInterruptParity(t *testing.T) {
 		{Protocol: 1, Turn: true, Actions: []string{"stop"}},
 		{Protocol: 1, Turn: true},
 	} {
-		web := view.Protocol >= 1 && view.Turn && slices.Contains(view.Actions, "interrupt")
+		advertised := view.Protocol >= 1 && view.Turn && slices.Contains(view.Actions, "interrupt")
 		snapshot := read.snapshot(view, 0)
 		got := snapshot.Protocol >= 1 && snapshot.Running && slices.Contains(snapshot.Actions, "interrupt")
-		if got != web || snapshot.Running != view.Turn || snapshot.Protocol != view.Protocol || !slices.Equal(snapshot.Actions, view.Actions) {
-			t.Fatalf("view %+v: snapshot %+v interrupt=%t, want %t", view, snapshot, got, web)
+		if got != advertised || snapshot.Running != view.Turn || snapshot.Protocol != view.Protocol || !slices.Equal(snapshot.Actions, view.Actions) {
+			t.Fatalf("view %+v: snapshot %+v interrupt=%t, want %t", view, snapshot, got, advertised)
 		}
 		if len(view.Actions) > 0 {
 			snapshot.Actions[0] = "changed"
@@ -491,5 +491,50 @@ func TestPublicProcessSnapshotInterruptParity(t *testing.T) {
 				t.Fatalf("Actions shares the owner's slice")
 			}
 		}
+	}
+}
+
+// recordFixtureWait records the supervisor Wait of a fixture's current
+// generation, as the owner's supervisor does when its provider exits.
+func recordFixtureWait(t *testing.T, f agentProcessFixture) {
+	t.Helper()
+	_, err := store.NewStore(store.PathFor(f.state)).Update(func(reg *m.Registry) error {
+		pane, _ := reg.Pane(f.pane)
+		b := pane.Status.Activation.Process.Binding
+		code := 3
+		wait := m.TerminationEvidence{Source: m.TerminationSourceSupervisor, Classification: m.ClassifyProcessExit(code, ""), ObservedAt: time.Now(), AgentUID: f.agent, PaneUID: f.pane, Generation: b.Generation, OperationID: b.OperationID, ExitCode: &code}
+		if outcome, e := store.DefaultMutator().RecordTermination(reg, wait); e != nil || !outcome.Applied {
+			return fmt.Errorf("record wait: %+v %v", outcome, e)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A socket identity mismatch is settled first, wherever it is found: a Wait
+// recorded after the read resolved is the final Snapshot, and a newer
+// generation is stale. Without either, the refusal carries the reason.
+func TestPublicProcessOwnerSocketMismatchSettlesFirst(t *testing.T) {
+	ctx := context.Background()
+	f := agentProcessRegistryFixture(t, fixtureCurrentLiveHost)
+	ref := "uid:" + f.agent
+	read, err := f.client.resolveAgentProcess(ctx, ref, f.public, "AgentProcessRequest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.client.ownerGoneRead(ctx, ref, "AgentProcessRequest", read, ProcessOwnerSocketReplaced)
+	requireOwnerGone(t, err, ProcessOwnerSocketReplaced)
+
+	newer := read
+	newer.public.Generation = "newer"
+	_, err = f.client.ownerGoneRead(ctx, ref, "AgentProcessRequest", newer, ProcessOwnerSocketReplaced)
+	requireAgentProcessRefusal(t, err, CodeProcessStale, ErrProcessStale)
+
+	recordFixtureWait(t, f)
+	snapshot, err := f.client.ownerGoneRead(ctx, ref, "AgentProcessRequest", read, ProcessOwnerSocketReplaced)
+	if err != nil || snapshot.Exit == nil || snapshot.Exit.Code != 3 || snapshot.OwnerSocket != nil {
+		t.Fatalf("final snapshot after a mismatch: %+v %v", snapshot, err)
 	}
 }

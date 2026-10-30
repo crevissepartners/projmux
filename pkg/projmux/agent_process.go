@@ -80,14 +80,11 @@ func (c *Client) ReadAgentProcess(ctx context.Context, req core.AgentProcessRequ
 	// An ended generation's final Snapshot or closed/stale refusal wins over
 	// a gone reason.
 	if reason := read.ownerGone(req.OwnerSocket); reason != "" {
-		if snapshot, done, err := c.settleAgentProcess(ctx, req.Agent, field, read); done {
-			return snapshot, err
-		}
-		return core.AgentProcessSnapshot{}, read.goneRefusal(ctx, reason)
+		return c.ownerGoneRead(ctx, req.Agent, field, read, reason)
 	}
 	bounded, cancel := context.WithTimeout(ctx, localipc.Deadline)
 	defer cancel()
-	view, err := read.observer(bounded).ObserveHostView(read.binding, read.activation, read.provider)
+	view, identity, err := read.observer(bounded).ObserveHostViewSocket(read.binding, read.activation, read.provider)
 	if err != nil {
 		if snapshot, done, err := c.settleAgentProcess(ctx, req.Agent, field, read); done {
 			return snapshot, err
@@ -97,14 +94,24 @@ func (c *Client) ReadAgentProcess(ctx context.Context, req core.AgentProcessRequ
 	if err := ctx.Err(); err != nil {
 		return core.AgentProcessSnapshot{}, err
 	}
-	snapshot := read.snapshot(view, 0)
-	if identity, err := localipc.InspectOwnedSocket(read.socket()); err == nil {
-		if socketReplaced(req.OwnerSocket, identity) {
-			return core.AgentProcessSnapshot{}, read.goneRefusal(ctx, ProcessOwnerSocketReplaced)
-		}
-		snapshot.OwnerSocket = &core.AgentProcessSocket{Device: identity.Device, Inode: identity.Inode}
+	// The identity is the one the owner exchange used and verified, never a
+	// later look at the path.
+	if socketReplaced(req.OwnerSocket, identity) {
+		return c.ownerGoneRead(ctx, req.Agent, field, read, ProcessOwnerSocketReplaced)
 	}
+	snapshot := read.snapshot(view, 0)
+	snapshot.OwnerSocket = &core.AgentProcessSocket{Device: identity.Device, Inode: identity.Inode}
 	return snapshot, nil
+}
+
+// ownerGoneRead settles the generation first, so an ended one still returns
+// its final Snapshot, ErrProcessClosed or ErrProcessStale, and otherwise
+// refuses with the gone reason.
+func (c *Client) ownerGoneRead(ctx context.Context, ref, field string, read agentProcessRead, reason string) (core.AgentProcessSnapshot, error) {
+	if snapshot, done, err := c.settleAgentProcess(ctx, ref, field, read); done {
+		return snapshot, err
+	}
+	return core.AgentProcessSnapshot{}, read.goneRefusal(ctx, reason)
 }
 
 func socketReplaced(expected core.AgentProcessSocket, current localipc.SocketIdentity) bool {
