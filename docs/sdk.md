@@ -576,6 +576,20 @@ or provider and never records a Wait.
   connection and turn identifiers and request content are not part of it; read
   session IDs with `ListAgentSessions` and open requests with `ListQuestions`
   and `ListApprovals`.
+- The Snapshot also carries the owner's advertised `Protocol` and `Actions`;
+  `Running` is the owner's Turn, so a turn can be interrupted when
+  `Protocol >= 1`, `Running` and `Actions` contains `interrupt`. `OwnerSocket`
+  (device and inode) is the identity of the socket `ReadAgentProcess` read;
+  pass it back as `AgentProcessRequest.OwnerSocket` to refuse a replaced
+  socket (a zero `Inode` skips the check).
+- An owner proven gone before any read is a `CodeProcessOwnerUnreachable`
+  refusal (`ErrProcessOwnerUnreachable`, unchanged) whose `Refusal.Reason` is
+  `owner-identity-gone` (recorded owner process absent or reused),
+  `owner-socket-gone` (socket path missing) or `owner-socket-replaced` (not a
+  socket, or a different identity than requested). An empty `Reason` is a
+  transient or unknown failure. A recorded Wait, a closed generation or a newer
+  generation still wins as the final Snapshot, `ErrProcessClosed` or
+  `ErrProcessStale`.
 - An event batch lists ascending events after `After`; `Next` is the next
   `After`. `Gap` reports events the host itself dropped (its `stream-gap` event
   is in the batch) and `Snapshot` resynchronizes. `More` reports that the

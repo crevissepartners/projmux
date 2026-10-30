@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -43,6 +45,9 @@ const (
 	// fixtureHostLost: the owner vanished and the generation was retired as
 	// host-lost, which proves absence, not an exit.
 	fixtureHostLost
+	// fixtureCurrentLiveHost: a current activation whose recorded owner
+	// process is this test process, so only its socket can be missing.
+	fixtureCurrentLiveHost
 )
 
 // agentProcessRegistryFixture records one Codex process Agent in state.
@@ -70,7 +75,13 @@ func agentProcessRegistryFixture(t *testing.T, state agentProcessFixtureState) a
 		}
 		agent, _ := reg.Agent(f.agent)
 		agent.Status.Phase = m.PhaseRunning
-		activation := m.ProcessActivation{Binding: b, HostProcess: dead(2000000000, "owner"), Child: dead(2000000001, "child")}
+		host := dead(2000000000, "owner")
+		if state == fixtureCurrentLiveHost {
+			if host, _, e = localipc.Process(os.Getpid()); e != nil {
+				return e
+			}
+		}
+		activation := m.ProcessActivation{Binding: b, HostProcess: host, Child: dead(2000000001, "child")}
 		if e = mut.RecordProcessActivation(reg, activation, "conversation"); e != nil {
 			return e
 		}
@@ -354,5 +365,131 @@ func TestPublicProcessEventBatchCarriesOwnerBatch(t *testing.T) {
 	owner.Events[1].Raw[2] = 'X'
 	if batch.Omitted[0] != 6 || !bytes.Equal(batch.Events[1].Payload, json.RawMessage(`{"method":"item/agentMessage/delta"}`)) {
 		t.Fatal("public batch shares owner memory")
+	}
+}
+
+// requireOwnerGone asserts the refusal keeps its Code and sentinel and carries
+// the exact gone reason.
+func requireOwnerGone(t *testing.T, err error, reason string) {
+	t.Helper()
+	refusal := requireAgentProcessRefusal(t, err, CodeProcessOwnerUnreachable, ErrProcessOwnerUnreachable)
+	if refusal.Reason != reason {
+		t.Fatalf("Reason = %q, want %q (%v)", refusal.Reason, reason, err)
+	}
+	if errors.Is(err, ErrProcessClosed) || errors.Is(err, ErrProcessStale) {
+		t.Fatalf("gone reason classified as closed or stale: %v", err)
+	}
+}
+
+// listenStaleSocket leaves an owned 0600 socket file nobody listens on, so a
+// connect is refused at once.
+func listenStaleSocket(t *testing.T, path string) localipc.SocketIdentity {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln.(*net.UnixListener).SetUnlinkOnClose(false)
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ln.Close()
+	identity, err := localipc.InspectOwnedSocket(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return identity
+}
+
+// The unreachable refusal says why the current owner is gone, in the order
+// the web liveness check decides: owner identity, socket path, socket type,
+// then socket identity. The Code and sentinel never change, an empty Reason
+// is a transient failure, and a recorded Wait wins over any reason.
+func TestPublicProcessOwnerGoneReasons(t *testing.T) {
+	ctx := context.Background()
+	gone := agentProcessRegistryFixture(t, fixtureCurrent)
+	_, err := gone.client.ReadAgentProcess(ctx, core.AgentProcessRequest{Agent: "uid:" + gone.agent})
+	requireOwnerGone(t, err, ProcessOwnerIdentityGone)
+
+	f := agentProcessRegistryFixture(t, fixtureCurrentLiveHost)
+	req := core.AgentProcessRequest{Agent: "uid:" + f.agent, Binding: f.public}
+	socket := runtimeservice.ProcessHostSocket("codex", store.PathFor(f.state), f.public.Pane, f.public.Generation)
+	_, err = f.client.ReadAgentProcess(ctx, req)
+	requireOwnerGone(t, err, ProcessOwnerSocketGone)
+
+	if err := os.MkdirAll(filepath.Dir(socket), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(socket, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.client.ReadAgentProcess(ctx, req)
+	requireOwnerGone(t, err, ProcessOwnerSocketReplaced)
+	if err := os.Remove(socket); err != nil {
+		t.Fatal(err)
+	}
+
+	identity := listenStaleSocket(t, socket)
+	// Without an expected identity, or with the matching one, nothing proves
+	// the owner gone: the failed read stays a reasonless unreachable refusal.
+	for _, expected := range []core.AgentProcessSocket{{}, {Device: identity.Device, Inode: identity.Inode}} {
+		req.OwnerSocket = expected
+		_, err = f.client.ReadAgentProcess(ctx, req)
+		requireOwnerGone(t, err, "")
+	}
+	// A different inode or device is a replaced socket.
+	for _, expected := range []core.AgentProcessSocket{{Device: identity.Device, Inode: identity.Inode + 1}, {Device: identity.Device + 1, Inode: identity.Inode}} {
+		req.OwnerSocket = expected
+		_, err = f.client.ReadAgentProcess(ctx, req)
+		requireOwnerGone(t, err, ProcessOwnerSocketReplaced)
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err = f.client.ReadAgentProcess(cancelled, req); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled read: %v", err)
+	}
+
+	// A recorded Wait is the final Snapshot even though its owner is gone.
+	ended := agentProcessRegistryFixture(t, fixtureCurrentExited)
+	snapshot, err := ended.client.ReadAgentProcess(ctx, core.AgentProcessRequest{Agent: "uid:" + ended.agent, OwnerSocket: core.AgentProcessSocket{Device: 1, Inode: 1}})
+	if err != nil || snapshot.Exit == nil || snapshot.OwnerSocket != nil || snapshot.Protocol != 0 || len(snapshot.Actions) != 0 {
+		t.Fatalf("final snapshot: %+v %v", snapshot, err)
+	}
+	// A retired generation is closed, not gone.
+	closed := agentProcessRegistryFixture(t, fixtureRetiredBare)
+	_, err = closed.client.ReadAgentProcess(ctx, core.AgentProcessRequest{Agent: "uid:" + closed.agent})
+	requireAgentProcessRefusal(t, err, CodeProcessClosed, ErrProcessClosed)
+}
+
+// The snapshot carries the owner's Protocol and Actions with Running as the
+// owner's Turn, and Protocol >= 1 && Running && Actions contains "interrupt"
+// equals the web's CanInterrupt (without its provider condition) on the same
+// observation. The Actions slice is a copy.
+func TestPublicProcessSnapshotInterruptParity(t *testing.T) {
+	read := agentProcessRead{}
+	for _, view := range []runtimeservice.ProcessHostObservation{
+		{},
+		{Protocol: 1, Turn: true, Actions: []string{"interrupt"}},
+		{Protocol: 1, Turn: true, Actions: []string{"stop", "interrupt"}},
+		{Protocol: 1, Turn: false, Actions: []string{"interrupt"}},
+		{Protocol: 0, Turn: true, Actions: []string{"interrupt"}},
+		{Protocol: 1, Turn: true, Actions: []string{"stop"}},
+		{Protocol: 1, Turn: true},
+	} {
+		web := view.Protocol >= 1 && view.Turn && slices.Contains(view.Actions, "interrupt")
+		snapshot := read.snapshot(view, 0)
+		got := snapshot.Protocol >= 1 && snapshot.Running && slices.Contains(snapshot.Actions, "interrupt")
+		if got != web || snapshot.Running != view.Turn || snapshot.Protocol != view.Protocol || !slices.Equal(snapshot.Actions, view.Actions) {
+			t.Fatalf("view %+v: snapshot %+v interrupt=%t, want %t", view, snapshot, got, web)
+		}
+		if len(view.Actions) > 0 {
+			snapshot.Actions[0] = "changed"
+			if view.Actions[0] == "changed" {
+				t.Fatalf("Actions shares the owner's slice")
+			}
+		}
 	}
 }

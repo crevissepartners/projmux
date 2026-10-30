@@ -151,6 +151,9 @@ const (
 // Field and Reason optionally describe a link rule validation or confirmation refusal.
 // Reason also distinguishes CodeClaudeSettingsChanged refusals: since-plan for a
 // stale Base, while-writing for a file changed after the apply read it.
+// A CodeProcessOwnerUnreachable refusal of ReadAgentProcess sets Reason to
+// ProcessOwnerIdentityGone, ProcessOwnerSocketGone or ProcessOwnerSocketReplaced
+// when the owner is proven gone; an empty Reason is transient or unknown.
 type Refusal struct {
 	Code Code `json:"Code"`
 	// AgentUID identifies the protected Agent when Code is CodeAgentProtected.
