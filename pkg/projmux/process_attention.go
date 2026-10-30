@@ -22,11 +22,11 @@ var ErrProcessAttentionDamaged = processattention.ErrDamaged
 // readProcessAttentionStore is the one store read of ReadProcessAttention.
 var readProcessAttentionStore = processattention.ReadStore
 
-// ReadProcessAttention returns the badge of every process Agent that has one,
-// in one call whose cost does not grow with the number of Agents: one read of
-// the process attention store and, when it holds any record, one read of the
-// Registry. It never reads an owner. A missing or empty store is an empty map
-// and no Registry read; a damaged one is a CodeProcessAttentionDamaged refusal.
+// ReadProcessAttention returns the badge of every process Agent that has one.
+// Whatever the number of Agents, it reads the process attention store file
+// once, loads the Registry once when the store is not empty, and never touches
+// an owner socket. A missing or empty store is an empty map and no Registry
+// load; a damaged one is a CodeProcessAttentionDamaged refusal.
 //
 // An Agent is listed when its current declaration has a record of the same
 // binding and provider, a nonempty generation and no Terminal mark, and the

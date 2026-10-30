@@ -17,9 +17,9 @@ import (
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
 )
 
-// webProcessAttentionByAgent is the web's per-Agent filter over this package's
-// consumer and store, the oracle of the public batch read.
-func webProcessAttentionByAgent(t *testing.T, stateDir string, reg coremetadata.Registry) map[string]string {
+// consumerAttentionByAgent is the existing consumer-based attention filter over
+// this package's store, the oracle of the public batch read.
+func consumerAttentionByAgent(t *testing.T, stateDir string, reg coremetadata.Registry) map[string]string {
 	t.Helper()
 	records, err := newProcessAttentionStore(stateDir).read()
 	if err != nil || len(records) == 0 {
@@ -43,8 +43,8 @@ func webProcessAttentionByAgent(t *testing.T, stateDir string, reg coremetadata.
 	return out
 }
 
-// The public batch read returns exactly the map the web builds from this
-// package's consumer, for records the filter keeps and every kind it drops.
+// The public batch read returns exactly the map the consumer-based filter
+// builds, for records the filter keeps and every kind it drops.
 func TestPublicProcessAttentionMatchesConsumerFilter(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -130,7 +130,7 @@ func TestPublicProcessAttentionMatchesConsumerFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := webProcessAttentionByAgent(t, paths.StateDir, reg)
+	want := consumerAttentionByAgent(t, paths.StateDir, reg)
 	if len(want) != 4 {
 		t.Fatalf("oracle shows %d Agents, want the 4 kept ones: %v", len(want), want)
 	}
@@ -147,6 +147,6 @@ func TestPublicProcessAttentionMatchesConsumerFilter(t *testing.T) {
 		public[agent] = string(badge)
 	}
 	if !reflect.DeepEqual(public, want) {
-		t.Fatalf("public %v, web filter %v", public, want)
+		t.Fatalf("public %v, consumer filter %v", public, want)
 	}
 }

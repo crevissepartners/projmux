@@ -616,10 +616,9 @@ or provider and never records a Wait.
 ## Read every process Agent's attention
 
 `Client.ReadProcessAttention(ctx, core.ProcessAttentionRequest{})` returns the
-badge of every process Agent that has one, in one call: one read of the process
-attention store and, only when the store holds a record, one read of the
-Registry. The cost does not grow with the number of Agents, and no owner socket
-is read.
+badge of every process Agent that has one. Whatever the number of Agents, it
+reads the process attention store file once, loads the Registry once when the
+store is not empty, and never touches an owner socket.
 
 - `core.ProcessAttention.Agents` maps an Agent UID (without `uid:`) to a
   `core.ProcessAttentionBadge`: `in_progress`, `approval_required`,
