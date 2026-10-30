@@ -171,8 +171,11 @@ func TestPublicProcessAttentionMissingEmptyDamaged(t *testing.T) {
 		}
 		_, err := f.client.ReadProcessAttention(ctx, core.ProcessAttentionRequest{})
 		var refusal *Refusal
-		if !errors.As(err, &refusal) || refusal.Code != CodeProcessAttentionDamaged || refusal.Code != "process-attention-damaged" {
+		if !errors.As(err, &refusal) || refusal.Code != CodeProcessAttentionDamaged {
 			t.Fatalf("damaged %q: %#v %v", damaged, refusal, err)
+		}
+		if string(CodeProcessAttentionDamaged) != "process-attention-damaged" {
+			t.Fatalf("code value changed: %q", CodeProcessAttentionDamaged)
 		}
 		if !errors.Is(err, ErrProcessAttentionDamaged) || !errors.Is(err, processattention.ErrDamaged) {
 			t.Fatalf("damaged %q does not reach the sentinels: %v", damaged, err)
