@@ -200,3 +200,50 @@ func TestGuardResolvesUnderAcceptsOnlyTheGuardsOwnWrapper(t *testing.T) {
 		}
 	}
 }
+
+// TestStandInRecordsTheInvocationBeforeAnyExternalCommand pins the order: the
+// minimal record is on disk before the stand-in runs its first ps or date, so
+// a provider context cancelled during those still leaves the invocation on
+// record. Fake ps and date snapshot the record at their first call, with no
+// sleep and no real provider.
+func TestStandInRecordsTheInvocationBeforeAnyExternalCommand(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := guardInstallProviderStandIns(dir); err != nil {
+		t.Fatal(err)
+	}
+	record := filepath.Join(dir, providerRecordName)
+	fakes := t.TempDir()
+	for _, command := range []string{"ps", "date"} {
+		snapshot := filepath.Join(fakes, command+".snapshot")
+		script := "#!/bin/sh\n[ -e " + guardShellQuote(snapshot) + " ] || cat " + guardShellQuote(record) + " > " + guardShellQuote(snapshot) + " 2>/dev/null\nexit 1\n"
+		if err := os.WriteFile(filepath.Join(fakes, command), []byte(script), 0o755); err != nil { // #nosec G306 -- test fixture must be executable.
+			t.Fatal(err)
+		}
+	}
+	cmd := exec.Command("/bin/sh", filepath.Join(dir, "codex"), "app-server", "daemon", "start") // #nosec G204 -- the guard's own stand-in under a temp dir.
+	cmd.Env = []string{"PATH=" + fakes + string(os.PathListSeparator) + "/usr/bin" + string(os.PathListSeparator) + "/bin", testParentEnv + "=TestOrderProbe"}
+	if err := cmd.Run(); err == nil {
+		t.Fatal("stand-in exited 0, want its fail-closed exit 1")
+	}
+	for _, command := range []string{"ps", "date"} {
+		raw, err := os.ReadFile(filepath.Join(fakes, command+".snapshot"))
+		if err != nil {
+			t.Fatalf("fake %s was never called: %v", command, err)
+		}
+		got := string(raw)
+		for _, want := range []string{"codex app-server daemon start", "stand-in pid=", "parent-test=TestOrderProbe"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("record at the first %s call lacks %q:\n%s", command, want, got)
+			}
+		}
+	}
+	final, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(final), "owner-is-ancestor=") {
+		t.Errorf("final record lacks the ancestry record:\n%s", final)
+	}
+}
