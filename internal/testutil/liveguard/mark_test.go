@@ -178,8 +178,17 @@ func TestGuardResolvesUnderAcceptsOnlyTheGuardsOwnWrapper(t *testing.T) {
 	}{
 		{"stand-in", filepath.Join(providerDir, "codex"), true},
 		{"own wrapper", filepath.Join(wrapperDir, "codex"), true},
+		{"own wrapper for a name with quotes", func() string {
+			dir, err := guardMarkWrapperDir(providerDir, "TestQuote/it's 'fine'")
+			if err != nil {
+				t.Fatal(err)
+			}
+			return filepath.Join(dir, "codex")
+		}(), true},
 		{"file elsewhere", write(filepath.Join(t.TempDir(), "codex"), ownScript), false},
 		{"wrapper execing another file", write(filepath.Join(wrapperDir, "claude"), "#!/bin/sh\n"+testParentEnv+"='x' exec '/usr/bin/true' \"$@\"\n"), false},
+		{"wrapper with a same-line extra command", write(filepath.Join(providerDir, "marks", "m-same", "codex"), "#!/bin/sh\n"+testParentEnv+"='x'; echo not-guard; "+testParentEnv+"='x' exec "+guardShellQuote(own)+" \"$@\"\n"), false},
+		{"wrapper with an unbalanced name quote", write(filepath.Join(providerDir, "marks", "m-quote", "codex"), "#!/bin/sh\n"+testParentEnv+"='x'y' exec "+guardShellQuote(own)+" \"$@\"\n"), false},
 		{"wrapper with an extra line", write(filepath.Join(providerDir, "marks", "m-extra", "codex"), ownScript+"echo hi\n"), false},
 		{"wrapper for the other command", write(filepath.Join(providerDir, "marks", "m-swap", "codex"), "#!/bin/sh\n"+testParentEnv+"='x' exec "+guardShellQuote(filepath.Join(providerDir, "claude"))+" \"$@\"\n"), false},
 		{"directory not directly under marks", write(filepath.Join(wrapperDir, "deeper", "codex"), ownScript), false},

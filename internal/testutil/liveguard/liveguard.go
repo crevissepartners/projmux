@@ -557,9 +557,10 @@ func guardOwnsDir(dir, providerDir string) bool {
 }
 
 // guardResolvesUnder reports whether resolved is the guard's stand-in directly
-// under providerDir, or a wrapper MarkTest wrote that sets testParentEnv and
-// execs that same stand-in. A file elsewhere, or under marks with any other
-// content, is not the guard.
+// under providerDir, or a wrapper MarkTest wrote: a file whose bytes are
+// exactly the script guardWrapperScript builds for some test name and this
+// stand-in. A file elsewhere, or under marks with any other content, even an
+// extra command on the same line, is not the guard.
 func guardResolvesUnder(resolved, providerDir string) bool {
 	dir := filepath.Dir(resolved)
 	if dir == providerDir {
@@ -572,10 +573,27 @@ func guardResolvesUnder(resolved, providerDir string) bool {
 	if err != nil {
 		return false
 	}
+	command := filepath.Base(resolved)
 	script := string(raw)
 	prefix := "#!/bin/sh\n" + testParentEnv + "="
-	suffix := " exec " + guardShellQuote(filepath.Join(providerDir, filepath.Base(resolved))) + " \"$@\"\n"
-	return strings.HasPrefix(script, prefix) && strings.HasSuffix(script, suffix) && strings.Count(script, "\n") == 2
+	suffix := " exec " + guardShellQuote(filepath.Join(providerDir, command)) + " \"$@\"\n"
+	if len(script) < len(prefix)+len(suffix) || !strings.HasPrefix(script, prefix) || !strings.HasSuffix(script, suffix) {
+		return false
+	}
+	// The part between is the test name, quoted. Recover the name and require
+	// the whole file to be what the writer builds for it.
+	quoted := script[len(prefix) : len(script)-len(suffix)]
+	if len(quoted) < 2 || quoted[0] != '\'' || quoted[len(quoted)-1] != '\'' {
+		return false
+	}
+	name := strings.ReplaceAll(quoted[1:len(quoted)-1], `'\''`, "'")
+	return script == guardWrapperScript(providerDir, command, name)
+}
+
+// guardWrapperScript is the wrapper for command: it sets testParentEnv to name
+// by prefixing exec, so the variable reaches the stand-in and nothing else.
+func guardWrapperScript(providerDir, command, name string) string {
+	return "#!/bin/sh\n" + testParentEnv + "=" + guardShellQuote(name) + " exec " + guardShellQuote(filepath.Join(providerDir, command)) + " \"$@\"\n"
 }
 
 // guardShellQuote single-quotes value for /bin/sh.
@@ -595,10 +613,7 @@ func guardMarkWrapperDir(providerDir, name string) (string, error) {
 		return "", fmt.Errorf("create mark dir: %w", err)
 	}
 	for _, command := range []string{"codex", "claude"} {
-		script := "#!/bin/sh\n" + testParentEnv + "=" + guardShellQuote(name) + " exec " + guardShellQuote(filepath.Join(providerDir, command)) + " \"$@\"\n"
-		// The script exports the variable by prefixing exec, so it reaches
-		// the stand-in and nothing else.
-		if err := os.WriteFile(filepath.Join(dir, command), []byte(script), 0o755); err != nil { // #nosec G306 -- the wrapper must be executable.
+		if err := os.WriteFile(filepath.Join(dir, command), []byte(guardWrapperScript(providerDir, command, name)), 0o755); err != nil { // #nosec G306 -- the wrapper must be executable.
 			return "", fmt.Errorf("write %s wrapper: %w", command, err)
 		}
 	}
