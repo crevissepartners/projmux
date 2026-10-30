@@ -12,28 +12,15 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	"github.com/crevissepartners/projmux/internal/services/processattention"
 	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
-// Only routing and lifecycle metadata belong here. Provider frames, question
-// text, tool input, answers and diagnostics remain outside this store.
-type processAttentionRecord struct {
-	Binding        processhost.Binding
-	Provider       string
-	Sequence       uint64
-	Badge          string
-	AckSequence    uint64
-	Terminal       bool
-	PendingEnded   bool
-	Pending        map[string]processAttentionPending
-	NoticeSequence uint64
-	NoticeKind     string
-}
+// The record layout lives with the read-only service; the defined type keeps
+// the writer-side methods in this package.
+type processAttentionRecord processattention.Record
 
-type processAttentionPending struct {
-	Kind     string
-	Sequence uint64
-}
+type processAttentionPending = processattention.Pending
 
 // The process stream has no picker action deadline. Give a burst of durable
 // writers its own finite budget; a held lock still returns ErrLockTimeout.
@@ -47,25 +34,19 @@ type processAttentionStore struct {
 }
 
 func newProcessAttentionStore(stateDir string) *processAttentionStore {
-	return &processAttentionStore{path: filepath.Join(stateDir, "process-attention.json")}
+	return &processAttentionStore{path: processattention.StorePath(stateDir)}
 }
 
-var errProcessAttentionDamaged = errors.New("damaged process attention store")
+var errProcessAttentionDamaged = processattention.ErrDamaged
 
 func (s *processAttentionStore) read() (map[string]processAttentionRecord, error) {
-	data, err := os.ReadFile(s.path) // #nosec G304 -- explicit per-user state path, never provider input.
-	if errors.Is(err, os.ErrNotExist) {
-		return map[string]processAttentionRecord{}, nil
-	}
+	stored, err := processattention.ReadFile(s.path)
 	if err != nil {
 		return nil, err
 	}
-	var records map[string]processAttentionRecord
-	if err = json.Unmarshal(data, &records); err != nil {
-		return nil, fmt.Errorf("%w: %v", errProcessAttentionDamaged, err)
-	}
-	if records == nil {
-		return nil, errProcessAttentionDamaged
+	records := make(map[string]processAttentionRecord, len(stored))
+	for pane, r := range stored {
+		records[pane] = processAttentionRecord(r)
 	}
 	return records, nil
 }
