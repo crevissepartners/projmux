@@ -498,7 +498,9 @@ func guardInstallProviderStandIns(dir string) error {
 //
 //   - it exports the name in testParentEnv, which a command chain that keeps
 //     the caller's environment (a daemon the CLI starts) hands to the stand-in;
-//   - it puts a marked wrapper for codex and claude first on PATH. A headless
+//   - it puts a marked wrapper for codex and claude on PATH, in the place of
+//     the guard's own entry so a fake provider the test already put ahead of
+//     the guard keeps winning. A headless
 //     provider the product starts keeps only an allowlist of the inherited
 //     environment (internal/integrations/processhost/env.go), which has PATH
 //     but not testParentEnv, so the variable alone is lost there. The wrapper
@@ -522,7 +524,33 @@ func MarkTest(t testing.TB) {
 	if err != nil {
 		t.Fatalf("mark test: %v", err)
 	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	path, ok := guardPathWithMark(os.Getenv("PATH"), activeProviderDir, dir)
+	if !ok {
+		t.Logf("mark test: %s is not on PATH; commands of this test are not wrapped", activeProviderDir)
+		return
+	}
+	t.Setenv("PATH", path)
+}
+
+// guardPathWithMark returns path with markDir placed right before the guard's
+// providerDir entry, and whether that entry was found. Entries ahead of the
+// guard, such as a fake provider a test installed itself, keep their order.
+func guardPathWithMark(path, providerDir, markDir string) (string, bool) {
+	entries := filepath.SplitList(path)
+	for i, entry := range entries {
+		if entry == providerDir {
+			marked := append(append(append([]string{}, entries[:i]...), markDir), entries[i:]...)
+			return strings.Join(marked, string(os.PathListSeparator)), true
+		}
+	}
+	return path, false
+}
+
+// guardResolvesUnder reports whether resolved is a stand-in directly under
+// providerDir or a MarkTest wrapper in a directory under providerDir/marks.
+func guardResolvesUnder(resolved, providerDir string) bool {
+	dir := filepath.Dir(resolved)
+	return dir == providerDir || filepath.Dir(dir) == filepath.Join(providerDir, "marks")
 }
 
 // guardMarkWrapperDir writes a directory under providerDir whose codex and
@@ -688,7 +716,7 @@ func RequireActive(t testing.TB) {
 			t.Errorf("look up %s: %v", name, err)
 			continue
 		}
-		if filepath.Dir(resolved) != activeProviderDir {
+		if !guardResolvesUnder(resolved, activeProviderDir) {
 			t.Errorf("%s resolves to %q, want the guard stand-in under %q", name, resolved, activeProviderDir)
 		}
 	}

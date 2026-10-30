@@ -99,3 +99,28 @@ func TestMarkedWrapperSurvivesAnAllowlistedEnvironment(t *testing.T) {
 		t.Errorf("stderr lacks the recorded argv:\n%s", stderr)
 	}
 }
+
+// TestGuardPathWithMarkKeepsAnEarlierFake pins that a fake provider ahead of
+// the guard on PATH keeps winning over the marked wrapper.
+func TestGuardPathWithMarkKeepsAnEarlierFake(t *testing.T) {
+	t.Parallel()
+
+	sep := string(os.PathListSeparator)
+	got, ok := guardPathWithMark(strings.Join([]string{"/fake", "/guard", "/usr/bin"}, sep), "/guard", "/mark")
+	if want := strings.Join([]string{"/fake", "/mark", "/guard", "/usr/bin"}, sep); !ok || got != want {
+		t.Errorf("guardPathWithMark = %q, %v; want %q, true", got, ok, want)
+	}
+	if got, ok := guardPathWithMark("/usr/bin", "/guard", "/mark"); ok || got != "/usr/bin" {
+		t.Errorf("without the guard entry guardPathWithMark = %q, %v; want the path unchanged and false", got, ok)
+	}
+}
+
+// TestRequireActiveAcceptsAMarkedWrapper pins that a marked test still passes
+// the stand-in resolution check, because the wrapper execs the stand-in.
+func TestRequireActiveAcceptsAMarkedWrapper(t *testing.T) {
+	// Not parallel: MarkTest changes PATH for the whole process.
+	t.Run("marked", func(t *testing.T) {
+		MarkTest(t)
+		RequireActive(t)
+	})
+}
