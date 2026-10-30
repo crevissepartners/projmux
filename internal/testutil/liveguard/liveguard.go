@@ -68,6 +68,10 @@ const (
 	providerDirName    = "provider-bin"
 	providerRecordName = "invocations.log"
 
+	// testParentEnv carries the name of the test that started a command chain
+	// (MarkTest). A stand-in records it, or "unmarked" when no test set it.
+	testParentEnv = "PMX_TEST_PARENT_TEST"
+
 	appName = "projmux"
 
 	registryFailLine = "FAIL: a test reached the default projmux Registry; inject a Registry path"
@@ -449,23 +453,99 @@ func guardPinToolchainEnv() {
 }
 
 // guardInstallProviderStandIns writes fail-closed codex and claude stand-ins
-// into dir. Each appends its argv to the record beside it and exits 1.
+// into dir. Each appends one record to the log beside it and exits 1. The
+// record is the argv on its first line, then tab-indented lines naming where
+// the run came from: its pid, the owner pid that made this root, whether the
+// owner is among its ancestors, and each ancestor's pid, parent pid, and
+// command, so a run can be attributed to a test or to a process outside every
+// test. The record never carries the environment.
 func guardInstallProviderStandIns(dir string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create stand-in dir: %w", err)
 	}
 	record := filepath.Join(dir, providerRecordName)
 	for _, name := range []string{"codex", "claude"} {
-		// One printf of the whole line keeps concurrent appends whole.
+		// One printf of the whole record keeps concurrent appends whole.
 		script := "#!/bin/sh\nline='" + name + "'\n" +
 			"for arg in \"$@\"; do line=\"$line $arg\"; done\n" +
-			"printf '%s\\n' \"$line\" >> '" + record + "'\n" +
+			"owner=" + strconv.Itoa(os.Getpid()) + "\n" +
+			"under=unknown\n" +
+			"chain=\n" +
+			"pid=$$\n" +
+			"depth=0\n" +
+			"while [ \"$depth\" -lt 8 ]; do\n" +
+			"  if [ \"$pid\" = \"$owner\" ]; then under=yes; break; fi\n" +
+			"  case \"$pid\" in ''|*[!0-9]*) break;; esac\n" +
+			"  if [ \"$pid\" -le 1 ]; then under=no-chain-reached-init; break; fi\n" +
+			"  ppid=$(ps -o ppid= -p \"$pid\" 2>/dev/null | tr -d ' ')\n" +
+			"  comm=$(ps -o comm= -p \"$pid\" 2>/dev/null | cut -c1-60)\n" +
+			"  run=$(ps -o args= -p \"$pid\" 2>/dev/null | tr ' ' '\\n' | grep -m1 '^-test[.]run=' | cut -c1-200)\n" +
+			"  chain=\"$chain\n\tancestor[$depth] pid=$pid ppid=${ppid:-?} exe=${comm:-?} ${run}\"\n" +
+			"  pid=$ppid\n" +
+			"  depth=$((depth+1))\n" +
+			"done\n" +
+			"printf '%s\\n' \"$line\n\tstand-in pid=$$ ppid=$PPID owner=$owner parent-test=${PMX_TEST_PARENT_TEST:-unmarked} owner-is-ancestor=$under (only no-chain-reached-init rules the owner out; unknown means ps failed or the chain exceeded 8) at=$(date -u +%Y-%m-%dT%H:%M:%SZ)$chain\" >> '" + record + "'\n" +
 			"echo 'provider guard: refused to run the real " + name + "' >&2\nexit 1\n"
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil { // #nosec G306 -- the stand-in must be executable.
 			return fmt.Errorf("write %s stand-in: %w", name, err)
 		}
 	}
 	return nil
+}
+
+// MarkTest names t as the test whose commands the stand-ins attribute. It
+// does two things for every process started from here on:
+//
+//   - it exports the name in testParentEnv, which a command chain that keeps
+//     the caller's environment (a daemon the CLI starts) hands to the stand-in;
+//   - it puts a marked wrapper for codex and claude first on PATH. A headless
+//     provider the product starts keeps only an allowlist of the inherited
+//     environment (internal/integrations/processhost/env.go), which has PATH
+//     but not testParentEnv, so the variable alone is lost there. The wrapper
+//     sets it itself and execs the shared stand-in, so the record still names
+//     the test. The wrappers live under the guard's provider directory and
+//     stay until the root is removed, so a detached child that outlives t
+//     still resolves them and records into the one shared log.
+//
+// It uses t.Setenv on purpose: the variable and PATH are one per process, so a
+// test that is, or sits under, a parallel test panics here instead of being
+// attributed to whichever test set them last. The process CLI runner's -cpu=1
+// does not forbid t.Parallel; this refusal does. When the provider guard
+// stepped aside there are no stand-ins to wrap and only the variable is set.
+func MarkTest(t testing.TB) {
+	t.Helper()
+	t.Setenv(testParentEnv, t.Name())
+	if activeProviderDir == "" {
+		return
+	}
+	dir, err := guardMarkWrapperDir(activeProviderDir, t.Name())
+	if err != nil {
+		t.Fatalf("mark test: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// guardMarkWrapperDir writes a directory under providerDir whose codex and
+// claude set testParentEnv to name and exec the shared stand-in beside it.
+func guardMarkWrapperDir(providerDir, name string) (string, error) {
+	marks := filepath.Join(providerDir, "marks")
+	if err := os.MkdirAll(marks, 0o700); err != nil {
+		return "", fmt.Errorf("create mark dir: %w", err)
+	}
+	dir, err := os.MkdirTemp(marks, "m-")
+	if err != nil {
+		return "", fmt.Errorf("create mark dir: %w", err)
+	}
+	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'" }
+	for _, command := range []string{"codex", "claude"} {
+		script := "#!/bin/sh\n" + testParentEnv + "=" + quote(name) + " exec " + quote(filepath.Join(providerDir, command)) + " \"$@\"\n"
+		// The script exports the variable by prefixing exec, so it reaches
+		// the stand-in and nothing else.
+		if err := os.WriteFile(filepath.Join(dir, command), []byte(script), 0o755); err != nil { // #nosec G306 -- the wrapper must be executable.
+			return "", fmt.Errorf("write %s wrapper: %w", command, err)
+		}
+	}
+	return dir, nil
 }
 
 // guardAuditRoot reports every file a test left under root and every provider

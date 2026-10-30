@@ -23,6 +23,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	"github.com/crevissepartners/projmux/internal/testutil/liveguard"
 )
 
 func exitIfCodexProcessFixtureChild() {
@@ -205,6 +206,7 @@ func newProcessCodexFixtureInDomain(t *testing.T, command func(string, string, [
 	limits.Startup = 8 * time.Second
 	supervisor := processhost.Command{Path: binary, Args: []string{"internal", "codex-process-test-supervisor"}, Env: env}
 	if product := os.Getenv("PMX_TEST_CLI"); product != "" {
+		liveguard.MarkTest(t)
 		supervisor.Path = product
 		supervisor.Args = []string{"internal", "process-host-supervisor"}
 	}
@@ -423,6 +425,7 @@ func TestCodexProcessBindingSingleWriterAndExactTokens(t *testing.T) {
 			return processhost.Command{Path: "python3", Args: []string{"-u", "-c", processCodexProviderFixture}, Dir: root, Env: env}
 		})
 		if product := os.Getenv("PMX_TEST_CLI"); product != "" {
+			liveguard.MarkTest(t)
 			// Reject before inherited FD admission: this is a separate bounded
 			// usage call, not the fixture's live owned supervisor.
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

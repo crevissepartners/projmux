@@ -30,6 +30,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	"github.com/crevissepartners/projmux/internal/testutil/liveguard"
 )
 
 func deferredRelaunchFixture(t *testing.T) processCreateCLI {
@@ -38,6 +39,7 @@ func deferredRelaunchFixture(t *testing.T) processCreateCLI {
 	if product == "" {
 		t.Skip("set PMX_TEST_CLI to a copied product binary")
 	}
+	liveguard.MarkTest(t)
 	root, err := os.MkdirTemp(filepath.Dir(product), "f-")
 	if err != nil {
 		t.Fatal(err)
@@ -1246,6 +1248,7 @@ func TestDeferredClaudeAbsentLaunchReservationRaceHostReadDeadlineActualCLI(t *t
 		t.Skip("set PMX_TEST_CLAUDE_REGRESSION_CLI to the tagged copied CLI")
 	}
 	t.Setenv("PMX_TEST_CLI", product)
+	liveguard.MarkTest(t)
 	testDeferredClaudeAbsentLaunchReservationRaceActualCLI(t, true)
 }
 
