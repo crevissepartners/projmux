@@ -25,6 +25,20 @@ func (b AgentProcessBinding) IsZero() bool { return b == AgentProcessBinding{} }
 type AgentProcessRequest struct {
 	Agent   string
 	Binding AgentProcessBinding
+
+	// OwnerSocket is the owner socket identity a caller observed before
+	// (AgentProcessSnapshot.OwnerSocket). A zero Inode skips the check;
+	// otherwise a current socket whose Device or Inode differs is refused as
+	// a replaced owner socket (Refusal.Reason).
+	OwnerSocket AgentProcessSocket
+}
+
+// AgentProcessSocket is the kernel identity of an owner's control socket. It
+// tells a replaced socket from the one a caller saw before and is not a
+// credential.
+type AgentProcessSocket struct {
+	Device uint64 `json:"device"`
+	Inode  uint64 `json:"inode"`
 }
 
 // AgentProcessEventsRequest reads the events after the sequence After. Wait
@@ -50,21 +64,30 @@ type AgentProcessExit struct {
 // ListApprovals. Attention is the Registry interaction projection the CLI
 // shows, empty when the Agent has none. Sequence is the last event sequence
 // of the snapshot an event batch carries; ReadAgentProcess leaves it zero.
+// Protocol and Actions are the control protocol version and the supported
+// actions the owner advertised, empty in a final Snapshot. Running is the
+// owner's Turn value, so a turn can be interrupted when Protocol >= 1,
+// Running and Actions contains "interrupt". OwnerSocket is the identity of the
+// owner socket this ReadAgentProcess read, nil in a final Snapshot and in an
+// event batch's Snapshot.
 // Exit is set only from actual Wait evidence. Provider session and connection
 // identifiers, request content and control credentials never appear here;
 // read session IDs with ListAgentSessions.
 type AgentProcessSnapshot struct {
-	Binding   AgentProcessBinding `json:"binding"`
-	Provider  string              `json:"provider"`
-	State     string              `json:"state"`
-	Running   bool                `json:"running,omitempty"`
-	Pending   int                 `json:"pending,omitempty"`
-	Attention string              `json:"attention,omitempty"`
-	OwnerMode string              `json:"ownerMode,omitempty"`
-	Host      ProcessIdentity     `json:"host"`
-	Child     ProcessIdentity     `json:"child"`
-	Sequence  uint64              `json:"sequence,omitempty"`
-	Exit      *AgentProcessExit   `json:"exit,omitempty"`
+	Binding     AgentProcessBinding `json:"binding"`
+	Provider    string              `json:"provider"`
+	State       string              `json:"state"`
+	Running     bool                `json:"running,omitempty"`
+	Protocol    int                 `json:"protocol,omitempty"`
+	Actions     []string            `json:"actions,omitempty"`
+	Pending     int                 `json:"pending,omitempty"`
+	Attention   string              `json:"attention,omitempty"`
+	OwnerMode   string              `json:"ownerMode,omitempty"`
+	Host        ProcessIdentity     `json:"host"`
+	Child       ProcessIdentity     `json:"child"`
+	OwnerSocket *AgentProcessSocket `json:"ownerSocket,omitempty"`
+	Sequence    uint64              `json:"sequence,omitempty"`
+	Exit        *AgentProcessExit   `json:"exit,omitempty"`
 }
 
 // AgentProcessEvent is one provider event. Payload is JSON with the same value

@@ -160,10 +160,19 @@ func (r ProcessObserver) observeHost(binding processhost.Binding, activation cor
 // ObserveHostView reads the exact live owner's observation, including the
 // protocol fields a protocol-0 owner leaves empty.
 func (r ProcessObserver) ObserveHostView(binding processhost.Binding, activation coremetadata.ProcessActivation, provider string) (ProcessHostObservation, error) {
+	view, _, err := r.ObserveHostViewSocket(binding, activation, provider)
+	return view, err
+}
+
+// ObserveHostViewSocket is ObserveHostView and also returns the identity of the
+// owner socket the exchange used, inspected before the exchange and checked
+// again after it. A socket replaced meanwhile is a refusal, never another
+// identity.
+func (r ProcessObserver) ObserveHostViewSocket(binding processhost.Binding, activation coremetadata.ProcessActivation, provider string) (ProcessHostObservation, localipc.SocketIdentity, error) {
 	socket := ProcessHostSocket(provider, r.RegistryPath, binding.Pane, binding.Generation)
 	identity, err := localipc.InspectOwnedSocket(socket)
 	if err != nil {
-		return ProcessHostObservation{}, err
+		return ProcessHostObservation{}, localipc.SocketIdentity{}, err
 	}
 	var result processObservationResult
 	err = localipc.ReadOwnedJSON(r.Ctx, socket, identity, activation.HostProcess, ProcessObservationRequest(provider, binding), &result)
@@ -173,13 +182,13 @@ func (r ProcessObserver) ObserveHostView(binding processhost.Binding, activation
 		err = processhost.ErrStale
 	}
 	if err != nil {
-		return ProcessHostObservation{}, err
+		return ProcessHostObservation{}, localipc.SocketIdentity{}, err
 	}
 	current, err := localipc.InspectOwnedSocket(socket)
 	if err != nil || current != identity || !result.Accepted || result.Observation == nil || !ProcessObservationMatches(r.Registry, binding, *result.Observation) {
-		return ProcessHostObservation{}, processhost.ErrStale
+		return ProcessHostObservation{}, localipc.SocketIdentity{}, processhost.ErrStale
 	}
-	return *result.Observation, nil
+	return *result.Observation, identity, nil
 }
 
 // processObservationResult is the part of the host's foreground answer an

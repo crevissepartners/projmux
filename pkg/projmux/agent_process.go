@@ -3,6 +3,7 @@ package projmux
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"time"
 
@@ -30,6 +31,19 @@ const (
 	// CodeProcessOwnerUnreachable reports an owner that did not answer. It is
 	// not a provider exit.
 	CodeProcessOwnerUnreachable Code = "process-owner-unreachable"
+)
+
+// Refusal.Reason of a CodeProcessOwnerUnreachable refusal of ReadAgentProcess
+// that proves the current owner gone before any read. An empty Reason is a
+// transient or unknown failure.
+const (
+	// ProcessOwnerIdentityGone: the recorded owner process is absent or reused.
+	ProcessOwnerIdentityGone = "owner-identity-gone"
+	// ProcessOwnerSocketGone: the owner socket path does not exist.
+	ProcessOwnerSocketGone = "owner-socket-gone"
+	// ProcessOwnerSocketReplaced: the path is not a socket, or its identity
+	// differs from AgentProcessRequest.OwnerSocket.
+	ProcessOwnerSocketReplaced = "owner-socket-replaced"
 )
 
 // Process read sentinels. A refusal of ReadAgentProcess or
@@ -63,9 +77,14 @@ func (c *Client) ReadAgentProcess(ctx context.Context, req core.AgentProcessRequ
 	if snapshot, done, err := read.final(); done || err != nil {
 		return snapshot, err
 	}
+	// An ended generation's final Snapshot or closed/stale refusal wins over
+	// a gone reason.
+	if reason := read.ownerGone(req.OwnerSocket); reason != "" {
+		return c.ownerGoneRead(ctx, req.Agent, field, read, reason)
+	}
 	bounded, cancel := context.WithTimeout(ctx, localipc.Deadline)
 	defer cancel()
-	view, err := read.observer(bounded).ObserveHostView(read.binding, read.activation, read.provider)
+	view, identity, err := read.observer(bounded).ObserveHostViewSocket(read.binding, read.activation, read.provider)
 	if err != nil {
 		if snapshot, done, err := c.settleAgentProcess(ctx, req.Agent, field, read); done {
 			return snapshot, err
@@ -75,7 +94,68 @@ func (c *Client) ReadAgentProcess(ctx context.Context, req core.AgentProcessRequ
 	if err := ctx.Err(); err != nil {
 		return core.AgentProcessSnapshot{}, err
 	}
-	return read.snapshot(view, 0), nil
+	// The identity is the one the owner exchange used and verified, never a
+	// later look at the path.
+	if socketReplaced(req.OwnerSocket, identity) {
+		return c.ownerGoneRead(ctx, req.Agent, field, read, ProcessOwnerSocketReplaced)
+	}
+	snapshot := read.snapshot(view, 0)
+	snapshot.OwnerSocket = &core.AgentProcessSocket{Device: identity.Device, Inode: identity.Inode}
+	return snapshot, nil
+}
+
+// ownerGoneRead settles the generation first, so an ended one still returns
+// its final Snapshot, ErrProcessClosed or ErrProcessStale, and otherwise
+// refuses with the gone reason.
+func (c *Client) ownerGoneRead(ctx context.Context, ref, field string, read agentProcessRead, reason string) (core.AgentProcessSnapshot, error) {
+	if snapshot, done, err := c.settleAgentProcess(ctx, ref, field, read); done {
+		return snapshot, err
+	}
+	return core.AgentProcessSnapshot{}, read.goneRefusal(ctx, reason)
+}
+
+func socketReplaced(expected core.AgentProcessSocket, current localipc.SocketIdentity) bool {
+	return expected.Inode != 0 && (current.Inode != expected.Inode || current.Device != expected.Device)
+}
+
+func (r agentProcessRead) socket() string {
+	return runtimeservice.ProcessHostSocket(r.provider, r.registryPath, r.binding.Pane, r.binding.Generation)
+}
+
+// ownerGone reports why the current activation's owner is definitely gone
+// before any owner read, in this order: recorded owner process absent or
+// reused, socket path missing, path not a socket, then a socket identity that
+// differs from expected. A transient read or permission error gives "".
+func (r agentProcessRead) ownerGone(expected core.AgentProcessSocket) string {
+	if !r.current {
+		return ""
+	}
+	if mutationruntime.ProcessIdentityAbsent(r.activation.HostProcess, localipc.Process) {
+		return ProcessOwnerIdentityGone
+	}
+	socket := r.socket()
+	if info, err := os.Lstat(socket); errors.Is(err, os.ErrNotExist) {
+		return ProcessOwnerSocketGone
+	} else if err == nil && info.Mode()&os.ModeSocket == 0 {
+		return ProcessOwnerSocketReplaced
+	}
+	if expected.Inode != 0 {
+		if current, err := localipc.InspectOwnedSocket(socket); err == nil && socketReplaced(expected, current) {
+			return ProcessOwnerSocketReplaced
+		}
+	}
+	return ""
+}
+
+// goneRefusal is the unreachable refusal with its Reason; a cancelled caller
+// gets its own context error.
+func (r agentProcessRead) goneRefusal(ctx context.Context, reason string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	err := r.refusalCode(CodeProcessOwnerUnreachable, ErrProcessOwnerUnreachable, errors.New(reason))
+	err.(*Refusal).Reason = reason
+	return err
 }
 
 // ReadAgentProcessEvents reads the events after req.After from one exact
@@ -247,7 +327,7 @@ func (r agentProcessRead) finalSnapshot(snap processhost.Snapshot, host, child m
 
 func (r agentProcessRead) snapshot(view runtimeservice.ProcessHostObservation, sequence uint64) core.AgentProcessSnapshot {
 	return core.AgentProcessSnapshot{
-		Binding: r.public, Provider: view.Provider, State: view.State, Running: view.Turn, Pending: view.Pending,
+		Binding: r.public, Provider: view.Provider, State: view.State, Running: view.Turn, Protocol: view.Protocol, Actions: append([]string(nil), view.Actions...), Pending: view.Pending,
 		Attention: r.attention(), OwnerMode: view.OwnerMode, Host: publicProcessIdentity(view.Host), Child: publicProcessIdentity(view.Child),
 		Sequence: sequence, Exit: publicProcessExit(view.Exit),
 	}
