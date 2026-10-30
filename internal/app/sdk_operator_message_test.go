@@ -197,12 +197,8 @@ func TestOperatorOriginCannotBeDecodedFromPeerInput(t *testing.T) {
 	if fields := reflect.VisibleFields(reflect.TypeFor[core.MessageOperator]()); len(fields) != 1 || fields[0].IsExported() {
 		t.Fatalf("MessageOperator fields = %+v, want one unexported client name", fields)
 	}
-	var operator core.MessageOperator
-	if err := json.Unmarshal([]byte(`{"client":"web","Client":"web"}`), &operator); err != nil || operator.Client() != "" {
-		t.Fatalf("decoded operator = %q err=%v", operator.Client(), err)
-	}
 	var request projmux.OperatorMessageRequest
-	if err := json.Unmarshal([]byte(`{"Operator":{"client":"web"},"Target":"uid:agent-target","Payload":"hi","Origin":{"kind":"operator","client":"web"}}`), &request); err != nil {
+	if err := json.Unmarshal([]byte(`{"Operator":{"client":"web","Client":"web"},"Target":"uid:agent-target","Payload":"hi","Origin":{"kind":"operator","client":"web"}}`), &request); err != nil {
 		t.Fatal(err)
 	}
 	if request.Operator != (core.MessageOperator{}) {
