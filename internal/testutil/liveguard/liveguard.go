@@ -532,13 +532,16 @@ func MarkTest(t testing.TB) {
 	t.Setenv("PATH", path)
 }
 
-// guardPathWithMark returns path with markDir placed right before the guard's
-// providerDir entry, and whether that entry was found. Entries ahead of the
-// guard, such as a fake provider a test installed itself, keep their order.
+// guardPathWithMark returns path with markDir placed right before the first
+// entry the guard owns, and whether there was one. The guard owns its
+// providerDir and the wrapper directories under providerDir/marks, so a test
+// that is marked inside an already marked test puts its own wrapper ahead of
+// the parent's. Entries ahead of those, such as a fake provider a test
+// installed itself, keep their order.
 func guardPathWithMark(path, providerDir, markDir string) (string, bool) {
 	entries := filepath.SplitList(path)
 	for i, entry := range entries {
-		if entry == providerDir {
+		if guardOwnsDir(entry, providerDir) {
 			marked := append(append(append([]string{}, entries[:i]...), markDir), entries[i:]...)
 			return strings.Join(marked, string(os.PathListSeparator)), true
 		}
@@ -546,11 +549,38 @@ func guardPathWithMark(path, providerDir, markDir string) (string, bool) {
 	return path, false
 }
 
-// guardResolvesUnder reports whether resolved is a stand-in directly under
-// providerDir or a MarkTest wrapper in a directory under providerDir/marks.
+// guardOwnsDir reports whether dir is providerDir or a MarkTest wrapper
+// directory directly under providerDir/marks.
+func guardOwnsDir(dir, providerDir string) bool {
+	return dir == providerDir ||
+		(filepath.Dir(dir) == filepath.Join(providerDir, "marks") && strings.HasPrefix(filepath.Base(dir), "m-"))
+}
+
+// guardResolvesUnder reports whether resolved is the guard's stand-in directly
+// under providerDir, or a wrapper MarkTest wrote that sets testParentEnv and
+// execs that same stand-in. A file elsewhere, or under marks with any other
+// content, is not the guard.
 func guardResolvesUnder(resolved, providerDir string) bool {
 	dir := filepath.Dir(resolved)
-	return dir == providerDir || filepath.Dir(dir) == filepath.Join(providerDir, "marks")
+	if dir == providerDir {
+		return true
+	}
+	if !guardOwnsDir(dir, providerDir) {
+		return false
+	}
+	raw, err := os.ReadFile(resolved) // #nosec G304 -- the path came from exec.LookPath and is compared with the guard's own script.
+	if err != nil {
+		return false
+	}
+	script := string(raw)
+	prefix := "#!/bin/sh\n" + testParentEnv + "="
+	suffix := " exec " + guardShellQuote(filepath.Join(providerDir, filepath.Base(resolved))) + " \"$@\"\n"
+	return strings.HasPrefix(script, prefix) && strings.HasSuffix(script, suffix) && strings.Count(script, "\n") == 2
+}
+
+// guardShellQuote single-quotes value for /bin/sh.
+func guardShellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
 // guardMarkWrapperDir writes a directory under providerDir whose codex and
@@ -564,9 +594,8 @@ func guardMarkWrapperDir(providerDir, name string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("create mark dir: %w", err)
 	}
-	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'" }
 	for _, command := range []string{"codex", "claude"} {
-		script := "#!/bin/sh\n" + testParentEnv + "=" + quote(name) + " exec " + quote(filepath.Join(providerDir, command)) + " \"$@\"\n"
+		script := "#!/bin/sh\n" + testParentEnv + "=" + guardShellQuote(name) + " exec " + guardShellQuote(filepath.Join(providerDir, command)) + " \"$@\"\n"
 		// The script exports the variable by prefixing exec, so it reaches
 		// the stand-in and nothing else.
 		if err := os.WriteFile(filepath.Join(dir, command), []byte(script), 0o755); err != nil { // #nosec G306 -- the wrapper must be executable.
