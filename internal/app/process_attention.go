@@ -16,6 +16,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	"github.com/crevissepartners/projmux/internal/services/processattention"
 )
 
 // The foreground owner explicitly activates the store generation before
@@ -268,16 +269,7 @@ func (p *processAttentionProjection) push(in notify.PushInput) (err error) {
 }
 
 func (r processAttentionRecord) badge() string {
-	badge := r.Badge
-	ids := make([]string, 0, len(r.Pending))
-	for id := range r.Pending {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		badge = aibadge.Aggregate(badge, r.Pending[id].Kind)
-	}
-	return badge
+	return processattention.Record(r).Effective()
 }
 
 // processAttentionConsumer is invocation-scoped; declarations are supplied by
@@ -307,39 +299,8 @@ func (c *processAttentionConsumer) refresh() error {
 	if err != nil {
 		return err
 	}
-	c.providers = map[string]string{}
-	hasProcess, hasTmux := false, false
-	for _, pane := range reg.Panes {
-		if pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess {
-			hasTmux = true
-			continue
-		}
-		hasProcess = true
-		a := pane.Status.Activation.Process
-		if a == nil {
-			agent, ok := reg.Agent(pane.Metadata.OwnerUID())
-			if !ok || agent.Status.PaneRef != pane.Metadata.UID || (agent.Spec.Provider != "claude" && agent.Spec.Provider != "codex") {
-				continue
-			}
-			window, ok := reg.Window(agent.Metadata.OwnerUID())
-			if !ok {
-				continue
-			}
-			binding := processhost.Binding{Project: window.Metadata.OwnerUID(), Window: window.Metadata.UID, Agent: agent.Metadata.UID, Pane: pane.Metadata.UID}
-			c.bindings = append(c.bindings, binding)
-			c.providers[binding.Pane] = agent.Spec.Provider
-			continue
-		}
-		binding := processSchemaBinding(a.Binding)
-		agent, ok := reg.Agent(binding.Agent)
-		if !ok || !processObservationOwnership(reg, binding, processHostObservation{Binding: binding, Host: a.HostProcess, Child: a.Child, Provider: agent.Spec.Provider}) {
-			continue
-		}
-		c.bindings = append(c.bindings, binding)
-		c.providers[binding.Pane] = agent.Spec.Provider
-	}
-	sort.Slice(c.bindings, func(i, j int) bool { return c.bindings[i].Pane < c.bindings[j].Pane })
-	c.processOnly = hasProcess && !hasTmux
+	declared := processattention.Declarations(reg)
+	c.bindings, c.providers, c.processOnly = declared.Bindings, declared.Providers, declared.ProcessOnly
 	return nil
 }
 
