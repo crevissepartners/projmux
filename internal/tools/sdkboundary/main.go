@@ -141,6 +141,7 @@ func allowedImplementation(p packageData) bool {
 		module + "/internal/services/resources",
 		module + "/internal/services/agentsessions",
 		module + "/internal/services/runtime",
+		module + "/internal/services/processattention",
 		module + "/internal/core/runtimediag",
 		module + "/internal/version",
 		module + "/internal/core/agentprogress",

@@ -154,6 +154,8 @@ const (
 // A CodeProcessOwnerUnreachable refusal of ReadAgentProcess sets Reason to
 // ProcessOwnerIdentityGone, ProcessOwnerSocketGone or ProcessOwnerSocketReplaced
 // when the owner is proven gone; an empty Reason is transient or unknown.
+// A CodeProcessAttentionDamaged refusal of ReadProcessAttention reaches
+// ErrProcessAttentionDamaged through Unwrap.
 type Refusal struct {
 	Code Code `json:"Code"`
 	// AgentUID identifies the protected Agent when Code is CodeAgentProtected.

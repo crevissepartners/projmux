@@ -613,6 +613,29 @@ or provider and never records a Wait.
   `process-owner-unreachable` (`ErrProcessOwnerUnreachable`) for an owner that
   did not answer within the call, which is not a provider exit.
 
+## Read every process Agent's attention
+
+`Client.ReadProcessAttention(ctx, core.ProcessAttentionRequest{})` returns the
+badge of every process Agent that has one, in one call: one read of the process
+attention store and, only when the store holds a record, one read of the
+Registry. The cost does not grow with the number of Agents, and no owner socket
+is read.
+
+- `core.ProcessAttention.Agents` maps an Agent UID (without `uid:`) to a
+  `core.ProcessAttentionBadge`: `in_progress`, `approval_required`,
+  `input_required` or `response_complete`. An Agent with no badge is absent. The
+  map belongs to the caller.
+- An Agent is listed when its current declaration has a stored record of the
+  same binding and provider, a nonempty generation and no `Terminal` mark, and
+  the record's badge (aggregated with its open requests) is one of the four.
+- The source is the durable store, not the Registry's interactions, so it
+  differs from `AgentProcessSnapshot.Attention` and can show a badge for an
+  owner that is already gone.
+- A missing or empty store is an empty map with no error and no Registry read.
+  A damaged store is a `CodeProcessAttentionDamaged` refusal
+  (`process-attention-damaged`) whose `Unwrap` reaches `ErrProcessAttentionDamaged`
+  and the original cause; the read never repairs the store.
+
 ## Mark a process Agent whose host died offline
 
 `Client.MarkAgentOffline(ctx, core.MarkAgentOfflineRequest{Ref: "uid:..."})`
