@@ -457,8 +457,11 @@ func guardPinToolchainEnv() {
 // record is the argv on its first line, then tab-indented lines naming where
 // the run came from: its pid, the owner pid that made this root, whether the
 // owner is among its ancestors, and each ancestor's pid, parent pid, and
-// command, so a run can be attributed to a test or to a process outside every
-// test. The record never carries the environment.
+// command. The ancestry describes this sample only: a detached descendant is
+// reparented, so no-chain-reached-init does not rule out a test origin in the
+// past, and yes is not proof of past attribution once a pid is reused or the
+// sample changes. Read it together with the parent-test marker and the
+// creation and lifetime evidence. The record never carries the environment.
 func guardInstallProviderStandIns(dir string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create stand-in dir: %w", err)
@@ -490,7 +493,7 @@ func guardInstallProviderStandIns(dir string) error {
 			"  pid=$ppid\n" +
 			"  depth=$((depth+1))\n" +
 			"done\n" +
-			"printf '%s\\n' \"\tstand-in pid=$$ owner-is-ancestor=$under (only no-chain-reached-init rules the owner out; unknown means ps failed or the chain exceeded 8) at=$(date -u +%Y-%m-%dT%H:%M:%SZ)$chain\" >> '" + record + "'\n" +
+			"printf '%s\\n' \"\tstand-in pid=$$ owner-is-ancestor=$under (this sample only: a detached process is reparented, so no-chain-reached-init does not rule out a past test origin and yes does not prove past attribution; compare with parent-test and the creation and lifetime evidence; unknown means ps failed or the chain exceeded 8) at=$(date -u +%Y-%m-%dT%H:%M:%SZ)$chain\" >> '" + record + "'\n" +
 			"echo 'provider guard: refused to run the real " + name + "' >&2\nexit 1\n"
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil { // #nosec G306 -- the stand-in must be executable.
 			return fmt.Errorf("write %s stand-in: %w", name, err)
