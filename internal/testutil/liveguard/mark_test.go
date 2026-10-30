@@ -124,3 +124,70 @@ func TestRequireActiveAcceptsAMarkedWrapper(t *testing.T) {
 		RequireActive(t)
 	})
 }
+
+// TestGuardPathWithMarkPutsANestedMarkAheadOfItsParent pins that a test marked
+// inside a marked test is attributed to the inner test: its wrapper goes ahead
+// of the parent's, and a fake provider ahead of both keeps winning.
+func TestGuardPathWithMarkPutsANestedMarkAheadOfItsParent(t *testing.T) {
+	t.Parallel()
+
+	providerDir := t.TempDir()
+	parent, err := guardMarkWrapperDir(providerDir, "TestParent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := guardMarkWrapperDir(providerDir, "TestParent/child")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sep := string(os.PathListSeparator)
+	start := strings.Join([]string{"/fake", parent, providerDir, "/usr/bin"}, sep)
+	got, ok := guardPathWithMark(start, providerDir, child)
+	if want := strings.Join([]string{"/fake", child, parent, providerDir, "/usr/bin"}, sep); !ok || got != want {
+		t.Errorf("guardPathWithMark = %q, %v; want %q, true", got, ok, want)
+	}
+}
+
+// TestGuardResolvesUnderAcceptsOnlyTheGuardsOwnWrapper pins that the stand-in
+// resolution check accepts the stand-in and the wrapper MarkTest wrote, and
+// nothing a test or the environment could substitute.
+func TestGuardResolvesUnderAcceptsOnlyTheGuardsOwnWrapper(t *testing.T) {
+	t.Parallel()
+
+	providerDir := t.TempDir()
+	wrapperDir, err := guardMarkWrapperDir(providerDir, "TestOwner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write := func(path, script string) string {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(script), 0o755); err != nil { // #nosec G306 -- test fixture must be executable.
+			t.Fatal(err)
+		}
+		return path
+	}
+	own := filepath.Join(providerDir, "codex")
+	ownScript := "#!/bin/sh\n" + testParentEnv + "='TestOwner' exec " + guardShellQuote(own) + " \"$@\"\n"
+	cases := []struct {
+		name     string
+		resolved string
+		want     bool
+	}{
+		{"stand-in", filepath.Join(providerDir, "codex"), true},
+		{"own wrapper", filepath.Join(wrapperDir, "codex"), true},
+		{"file elsewhere", write(filepath.Join(t.TempDir(), "codex"), ownScript), false},
+		{"wrapper execing another file", write(filepath.Join(wrapperDir, "claude"), "#!/bin/sh\n"+testParentEnv+"='x' exec '/usr/bin/true' \"$@\"\n"), false},
+		{"wrapper with an extra line", write(filepath.Join(providerDir, "marks", "m-extra", "codex"), ownScript+"echo hi\n"), false},
+		{"wrapper for the other command", write(filepath.Join(providerDir, "marks", "m-swap", "codex"), "#!/bin/sh\n"+testParentEnv+"='x' exec "+guardShellQuote(filepath.Join(providerDir, "claude"))+" \"$@\"\n"), false},
+		{"directory not directly under marks", write(filepath.Join(wrapperDir, "deeper", "codex"), ownScript), false},
+		{"directory under marks without the prefix", write(filepath.Join(providerDir, "marks", "other", "codex"), ownScript), false},
+	}
+	for _, tc := range cases {
+		if got := guardResolvesUnder(tc.resolved, providerDir); got != tc.want {
+			t.Errorf("%s: guardResolvesUnder(%q) = %v, want %v", tc.name, tc.resolved, got, tc.want)
+		}
+	}
+}
