@@ -22,8 +22,10 @@ const CodeReserveProviderUnsupported Code = "reserve-provider-unsupported"
 // until then a reservation can only be deleted.
 //
 // The reservation is committed only when this call returns without an error. A
-// failure removes what the call created, including a new Window, and returns a
-// Refusal whose Code names the reason.
+// failure removes what the call created, including a new Window, except what
+// Agent protection keeps. A failure that leaves a reservation behind names it:
+// the result carries its Binding, the Refusal carries its AgentUID, and
+// errors.As reaches a CreateProcessError with the exact refs.
 func (c *Client) ReserveAgent(ctx context.Context, req core.ReserveAgentRequest) (core.ReserveAgentResult, error) {
 	var result core.ReserveAgentResult
 	if err := ctx.Err(); err != nil {
@@ -64,11 +66,19 @@ func (c *Client) ReserveAgent(ctx context.Context, req core.ReserveAgentRequest)
 		_ = unregisterCopy(metadata.ProcessBinding{HostInstanceID: reply.Binding.Host, ProjectUID: reply.Binding.Project, WindowUID: reply.Binding.Window, AgentUID: reply.Binding.Agent, PaneUID: reply.Binding.Pane, Generation: reply.Binding.Generation, OperationID: reply.Binding.Operation}, &result.Binding)
 	}
 	if err != nil {
+		if reply.Result != nil {
+			_ = unregisterCopy(reply.Result.Agent, &result.Agent)
+		}
 		var failure *mutationruntime.ProcessCreateFailure
 		if errors.As(err, &failure) {
-			return core.ReserveAgentResult{}, &Refusal{Code: Code(failure.Code), AgentUID: failure.Binding.Agent, message: err.Error(), cause: err}
+			var owner core.ProcessIdentity
+			if copyErr := unregisterCopy(failure.Owner, &owner); copyErr != nil {
+				return result, copyErr
+			}
+			detail := &CreateProcessError{Code: Code(failure.Code), Binding: result.Binding, Owner: owner, message: err.Error(), cause: err}
+			return result, &Refusal{Code: Code(failure.Code), AgentUID: failure.Binding.Agent, message: err.Error(), cause: detail}
 		}
-		return core.ReserveAgentResult{}, createRefusal(err, "ReserveAgentRequest")
+		return result, createRefusal(err, "ReserveAgentRequest")
 	}
 	if reply.Result == nil {
 		return core.ReserveAgentResult{}, &Refusal{Code: CodeCreateExecutionFailed, message: "reservation worker returned no committed Agent"}

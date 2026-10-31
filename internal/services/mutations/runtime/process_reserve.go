@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
@@ -76,7 +77,15 @@ func ExecuteDetachedProcessReserve(ctx context.Context, frozen ProcessCreateCont
 	defer cancel()
 	wire := ProcessDetachedCreateRequest{Options: request.Options, Output: "none", Caller: caller, RegistryPath: storage.Path(), Context: &frozen, Reserve: true}
 	launcher := ProcessDetachedLauncher{Transient: true, Executable: frozen.Executable, Environment: frozen.Environment, PayloadDir: frozen.Paths.StateDir, Verify: func(ready ProcessDetachedReply, _ coremetadata.ProcessIdentity) error {
-		return VerifyDetachedProcessReserve(storage.LoadReadOnly, ready)
+		if err := VerifyDetachedProcessReserve(storage.LoadReadOnly, ready); err != nil {
+			return err
+		}
+		if hook := ReserveVerifyHook; hook != nil {
+			return hook(ready)
+		}
+		return nil
+	}, Cleanup: func(owner coremetadata.ProcessIdentity, ready ProcessDetachedReply) error {
+		return AwaitDetachedProcessReserveCleanup(storage.LoadReadOnly, owner, ready.Binding)
 	}}
 	reply, err = launcher.Launch(ctx, wire, io.Discard, io.Discard)
 	if err != nil {
@@ -106,6 +115,41 @@ func VerifyDetachedProcessReserve(load func() (coremetadata.Registry, error), re
 		agent.Status.PaneRef != b.PaneUID || pane.Metadata.OwnerUID() != b.AgentUID || pane.Status.ProcessSession == nil || pane.Status.ProcessSession.Binding != b ||
 		ready.Result.Agent.Metadata.UID != b.AgentUID || ready.Result.Pane.Metadata.UID != b.PaneUID {
 		return processhost.ErrStale
+	}
+	return nil
+}
+
+
+// ReserveVerifyHook is a test seam that runs after the built-in verification of
+// a prepared reservation; a non-nil result rejects the reservation. Production
+// code never sets it.
+var ReserveVerifyHook func(ProcessDetachedReply) error
+
+// AwaitDetachedProcessReserveCleanup waits, within one bounded period, for the
+// reservation worker to retire. The worker rolls its own reservation back before
+// it exits, so a reservation that still names binding afterwards is reported
+// with its exact refs rather than assumed gone.
+func AwaitDetachedProcessReserveCleanup(load func() (coremetadata.Registry, error), owner coremetadata.ProcessIdentity, binding processhost.Binding) error {
+	ctx, cancel := context.WithTimeout(context.Background(), ProcessAgentStopTimeout)
+	defer cancel()
+	ticker := time.NewTicker(ProcessAgentStopPoll)
+	defer ticker.Stop()
+	for !ProcessIdentityAbsent(owner, localipc.Process) {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("process-reserve-cleanup-unconfirmed: reservation worker pid %d start %s is still running: %w", owner.PID, owner.Start, ctx.Err())
+		case <-ticker.C:
+		}
+	}
+	if binding.Agent == "" {
+		return nil
+	}
+	reg, err := load()
+	if err != nil {
+		return err
+	}
+	if _, remains := reg.Agent(binding.Agent); remains {
+		return fmt.Errorf("process-reserve-remaining: agent uid:%s pane uid:%s window uid:%s remain after a failed reservation; inspect with projmux describe agent uid:%s; cleanup: projmux delete agent uid:%s", binding.Agent, binding.Pane, binding.Window, binding.Agent, binding.Agent)
 	}
 	return nil
 }

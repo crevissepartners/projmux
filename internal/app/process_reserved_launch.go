@@ -144,8 +144,9 @@ func runProcessDetachedReserve(conn net.Conn, encoder *json.Encoder, decoder *js
 	defer timer.Stop()
 	result, err := command.reserveProcessLaunch(life, request.options)
 	if err != nil {
-		// reserveProcessLaunch has already removed whatever it reserved.
-		return reject(nil, err)
+		// A failed reservation keeps its Binding in the reply: a protected
+		// Agent survives rollback and the caller needs its exact refs.
+		return reject(&result, err)
 	}
 	rollback := func(cause error) error {
 		return reject(&result, command.failReservedLaunch(&result, cause))
@@ -167,5 +168,8 @@ func runProcessDetachedReserve(conn net.Conn, encoder *json.Encoder, decoder *js
 	if err = life.Err(); err != nil {
 		return rollback(err)
 	}
-	return encoder.Encode("completed")
+	if err = encoder.Encode("completed"); err != nil {
+		return rollback(err)
+	}
+	return nil
 }

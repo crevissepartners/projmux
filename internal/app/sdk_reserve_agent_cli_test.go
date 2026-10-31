@@ -49,7 +49,7 @@ func reserveContext(t *testing.T) context.Context {
 	return ctx
 }
 
-func TestPublicReserveAgentFreezesLaunchWithoutProcess(t *testing.T) {
+func TestPublicReserveAgentFreezesLaunchAndStaysPending(t *testing.T) {
 	r := newReserveFixture(t)
 	ctx := reserveContext(t)
 	result, err := r.client.ReserveAgent(ctx, r.request())
@@ -86,9 +86,13 @@ func TestPublicReserveAgentFreezesLaunchWithoutProcess(t *testing.T) {
 	if _, err = os.Stat(filepath.Join(r.state, "deferred-launches")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("a reservation must not create deferred-launches: %v", err)
 	}
+	// The stub provider records every frame it reads; a reservation sends none.
+	if raw, _ := os.ReadFile(r.f.trace); len(raw) != 0 {
+		t.Fatalf("the provider read frames during a reservation: %q", raw)
+	}
 }
 
-func TestPublicReserveAgentNewWindowIsRemovedWithItsAgent(t *testing.T) {
+func TestPublicReserveAgentNewWindowReservationIsDeletable(t *testing.T) {
 	r := newReserveFixture(t)
 	ctx := reserveContext(t)
 	req := r.request()
@@ -108,6 +112,25 @@ func TestPublicReserveAgentNewWindowIsRemovedWithItsAgent(t *testing.T) {
 	}
 	if _, err = os.Stat(r.launchPath(result.Agent.Metadata.UID)); err != nil {
 		t.Fatalf("frozen launch of the new-Window reservation: %v", err)
+	}
+	if _, err = r.client.Delete(ctx, core.DeleteRequest{Kind: core.KindAgent, Ref: "uid:" + result.Agent.Metadata.UID, Confirm: true}); err != nil {
+		t.Fatalf("delete the new-Window reservation: %v", err)
+	}
+	after, err := r.f.store.LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := after.Agent(result.Agent.Metadata.UID); ok {
+		t.Fatal("deleted Agent remains")
+	}
+	if _, ok := after.Pane(result.Binding.PaneUID); ok {
+		t.Fatal("deleted Agent's Pane remains")
+	}
+	if _, err = os.Stat(r.launchPath(result.Agent.Metadata.UID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("deleted Agent's frozen launch remains: %v", err)
+	}
+	if _, ok := after.Window(r.f.window); !ok {
+		t.Fatal("the existing Window was removed")
 	}
 }
 
@@ -219,5 +242,93 @@ func TestPublicReserveAgentDeleteRemovesOnlyItsLaunch(t *testing.T) {
 	}
 	if _, ok := reg.Agent(other.Agent.Metadata.UID); !ok {
 		t.Fatal("the other reservation was deleted")
+	}
+}
+
+func registryCounts(reg coremetadata.Registry) [3]int {
+	return [3]int{len(reg.Agents), len(reg.Panes), len(reg.Windows)}
+}
+
+// A protected Agent survives the rollback of a reservation that could not freeze
+// its launch; the failure must still name it.
+func TestPublicReserveAgentProtectedFreezeFailureKeepsRecovery(t *testing.T) {
+	r := newReserveFixture(t)
+	ctx := reserveContext(t)
+	if err := os.MkdirAll(r.state, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(r.state, mutationruntime.ReservedLaunchSidecar), []byte("not a directory"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	req := r.request()
+	req.Labels = []string{coremetadata.LabelProtected + "=true"}
+	result, err := r.client.ReserveAgent(ctx, req)
+	var refusal *projmux.Refusal
+	var detail *projmux.CreateProcessError
+	if !errors.As(err, &refusal) || !errors.As(err, &detail) {
+		t.Fatalf("protected freeze failure: %v, want a Refusal reaching a CreateProcessError", err)
+	}
+	if refusal.AgentUID == "" || result.Binding.AgentUID != refusal.AgentUID || detail.Binding.AgentUID != refusal.AgentUID {
+		t.Fatalf("recovery identity lost: refusal %q result %q detail %q", refusal.AgentUID, result.Binding.AgentUID, detail.Binding.AgentUID)
+	}
+	reg, err := r.f.store.LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, ok := reg.Agent(refusal.AgentUID)
+	if !ok || !coremetadata.AgentProtected(*agent) {
+		t.Fatalf("the protected Agent was removed: %v", ok)
+	}
+}
+
+func TestPublicReserveAgentVerifyRejectionLeavesNothing(t *testing.T) {
+	r := newReserveFixture(t)
+	ctx := reserveContext(t)
+	before, err := r.f.store.LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutationruntime.ReserveVerifyHook = func(mutationruntime.ProcessDetachedReply) error { return errors.New("verification refused") }
+	t.Cleanup(func() { mutationruntime.ReserveVerifyHook = nil })
+	req := r.request()
+	req.Window = ""
+	req.NewWindow = &core.ReserveNewWindow{Name: "verify-refused"}
+	result, err := r.client.ReserveAgent(ctx, req)
+	if err == nil {
+		t.Fatal("a rejected reservation was accepted")
+	}
+	// The caller waited for the worker's own rollback before returning.
+	after, err2 := r.f.store.LoadReadOnly()
+	if err2 != nil {
+		t.Fatal(err2)
+	}
+	if registryCounts(before) != registryCounts(after) {
+		t.Fatalf("a rejected reservation left resources: %v -> %v", registryCounts(before), registryCounts(after))
+	}
+	if result.Binding.AgentUID != "" {
+		if _, e := os.Stat(r.launchPath(result.Binding.AgentUID)); !errors.Is(e, os.ErrNotExist) {
+			t.Fatalf("a rejected reservation left its frozen launch: %v", e)
+		}
+	}
+}
+
+func TestPublicReserveAgentCancelAfterPreparedLeavesNothing(t *testing.T) {
+	r := newReserveFixture(t)
+	ctx, cancel := context.WithCancel(reserveContext(t))
+	before, err := r.f.store.LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutationruntime.ReserveVerifyHook = func(mutationruntime.ProcessDetachedReply) error { cancel(); return nil }
+	t.Cleanup(func() { mutationruntime.ReserveVerifyHook = nil })
+	if _, err = r.client.ReserveAgent(ctx, r.request()); err == nil {
+		t.Fatal("a cancelled reservation was accepted")
+	}
+	after, err := r.f.store.LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if registryCounts(before) != registryCounts(after) {
+		t.Fatalf("a cancelled reservation left resources: %v -> %v", registryCounts(before), registryCounts(after))
 	}
 }
