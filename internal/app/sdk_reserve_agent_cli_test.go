@@ -177,7 +177,7 @@ func TestPublicReserveAgentRejectsCodex(t *testing.T) {
 	}
 }
 
-// A launch that cannot be frozen leaves no Agent, no Pane and no new Window.
+// A launch that cannot be frozen leaves nothing: a file where its directory belongs.
 func TestPublicReserveAgentRollsBackOnFailure(t *testing.T) {
 	r := newReserveFixture(t)
 	ctx := reserveContext(t)
@@ -185,7 +185,6 @@ func TestPublicReserveAgentRollsBackOnFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A regular file where the created-launches directory belongs refuses the freeze.
 	if err = os.MkdirAll(r.state, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +304,6 @@ func TestPublicReserveAgentVerifyRejectionLeavesNothing(t *testing.T) {
 	if err == nil {
 		t.Fatal("a rejected reservation was accepted")
 	}
-	// The caller waited for the worker's own rollback before returning.
 	after, err2 := r.f.store.LoadReadOnly()
 	if err2 != nil {
 		t.Fatal(err2)

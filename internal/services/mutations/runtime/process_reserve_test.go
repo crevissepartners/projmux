@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"errors"
 	"os/exec"
 	"strings"
 	"testing"
@@ -8,6 +9,7 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
+	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
 
 const (
@@ -26,7 +28,6 @@ func reserveRegistry(panes ...coremetadata.Pane) func() (coremetadata.Registry, 
 	return func() (coremetadata.Registry, error) { return coremetadata.Registry{Panes: panes}, nil }
 }
 
-// retiredWorker returns the identity of a process that has already exited.
 func retiredWorker(t *testing.T) coremetadata.ProcessIdentity {
 	t.Helper()
 	child := exec.Command("sleep", "30")
@@ -44,8 +45,30 @@ func retiredWorker(t *testing.T) coremetadata.ProcessIdentity {
 
 func TestReserveCleanupReportsRemainOfItsOperation(t *testing.T) {
 	err := AwaitDetachedProcessReserveCleanup(reserveRegistry(reservePane(reserveTestOperation)), retiredWorker(t), reserveTestOperation)
-	if err == nil || !strings.Contains(err.Error(), "process-reserve-remaining") || !strings.Contains(err.Error(), "agent uid:agent-r") || !strings.Contains(err.Error(), "pane uid:pane-r") || !strings.Contains(err.Error(), "window uid:win-r") {
-		t.Fatalf("remaining reservation: %v, want its exact refs", err)
+	var remains *ReserveRemains
+	if !errors.As(err, &remains) || remains.Operation != reserveTestOperation || remains.Binding.Agent != "agent-r" || remains.Binding.Pane != "pane-r" || remains.Binding.Window != "win-r" || remains.Binding.Operation != reserveTestOperation {
+		t.Fatalf("remaining reservation: %v, want a ReserveRemains with its exact Binding", err)
+	}
+	if !strings.Contains(err.Error(), "agent uid:agent-r") || !strings.Contains(err.Error(), "projmux delete agent uid:agent-r") {
+		t.Fatalf("remaining reservation text %q lacks its refs", err)
+	}
+}
+
+func TestReserveFailureCarriesTheBindingCleanupFound(t *testing.T) {
+	remainsErr := AwaitDetachedProcessReserveCleanup(reserveRegistry(reservePane(reserveTestOperation)), retiredWorker(t), reserveTestOperation)
+	reply, err := reserveFailure(ProcessDetachedReply{}, remainsErr)
+	var failure *ProcessCreateFailure
+	if !errors.As(err, &failure) || failure.Binding.Agent != "agent-r" || reply.Binding.Agent != "agent-r" || failure.Binding.Pane != "pane-r" {
+		t.Fatalf("failure %+v reply binding %+v, want the Binding cleanup found", failure, reply.Binding)
+	}
+	known := ProcessDetachedReply{Binding: processhost.Binding{Agent: "agent-reported"}}
+	reply, err = reserveFailure(known, remainsErr)
+	if !errors.As(err, &failure) || failure.Binding.Agent != "agent-reported" || reply.Binding.Agent != "agent-reported" {
+		t.Fatalf("a reported Binding was replaced: %+v", failure)
+	}
+	_, err = reserveFailure(ProcessDetachedReply{}, errors.New("plain"))
+	if !errors.As(err, &failure) || failure.Binding.Agent != "" {
+		t.Fatalf("a failure without remains invented a Binding: %+v", failure)
 	}
 }
 
@@ -80,8 +103,8 @@ func TestReserveCleanupKillsAWorkerThatOutlivesTheBound(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = AwaitDetachedProcessReserveCleanup(reserveRegistry(reservePane(reserveTestOperation)), identity, reserveTestOperation)
-	if err == nil || !strings.Contains(err.Error(), "was killed") || !strings.Contains(err.Error(), "process-reserve-remaining") {
-		t.Fatalf("outlived worker: %v, want a kill note and the remaining refs", err)
+	if err == nil || !strings.Contains(err.Error(), "kill attempted") || !strings.Contains(err.Error(), "it has exited") || !strings.Contains(err.Error(), "process-reserve-remaining") {
+		t.Fatalf("outlived worker: %v, want the kill attempt, its outcome and the remaining refs", err)
 	}
 	select {
 	case <-reaped:

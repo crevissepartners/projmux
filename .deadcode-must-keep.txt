@@ -491,6 +491,7 @@ Renderer.ContentLayout	Untitled entry point of ContentLayoutWithTitle retained a
 Renderer.RenderFrame	Untitled entry point of RenderFrameWithTitle retained as the frame geometry and CRLF golden seam.
 ReportNativeObserverStartup	Public v0 SDK native Codex create/resume observer closure for external frontends; the binary does not import pkg/projmux, covered by TestNativeObserverDiagnosticNormalizesEveryReceipt, TestSDKNativeCodexCreateObserverStaysOnItsTmuxServer (explicit-child-exits lane) and TestObserverFallbackJournalInstallsWhereTheJournalMayAppend.
 RequireActive	Test-only guard API retained: every test package that links the Registry store, a tmux runner, or provider exec code runs behind it.
+ReserveRemains.Error	Public ReserveAgent detached reservation closure: the typed remains of a failed reservation reach the SDK failure; the binary does not import pkg/projmux, covered by TestReserveCleanupReportsRemainOfItsOperation.
 ReservedKeymapAuthoringBase	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 ResetKeymapBinding	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 ResetKeymapKeys	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
@@ -936,6 +937,7 @@ renameTargetAllowed	Public v0 rename SDK entrypoint or exact-socket adapter; ret
 renderNativeInteractive	Cursor-at-end entry point of renderNativeInteractiveWithCursor retained as the native picker frame golden seam.
 renderNotifyBadge	Severity badge entry point retained as the test seam over the live renderNotifyBlockBadge palette.
 renderSettingsNavTree	Settings navigation tree renderer retained as the golden seam over the live settingsNavChildren topology.
+reserveFailure	Public ReserveAgent detached reservation closure: carries the Binding that cleanup found into the failure the SDK converts; the binary does not import pkg/projmux, covered by TestReserveFailureCarriesTheBindingCleanupFound.
 resolveLiveRoute	Client.SendMessage/MessageStatus resolve exact captured native/process Agent authority without an ambient actor.
 resolveProcessClaude	Client.SendMessage/MessageStatus prove the exact process Claude birth and live registration before using its route.
 resolveProcessCodex	Client.SendMessage/MessageStatus prove the exact process Codex binding and existing host before using its route.

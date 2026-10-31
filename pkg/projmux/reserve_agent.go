@@ -20,8 +20,8 @@ const CodeReserveProviderUnsupported Code = "reserve-provider-unsupported"
 //
 // A failure removes what the call created, including a new Window, and reports
 // what it could not remove (protection, the cleanup bound, a lost final reply):
-// the result carries the Binding when known, the Refusal the AgentUID, and
-// errors.As reaches a CreateProcessError. A reservation is final only on nil.
+// the result carries the Binding, the Refusal the AgentUID, and errors.As reaches
+// a CreateProcessError. A reservation is final only on nil.
 func (c *Client) ReserveAgent(ctx context.Context, req core.ReserveAgentRequest) (core.ReserveAgentResult, error) {
 	var result core.ReserveAgentResult
 	if err := ctx.Err(); err != nil {

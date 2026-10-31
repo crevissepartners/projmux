@@ -28,10 +28,10 @@ type ProcessDetachedCreateRequest struct {
 	RegistryPath string
 	Context      *ProcessCreateContext `json:",omitempty"`
 
-	// Reserve asks for a reservation only: Pending, frozen launch, no provider.
+	// Reserve asks for a reservation only: no provider.
 	Reserve bool `json:",omitempty"`
 
-	// ReserveOperation is the caller's operation id, to find remains it never saw.
+	// ReserveOperation is the caller's id, to find remains it never saw.
 	ReserveOperation string `json:",omitempty"`
 }
 
