@@ -15,8 +15,8 @@ import (
 const CodeReserveProviderUnsupported Code = "reserve-provider-unsupported"
 
 // ReserveAgent reserves one Claude process Agent in an existing or a new Window
-// and starts nothing: the Agent is Pending with its launch frozen. Starting a
-// reservation arrives in a later change, so until then it can only be deleted.
+// and starts nothing: the Agent is Pending with its launch frozen. StartReservedAgent
+// starts it; until then it can only be deleted.
 //
 // A failure removes what the call created, including a new Window, and reports
 // what it could not remove (protection, the cleanup bound, a lost final reply):

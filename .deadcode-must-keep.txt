@@ -28,6 +28,7 @@ ArchiveFiles	Read-only archive path projection retained for callers that observe
 AuditGoStringLiteralsInDir	Directory walker of the hardcoded-string governance audit; its subject is the live repository source, so the guard is test-entered by design rather than a retired product path.
 AuditGoStrings	In-memory entry point of the hardcoded-string governance audit retained with AuditGoStringLiteralsInDir as the guard that keeps catalog-bypassing literals out of shipped code.
 AwaitDetachedProcessReserveCleanup	Public ReserveAgent detached reservation closure: bounded wait for the no-provider worker to retire and report a remaining reservation by exact refs; the binary does not import pkg/projmux, covered by TestPublicReserveAgentVerifyRejectionLeavesNothing and TestPublicReserveAgentCancelAfterPreparedLeavesNothing.
+AwaitDetachedProcessStartCleanup	Shared runtime body of public Client.StartReservedAgent: waits for a failed start's worker and accepts only a kept, rolled-back or Offline result; proof fixtures: TestPublicStartReservedAgentRetriesAfterEarlyFailure and TestPublicStartReservedAgentLateFailureRollsBackLikeCreate.
 Binding.ControlAuthority	The snapshot-barrier control authority accessor is retained as the in-process mutation gate; the local IPC path fences inside Submit instead.
 Binding.valid	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
 Broker.WriteLedger	The mutation write ledger is retained as the observable no-replay evidence surface.
@@ -139,6 +140,7 @@ Client.SetAgentGuidanceEnabled	Public v0 global guidance editing SDK entrypoint 
 Client.SetAgentProtection	Public v0 exact Agent protection label facade; verified by CLI/SDK parity, locked transaction refusals and public-only consumers.
 Client.SetConfig	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 Client.SetStatusbarResources	Public v0 synchronous statusbar resources save/prepare/exact-app-socket apply; partial-result, captured-input, guarded-retirement, refusal and public consumer tests.
+Client.StartReservedAgent	Public v0 reserved process Agent start SDK entrypoint for external consumers; the binary does not import pkg/projmux, covered by TestPublicStartReservedAgentStartsFrozenLaunch and TestPublicStartReservedAgentRefusesWhatIsNotItsReservation.
 Client.StartTurn	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.
 Client.SteerTurn	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.
 Client.StopAgent	Public v0 process Stop API; exercised by exact-generation retirement, cancellation, explicit roots and external consumer tests.
@@ -260,6 +262,7 @@ ExecuteDetachedProcessCreate	Public Client.CreateAgent detached execution closur
 ExecuteDetachedProcessRelaunch	Public RelaunchAgent owned startup closure; SDK process fixture and external caller-exit tests cover exact source admission and independent lifetime.
 ExecuteDetachedProcessReserve	Public ReserveAgent detached reservation closure: the SDK asks the owned no-provider worker to reserve a Pending Claude process Agent; the binary does not import pkg/projmux, covered by TestPublicReserveAgentFreezesLaunchAndStaysPending, TestPublicReserveAgentRollsBackOnFailure and TestPublicReserveAgentVerifyRejectionLeavesNothing.
 ExecuteDetachedProcessResume	Public ResumeAgent detached startup closure shares CLI launch execution; external caller-exit and explicit-domain fixtures protect captured routing.
+ExecuteDetachedProcessStartReserved	Shared runtime entry of public Client.StartReservedAgent over the existing owner route; proof fixture: TestPublicStartReservedAgentStartsFrozenLaunch.
 ExecuteProcessResumePreparation	Public SDK child-free preparation executor using a directly reaped transient helper; lifecycle, cancellation and external consumer fixtures cover captured routing.
 ExplicitSocketRenamer	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
 FallbackProvenance	Read-only HUD provenance projection retained for callers of the usage snapshot seam.
@@ -939,6 +942,7 @@ renderNativeInteractive	Cursor-at-end entry point of renderNativeInteractiveWith
 renderNotifyBadge	Severity badge entry point retained as the test seam over the live renderNotifyBlockBadge palette.
 renderSettingsNavTree	Settings navigation tree renderer retained as the golden seam over the live settingsNavChildren topology.
 reserveFailure	Public ReserveAgent detached reservation closure: carries the Binding that cleanup found into the failure the SDK converts; the binary does not import pkg/projmux, covered by TestReserveFailureCarriesTheBindingCleanupFound.
+reservedProcessBinding	Helper of public Client.StartReservedAgent that reads the Binding a Pending Agent was reserved with before any worker starts; proof fixture: TestPublicStartReservedAgentRefusesWhatIsNotItsReservation.
 resolveLiveRoute	Client.SendMessage/MessageStatus resolve exact captured native/process Agent authority without an ambient actor.
 resolveProcessClaude	Client.SendMessage/MessageStatus prove the exact process Claude birth and live registration before using its route.
 resolveProcessCodex	Client.SendMessage/MessageStatus prove the exact process Codex binding and existing host before using its route.
@@ -968,6 +972,7 @@ shellJoin	Shell argv joiner behind the retained ResumeAdapter.ResumeCommand rend
 shellQuote	Shell quoting helper behind the retained ResumeAdapter.ResumeCommand renderer.
 socketReplaced	Public v0 process observation SDK closure for external frontends (ReadAgentProcess and ReadAgentProcessEvents); the binary does not import pkg/projmux, covered by TestPublicProcessObserverGenerationGapAndTerminal, TestPublicProcessObserverCancelDoesNotStop, TestPublicProcessFailureCodesAndCauses, TestPublicProcessOwnerGoneReasons, TestPublicProcessSnapshotInterruptParity and TestPublicProcessObserverSettlesAndBoundsReads.
 sortNameReservations	Stable reservation ordering used by the retained rebuildMissingReservations migration proof.
+startSettled	Helper of AwaitDetachedProcessStartCleanup that classifies what a failed start left; proof fixtures: TestPublicStartReservedAgentRetriesAfterEarlyFailure and TestPublicStartReservedAgentLateFailureRollsBackLikeCreate.
 statusbarAuxLineFormat	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 statusbarAuxLineFormatWithVisibility	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 statusbarCwdDecoratorFormat	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
