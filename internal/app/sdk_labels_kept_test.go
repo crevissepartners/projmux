@@ -115,4 +115,3 @@ func TestPublicRelaunchAgentKeepsLabels(t *testing.T) {
 	}
 	requireKeptAgentLabels(t, f, uid, "after move back to tmux")
 }
-
