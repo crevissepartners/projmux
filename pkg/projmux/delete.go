@@ -237,6 +237,7 @@ func deleteRefusal(code Code, err error) error {
 	}
 	return &Refusal{Code: code, AgentUID: protectedAgentUID, message: err.Error(), cause: err}
 }
+
 // deleteTmuxOnly refuses what reaches the tmux path with a process resource in
 // it. Process-only plans were routed to deleteProcess before this runs, so what
 // is left mixes tmux and process resources, or is an Agent with no process Pane.
