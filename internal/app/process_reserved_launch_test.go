@@ -83,8 +83,7 @@ func mustJSON(t *testing.T, v any) []byte {
 	return data
 }
 
-// A binary that predates the created-launches kind reads only deferred-launches
-// and deferred-claims, so a reservation's file is neither read nor changed by it.
+// A binary that predates created-launches never reads or changes its file.
 func TestDeferredLaunchReaderIgnoresCreatedLaunches(t *testing.T) {
 	registryPath, path, record := reservedLaunchFixture(t)
 	if err := writeCreatedLaunch(path, record); err != nil {
@@ -106,9 +105,8 @@ func TestDeferredLaunchReaderIgnoresCreatedLaunches(t *testing.T) {
 	}
 }
 
-// Only a reservation request carries Reserve; every other request is the same
-// bytes it was before, so an installed executable that rejects unknown fields
-// still accepts it, and refuses a reservation request without any effect.
+// Only a reservation request carries Reserve, so an executable that rejects
+// unknown fields still accepts every other request and refuses this one.
 func TestReserveWireFieldIsOmittedUnlessSet(t *testing.T) {
 	plain := mustJSON(t, processDetachedRequest{})
 	if bytes.Contains(plain, []byte("Reserve")) {

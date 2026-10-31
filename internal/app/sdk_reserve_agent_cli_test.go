@@ -253,8 +253,7 @@ func registryCounts(reg coremetadata.Registry) [3]int {
 	return [3]int{len(reg.Agents), len(reg.Panes), len(reg.Windows)}
 }
 
-// A protected Agent survives the rollback of a reservation that could not freeze
-// its launch; the failure must still name it.
+// A protected Agent survives rollback; the failure must still name it.
 func TestPublicReserveAgentProtectedFreezeFailureKeepsRecovery(t *testing.T) {
 	r := newReserveFixture(t)
 	ctx := reserveContext(t)
@@ -292,7 +291,12 @@ func TestPublicReserveAgentVerifyRejectionLeavesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mutationruntime.ReserveVerifyHook = func(mutationruntime.ProcessDetachedReply) error { return errors.New("verification refused") }
+	mutationruntime.ReserveVerifyHook = func(ready mutationruntime.ProcessDetachedReply) error {
+		if ready.Binding.Agent == "" {
+			return errors.New("the prepared reply carried no Binding")
+		}
+		return errors.New("verification refused")
+	}
 	t.Cleanup(func() { mutationruntime.ReserveVerifyHook = nil })
 	req := r.request()
 	req.Window = ""
@@ -323,7 +327,12 @@ func TestPublicReserveAgentCancelAfterPreparedLeavesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mutationruntime.ReserveVerifyHook = func(mutationruntime.ProcessDetachedReply) error { cancel(); return nil }
+	prepared := ""
+	mutationruntime.ReserveVerifyHook = func(ready mutationruntime.ProcessDetachedReply) error {
+		prepared = ready.Binding.Agent
+		cancel()
+		return nil
+	}
 	t.Cleanup(func() { mutationruntime.ReserveVerifyHook = nil })
 	if _, err = r.client.ReserveAgent(ctx, r.request()); err == nil {
 		t.Fatal("a cancelled reservation was accepted")
@@ -334,5 +343,11 @@ func TestPublicReserveAgentCancelAfterPreparedLeavesNothing(t *testing.T) {
 	}
 	if registryCounts(before) != registryCounts(after) {
 		t.Fatalf("a cancelled reservation left resources: %v -> %v", registryCounts(before), registryCounts(after))
+	}
+	if prepared == "" {
+		t.Fatal("the reservation was never prepared, so the cancel did not follow it")
+	}
+	if _, err = os.Stat(r.launchPath(prepared)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a cancelled reservation left its frozen launch: %v", err)
 	}
 }

@@ -704,6 +704,7 @@ aiSummaryForKind	Fallback-locale entry point of aiSummaryForKindLocale retained 
 applyCodexForeground	Internal foreground process control retained for exact per-user IPC and provider fixture proof before public activation.
 approvalRefusal	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 archiveRoute	Client.ReadMessageArchive copies opaque routes to independent public values.
+awaitDetachedOwnerGone	Public ReserveAgent detached reservation closure: bounded wait for the no-provider worker to retire; the binary does not import pkg/projmux, covered by TestReserveCleanupReportsRemainOfItsOperation and TestReserveCleanupKillsAWorkerThatOutlivesTheBound.
 boundedBuffer.Bytes	Test-only installed qualification helper retained for bounded public status decoding.
 boundedBuffer.Write	Test-only installed qualification helper retained for bounded installed command capture.
 buildFocusURI	Round-trip counterpart of the retained focus URI parser; the test pins that the shipped parser accepts the documented format.
@@ -793,6 +794,7 @@ isolatedEnvironment	Test-only installed qualification helper retained for CODEX_
 keyBindingSequenceTransportChords	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 keySequenceRetireCommandsWithPrefix	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 keySequenceTableName	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+killDetachedOwner	Public ReserveAgent detached reservation closure: kills a worker that outlived the cleanup bound after re-proving its identity; the binary does not import pkg/projmux, covered by TestReserveCleanupKillsAWorkerThatOutlivesTheBound.
 legacyDesktopAppID	The retired desktop application identifier remains required to recognize and clean legacy integration state.
 legacyWindowAttentionRows	Legacy attention rows remain required while older persisted window attention state is readable.
 linkRulesFileIdentity	Public v0 Project link rules by UID SDK entrypoint or its adapter (ReadProjectLinkRulesByUID); reachable from external consumers rather than the CLI binary; covered by Registry-free read, file identity stability/replacement, cause-preserving unreadable refusal, cancellation order and GOWORK=off consumer tests.

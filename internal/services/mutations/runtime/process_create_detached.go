@@ -27,9 +27,12 @@ type ProcessDetachedCreateRequest struct {
 	Caller       coremetadata.ProcessIdentity
 	RegistryPath string
 	Context      *ProcessCreateContext `json:",omitempty"`
-	// Reserve asks the owner route for a reservation only: the Agent is
-	// created Pending with a frozen launch and no provider process.
+
+	// Reserve asks for a reservation only: Pending, frozen launch, no provider.
 	Reserve bool `json:",omitempty"`
+
+	// ReserveOperation is the caller's operation id, to find remains it never saw.
+	ReserveOperation string `json:",omitempty"`
 }
 
 type ProcessCreateCommitted struct {

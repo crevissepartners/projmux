@@ -11,21 +11,17 @@ import (
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
 )
 
-// CodeReserveProviderUnsupported refuses a reservation whose provider is not
-// Claude. Nothing was created.
+// CodeReserveProviderUnsupported refuses a reservation that is not Claude.
 const CodeReserveProviderUnsupported Code = "reserve-provider-unsupported"
 
 // ReserveAgent reserves one Claude process Agent in an existing or a new Window
-// and starts nothing. The Agent is Pending with its launch frozen in the
-// created-launches store; deleting it with DeleteAgent removes that launch.
-// Starting a reservation is a separate entry that arrives in a later change, so
-// until then a reservation can only be deleted.
+// and starts nothing: the Agent is Pending with its launch frozen. Starting a
+// reservation arrives in a later change, so until then it can only be deleted.
 //
-// The reservation is committed only when this call returns without an error. A
-// failure removes what the call created, including a new Window, except what
-// Agent protection keeps. A failure that leaves a reservation behind names it:
-// the result carries its Binding, the Refusal carries its AgentUID, and
-// errors.As reaches a CreateProcessError with the exact refs.
+// A failure removes what the call created, including a new Window, and reports
+// what it could not remove (protection, the cleanup bound, a lost final reply):
+// the result carries the Binding when known, the Refusal the AgentUID, and
+// errors.As reaches a CreateProcessError. A reservation is final only on nil.
 func (c *Client) ReserveAgent(ctx context.Context, req core.ReserveAgentRequest) (core.ReserveAgentResult, error) {
 	var result core.ReserveAgentResult
 	if err := ctx.Err(); err != nil {

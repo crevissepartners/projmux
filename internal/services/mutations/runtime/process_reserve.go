@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -16,13 +17,10 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
 
-// ReservedLaunchSidecar is the sidecar kind that holds the frozen launch of a
-// reserved process Agent. It is a sibling of the deferred-launches kind and
-// shares no file with it.
+// ReservedLaunchSidecar is the sidecar kind of a frozen launch.
 const ReservedLaunchSidecar = "created-launches"
 
-// CreatedLaunchPath is the frozen launch file of one reserved Agent. It sits
-// next to the deferred-claims directory, named by the digest of the Agent UID.
+// CreatedLaunchPath is the frozen launch file of one reserved Agent.
 func CreatedLaunchPath(registryPath, uid string) string {
 	if registryPath == "" {
 		return ""
@@ -31,8 +29,7 @@ func CreatedLaunchPath(registryPath, uid string) string {
 	return filepath.Join(filepath.Dir(filepath.Dir(registryPath)), ReservedLaunchSidecar, fmt.Sprintf("%x.json", digest[:]))
 }
 
-// RemoveCreatedLaunch deletes the frozen launch of a deleted Agent. A missing
-// file is success. The caller holds the Agent's deferred-claim guard.
+// RemoveCreatedLaunch deletes a deleted Agent's frozen launch; missing is success.
 func RemoveCreatedLaunch(registryPath, uid string) error {
 	path := CreatedLaunchPath(registryPath, uid)
 	if path == "" {
@@ -44,9 +41,8 @@ func RemoveCreatedLaunch(registryPath, uid string) error {
 	return nil
 }
 
-// ExecuteDetachedProcessReserve asks the internal owner route to reserve one
-// Pending process Agent and freeze its launch. The worker owns no provider and
-// is reaped before this returns; the reservation exists only after it commits.
+// ExecuteDetachedProcessReserve asks the owner route to reserve one Pending
+// process Agent and freeze its launch. The worker owns no provider.
 func ExecuteDetachedProcessReserve(ctx context.Context, frozen ProcessCreateContext, options ProcessAgentCreateOptions) (reply ProcessDetachedReply, err error) {
 	if err = ctx.Err(); err != nil {
 		return reply, err
@@ -73,9 +69,13 @@ func ExecuteDetachedProcessReserve(ctx context.Context, frozen ProcessCreateCont
 	if err != nil {
 		return reply, err
 	}
+	operation, err := intmetadata.NewOperationID()
+	if err != nil {
+		return reply, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, ProcessDetachedStartupTimeout)
 	defer cancel()
-	wire := ProcessDetachedCreateRequest{Options: request.Options, Output: "none", Caller: caller, RegistryPath: storage.Path(), Context: &frozen, Reserve: true}
+	wire := ProcessDetachedCreateRequest{Options: request.Options, Output: "none", Caller: caller, RegistryPath: storage.Path(), Context: &frozen, Reserve: true, ReserveOperation: operation}
 	launcher := ProcessDetachedLauncher{Transient: true, Executable: frozen.Executable, Environment: frozen.Environment, PayloadDir: frozen.Paths.StateDir, Verify: func(ready ProcessDetachedReply, _ coremetadata.ProcessIdentity) error {
 		if err := VerifyDetachedProcessReserve(storage.LoadReadOnly, ready); err != nil {
 			return err
@@ -85,7 +85,7 @@ func ExecuteDetachedProcessReserve(ctx context.Context, frozen ProcessCreateCont
 		}
 		return nil
 	}, Cleanup: func(owner coremetadata.ProcessIdentity, ready ProcessDetachedReply) error {
-		return AwaitDetachedProcessReserveCleanup(storage.LoadReadOnly, owner, ready.Binding)
+		return AwaitDetachedProcessReserveCleanup(storage.LoadReadOnly, owner, operation)
 	}}
 	reply, err = launcher.Launch(ctx, wire, io.Discard, io.Discard)
 	if err != nil {
@@ -99,7 +99,7 @@ func ExecuteDetachedProcessReserve(ctx context.Context, frozen ProcessCreateCont
 }
 
 // VerifyDetachedProcessReserve proves the prepared reply names a Pending Agent
-// with its reserved Binding and no activation, so no provider process exists.
+// with its reserved Binding and no activation.
 func VerifyDetachedProcessReserve(load func() (coremetadata.Registry, error), ready ProcessDetachedReply) error {
 	if len(ready.Claim) != 0 || ready.Result == nil {
 		return processhost.ErrStale
@@ -120,36 +120,75 @@ func VerifyDetachedProcessReserve(load func() (coremetadata.Registry, error), re
 }
 
 
-// ReserveVerifyHook is a test seam that runs after the built-in verification of
-// a prepared reservation; a non-nil result rejects the reservation. Production
-// code never sets it.
+// ReserveVerifyHook is a test seam: a non-nil result rejects a prepared reservation.
 var ReserveVerifyHook func(ProcessDetachedReply) error
 
-// AwaitDetachedProcessReserveCleanup waits, within one bounded period, for the
-// reservation worker to retire. The worker rolls its own reservation back before
-// it exits, so a reservation that still names binding afterwards is reported
-// with its exact refs rather than assumed gone.
-func AwaitDetachedProcessReserveCleanup(load func() (coremetadata.Registry, error), owner coremetadata.ProcessIdentity, binding processhost.Binding) error {
-	ctx, cancel := context.WithTimeout(context.Background(), ProcessAgentStopTimeout)
+var reserveOperationPattern = regexp.MustCompile(`^op-[0-9a-f]{16}$`)
+
+// ValidReserveOperation reports whether id has the shape of a minted operation id.
+func ValidReserveOperation(id string) bool { return reserveOperationPattern.MatchString(id) }
+
+// reserveCleanupBound and reserveKillSettle bound the wait for a worker to retire.
+var (
+	reserveCleanupBound = ProcessAgentStopTimeout
+	reserveKillSettle   = 2 * time.Second
+)
+
+func awaitDetachedOwnerGone(owner coremetadata.ProcessIdentity, bound time.Duration) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), bound)
 	defer cancel()
 	ticker := time.NewTicker(ProcessAgentStopPoll)
 	defer ticker.Stop()
 	for !ProcessIdentityAbsent(owner, localipc.Process) {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("process-reserve-cleanup-unconfirmed: reservation worker pid %d start %s is still running: %w", owner.PID, owner.Start, ctx.Err())
+			return ProcessIdentityAbsent(owner, localipc.Process)
 		case <-ticker.C:
 		}
 	}
-	if binding.Agent == "" {
-		return nil
+	return true
+}
+
+func killDetachedOwner(owner coremetadata.ProcessIdentity) {
+	current, _, err := localipc.Process(owner.PID)
+	if err != nil || current != owner {
+		return
+	}
+	if process, err := os.FindProcess(owner.PID); err == nil {
+		_ = process.Kill()
+	}
+}
+
+// AwaitDetachedProcessReserveCleanup waits one bound for the worker to retire,
+// kills it past the bound, then reports what this operation id left in the
+// Registry. Another operation's resources are never reported; nil means it looked.
+func AwaitDetachedProcessReserveCleanup(load func() (coremetadata.Registry, error), owner coremetadata.ProcessIdentity, operation string) error {
+	if !ValidReserveOperation(operation) {
+		return errors.New("process-reserve-cleanup-undetermined: the reservation has no valid operation id")
+	}
+	note := ""
+	gone := awaitDetachedOwnerGone(owner, reserveCleanupBound)
+	if !gone {
+		killDetachedOwner(owner)
+		gone = awaitDetachedOwnerGone(owner, reserveKillSettle)
+		note = fmt.Sprintf("the reservation worker pid %d start %s outlived the cleanup bound and was killed; ", owner.PID, owner.Start)
 	}
 	reg, err := load()
 	if err != nil {
-		return err
+		return fmt.Errorf("process-reserve-cleanup-undetermined: %soperation %s: %w", note, operation, err)
 	}
-	if _, remains := reg.Agent(binding.Agent); remains {
-		return fmt.Errorf("process-reserve-remaining: agent uid:%s pane uid:%s window uid:%s remain after a failed reservation; inspect with projmux describe agent uid:%s; cleanup: projmux delete agent uid:%s", binding.Agent, binding.Pane, binding.Window, binding.Agent, binding.Agent)
+	for _, pane := range reg.Panes {
+		session := pane.Status.ProcessSession
+		if session == nil || session.Binding.OperationID != operation {
+			continue
+		}
+		return fmt.Errorf("process-reserve-remaining: %sagent uid:%s pane uid:%s window uid:%s remain after a failed reservation (operation %s); inspect with projmux describe agent uid:%s; cleanup: projmux delete agent uid:%s", note, pane.Metadata.OwnerUID(), pane.Metadata.UID, session.Binding.WindowUID, operation, pane.Metadata.OwnerUID(), pane.Metadata.OwnerUID())
+	}
+	if !gone {
+		return fmt.Errorf("process-reserve-cleanup-unconfirmed: %sthe worker is still running; remaining reservation undetermined, operation %s", note, operation)
+	}
+	if note != "" {
+		return fmt.Errorf("process-reserve-worker-killed: %sno reservation of operation %s remains", note, operation)
 	}
 	return nil
 }

@@ -8,10 +8,9 @@ type ReserveNewWindow struct {
 }
 
 // ReserveAgentRequest reserves one Claude process Agent in a Project without
-// starting it. Exactly one of Window (an existing Window) and NewWindow (a new
-// Window the reservation owns) is set. The fields shared with CreateAgentRequest
-// mean what they mean there; there is no Host, Detach, Pane, Placement or
-// Payload, because a reservation takes no first input and starts no process.
+// starting it. Exactly one of Window and NewWindow is set. Shared fields mean
+// what they mean in CreateAgentRequest; there is no Host, Detach, Pane,
+// Placement or Payload.
 type ReserveAgentRequest struct {
 	Project string
 	// Window names an existing Window of Project.
@@ -27,8 +26,8 @@ type ReserveAgentRequest struct {
 	Creator, SocketPath                            string
 }
 
-// ReserveAgentResult identifies the reserved Agent. Its Agent is Pending, no
-// process exists, and Binding is the generation a later start must present.
+// ReserveAgentResult identifies the reserved Agent: Pending, no process, with
+// the Binding a later start must present.
 type ReserveAgentResult struct {
 	Binding    ProcessBinding
 	Agent      Agent

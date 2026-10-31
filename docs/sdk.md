@@ -644,28 +644,25 @@ store is not empty, and never touches an owner socket.
 
 `Client.ReserveAgent(ctx, core.ReserveAgentRequest{...})` creates one Claude
 process Agent in `Pending` with its launch frozen and starts no provider
-process. The entry that starts a reservation comes in a later change; until it
-exists a reservation can only be deleted.
+process. The entry that starts it comes in a later change; until then a
+reservation can only be deleted.
 
 - Exactly one of `Window` (an existing Window of `Project`) and `NewWindow`
-  (`core.ReserveNewWindow{Name, Labels}`, a Window created with the
-  reservation) is set; any other shape is `create-request-invalid`. There is no
-  `Host`, `Detach`, `Pane`, `Placement` or `Payload`.
-- The result carries the reserved `Binding`, `Agent` and receipt; the Agent has
-  no activation.
-- The frozen launch is a private file (mode 0600, at most 64 KiB) in the
-  `created-launches` store, named by the digest of the Agent UID. It shares no
-  file with `deferred-launches`. A launch that cannot be frozen fails the
+  (`core.ReserveNewWindow{Name, Labels}`) is set, else `create-request-invalid`.
+  There is no `Host`, `Detach`, `Pane`, `Placement` or `Payload`.
+- The result carries the reserved `Binding`, `Agent` and receipt.
+- The frozen launch is a private file (0600, at most 64 KiB) in the
+  `created-launches` store, apart from `deferred-launches`. A launch that cannot
+  be frozen fails the
   reservation and removes the Agent, its Pane and a Window the call created,
-  except a protected Agent, which stays. A failure that leaves a reservation
-  behind sets `Refusal.AgentUID` and the result's `Binding`, and `errors.As`
-  reaches a `CreateProcessError` with the exact refs.
+  except what could not be removed: a protected Agent, a worker that outlived the
+  cleanup bound, or a lost final reply. The failure then names the remains by
+  exact refs, sets `Refusal.AgentUID` and the result's `Binding` when known, and
+  `errors.As` reaches a `CreateProcessError`.
 - Another provider is a `reserve-provider-unsupported` refusal.
 - `Delete` of a reserved Agent removes its frozen launch, and with the last
-  Agent of a new Window the Window. A launch that could not be removed after the
-  deletion committed is reported in the result's `Notice`; the deletion stays.
-- An installed projmux executable built before this entry rejects a reservation
-  request, which carries a field no other request has, before any effect.
+  Agent of a new Window the Window. A launch left behind is reported in `Notice`.
+- An older executable rejects a reservation request before any effect.
 
 ## Mark a process Agent whose host died offline
 

@@ -16,10 +16,8 @@ import (
 
 const reservedLaunchVersion = 1
 
-// createdLaunchRecord is the frozen launch of a reserved process Agent. It holds
-// the resolved command and the proofs of the snapshot files that command names,
-// never a first frame. Its file is private to the created-launches kind and
-// shares nothing with the deferred-launches kind.
+// createdLaunchRecord is the frozen launch of a reserved process Agent: the
+// resolved command and the proofs of the snapshot files it names, never a frame.
 type createdLaunchRecord struct {
 	Version       int
 	Binding       processhost.Binding
@@ -27,8 +25,7 @@ type createdLaunchRecord struct {
 	CreatedWindow bool
 	Command       processhost.Command
 	Files         map[string]string
-	// Starting is set under the Agent's claim guard by the one start that owns
-	// the reservation.
+	// Starting marks the one start that owns the reservation.
 	Starting bool `json:",omitempty"`
 }
 
@@ -46,9 +43,8 @@ func readCreatedLaunch(path string) (*createdLaunchRecord, error) {
 }
 
 // reserveProcessLaunch creates one Pending Claude process Agent and freezes its
-// launch. No provider process exists afterwards. A failure removes the
-// reservation and the frozen launch before it returns.
-func (c *createCommand) reserveProcessLaunch(ctx context.Context, opts processAgentCreateOptions) (processAgentCreateResult, error) {
+// launch; a failure removes both before it returns.
+func (c *createCommand) reserveProcessLaunch(ctx context.Context, opts processAgentCreateOptions, operation string) (processAgentCreateResult, error) {
 	plan, err := c.planProcessAgent(opts)
 	if err != nil {
 		return processAgentCreateResult{}, err
@@ -57,10 +53,6 @@ func (c *createCommand) reserveProcessLaunch(ctx context.Context, opts processAg
 		return processAgentCreateResult{}, &mutationruntime.AgentCreateRefusal{Reason: "reserve-provider-unsupported", Message: "reserve agent: only a Claude process Agent can be reserved; nothing was created"}
 	}
 	stateDir, err := c.store.stateDir()
-	if err != nil {
-		return processAgentCreateResult{}, err
-	}
-	operation, err := newCreateOperationID()
 	if err != nil {
 		return processAgentCreateResult{}, err
 	}
@@ -107,8 +99,7 @@ func freezeCreatedLaunch(registryPath string, plan processAgentCreatePlan, resul
 	return nil
 }
 
-// failReservedLaunch removes an unstarted reservation, its Window when the
-// reservation created one, and its frozen launch.
+// failReservedLaunch removes an unstarted reservation and its frozen launch.
 func (c *createCommand) failReservedLaunch(result *processAgentCreateResult, cause error) error {
 	cleanup := c.failProcessCreate(result, cause)
 	unlock, lockErr := lockDeferredClaim(mutationruntime.DeferredClaimPath(result.registryPath, result.Binding.Agent))
@@ -119,9 +110,8 @@ func (c *createCommand) failReservedLaunch(result *processAgentCreateResult, cau
 	return errors.Join(cleanup, mutationruntime.RemoveCreatedLaunch(result.registryPath, result.Binding.Agent))
 }
 
-// runProcessDetachedReserve is the no-provider worker of ReserveAgent: it
-// reserves, reports the committed Agent, and keeps the reservation only when
-// the caller commits.
+// runProcessDetachedReserve is ReserveAgent's no-provider worker; it keeps the
+// reservation only when the caller commits.
 func runProcessDetachedReserve(conn net.Conn, encoder *json.Encoder, decoder *json.Decoder, req processDetachedRequest, identity coremetadata.ProcessIdentity, command *createCommand) error {
 	reject := func(result *processAgentCreateResult, cause error) error {
 		binding := processhost.Binding{}
@@ -142,10 +132,9 @@ func runProcessDetachedReserve(conn net.Conn, encoder *json.Encoder, decoder *js
 	defer cancel()
 	timer := time.AfterFunc(processDetachedStartupTimeout, cancel)
 	defer timer.Stop()
-	result, err := command.reserveProcessLaunch(life, request.options)
+	result, err := command.reserveProcessLaunch(life, request.options, req.ReserveOperation)
 	if err != nil {
-		// A failed reservation keeps its Binding in the reply: a protected
-		// Agent survives rollback and the caller needs its exact refs.
+		// A protected Agent survives rollback; the reply keeps its Binding.
 		return reject(&result, err)
 	}
 	rollback := func(cause error) error {
