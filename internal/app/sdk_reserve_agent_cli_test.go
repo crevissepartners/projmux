@@ -24,6 +24,7 @@ type reserveFixture struct {
 
 func newReserveFixture(t *testing.T) reserveFixture {
 	t.Helper()
+	copiedCLI(t, "PMX_TEST_CLI")
 	f := newProcessCreateCLI(t)
 	state := filepath.Join(f.root, "state", "projmux")
 	c, err := projmux.NewClient(projmux.Options{HomeDir: f.root, ConfigDir: filepath.Join(f.root, "config", "projmux"), StateDir: state, ProjmuxExecutable: f.binary})
