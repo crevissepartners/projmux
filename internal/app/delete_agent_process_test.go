@@ -17,6 +17,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 // processDeleteFixture turns the session harness Agent into a live process
@@ -301,6 +302,43 @@ func TestProcessDeleteLeavesTmuxAgentRouteUnchanged(t *testing.T) {
 	paneless := deletePlan{Kind: coremetadata.KindAgent, ExactUID: true, Targets: []deleteTarget{{Match: only.Targets[0].Match}}}
 	if tmuxPane == "" || tmuxPane == pane || isProcessAgentPlan(*process, mixed) || isProcessAgentPlan(*process, paneless) {
 		t.Fatalf("a plan with a tmux or no Pane took the process route (anchor %q)", tmuxPane)
+	}
+}
+
+// The virtual-Window admission is shared with the public SDK, so its edges are
+// pinned where the CLI fixture already builds a process Agent beside a tmux Pane.
+func TestVirtualProcessPlanAdmitsOnlyProcessWindowsAndPanes(t *testing.T) {
+	process, agent, pane := processDeleteFixture(t, aiModeClaude)
+	a, _ := process.Agent(agent)
+	window, _ := process.Window(a.Metadata.OwnerUID())
+	tmuxPane := window.Spec.AnchorPaneRef
+	if tmuxPane == "" || tmuxPane == pane || process.IsVirtualWindow(window.Metadata.UID) {
+		t.Fatalf("fixture window must be tmux-anchored (anchor %q)", tmuxPane)
+	}
+	panePlan := func(uid string, descendants ...deleteDescendant) deletePlan {
+		return deletePlan{Kind: coremetadata.KindPane, ExactUID: true, Targets: []deleteTarget{{Match: selector.Match{Kind: coremetadata.KindPane, UID: uid}, Descendants: descendants}}}
+	}
+	cases := []struct {
+		name string
+		plan deletePlan
+		want bool
+	}{
+		{"empty", deletePlan{Kind: coremetadata.KindPane}, false},
+		{"agent-kind", deletePlan{Kind: coremetadata.KindAgent, ExactUID: true, Targets: []deleteTarget{{Match: selector.Match{Kind: coremetadata.KindAgent, UID: agent}}}}, false},
+		{"process-pane", panePlan(pane), true},
+		{"process-pane-with-tmux-descendant", panePlan(pane, deleteDescendant{Kind: coremetadata.KindPane, UID: tmuxPane}), false},
+		{"tmux-pane", panePlan(tmuxPane), false},
+		{"tmux-anchored-window", deletePlan{Kind: coremetadata.KindWindow, ExactUID: true, Targets: []deleteTarget{{Match: selector.Match{Kind: coremetadata.KindWindow, UID: window.Metadata.UID}}}}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := mutationruntime.IsVirtualProcessPlan(*process, tc.plan); got != tc.want {
+				t.Fatalf("IsVirtualProcessPlan=%t want %t", got, tc.want)
+			}
+			if got := isVirtualDeletePlan(*process, tc.plan); got != tc.want {
+				t.Fatalf("CLI isVirtualDeletePlan=%t want %t", got, tc.want)
+			}
+		})
 	}
 }
 
