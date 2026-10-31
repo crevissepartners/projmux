@@ -23,6 +23,7 @@ FILES = (
     "sdk_resume_process_cli_test.go",
     "sdk_relaunch_process_cli_test.go",
     "sdk_labels_kept_test.go",
+    "sdk_reserve_agent_cli_test.go",
     "process_codex_host_upgrade_cli_test.go",
     "process_detached_relaunch_cli_test.go",
     "project_stop_process_cli_test.go",

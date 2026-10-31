@@ -194,6 +194,7 @@ type processDeleteOutcome struct {
 	Targets  []processDeleteTarget
 	Affected []DeletionAffected
 	Actor    DeletionActor
+	Notices  []string
 }
 
 //lint:ignore U1000 Retain the metadata predicate adapter for existing internal process-control consumers; the shared delete executor also verifies kernel retirement.
@@ -236,7 +237,7 @@ func (d *processAgentDeleter) execute(ctx context.Context, p deletePlan, targets
 		shared[i] = t.shared()
 	}
 	result, err := d.shared().Execute(ctx, mutationruntime.DeletePlan(p), shared, actor)
-	out := processDeleteOutcome{Affected: result.Affected, Actor: result.Actor}
+	out := processDeleteOutcome{Affected: result.Affected, Actor: result.Actor, Notices: result.Notices}
 	for _, t := range result.Targets {
 		out.Targets = append(out.Targets, processDeleteTargetFromShared(t))
 	}
@@ -245,6 +246,9 @@ func (d *processAgentDeleter) execute(ctx context.Context, p deletePlan, targets
 func (d *processAgentDeleter) record(outcome processDeleteOutcome, plan deletePlan, operationID string, stderr io.Writer) {
 	recordDeletion(d.store, newDeletionRecord(childDeletionOperation(plan.Kind), operationID, d.via, outcome.Actor,
 		deletionTargetsOf(plan), outcome.Affected), stderr)
+	for _, notice := range outcome.Notices {
+		_, _ = fmt.Fprintln(stderr, notice)
+	}
 }
 
 func (d *processAgentDeleter) deleteOne(ctx context.Context, req processAgentDeleteRequest) (processAgentDeleteResult, error) {

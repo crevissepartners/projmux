@@ -30,15 +30,17 @@ const processDetachedLogLimit = 64 << 10
 // task) is an unlinked private file; the handshake is a private duplex fd.
 // The intermediate launcher never owns a provider and exits before success.
 type processDetachedRequest struct {
-	RelaunchContext *mutationruntime.ProcessCreateContext `json:",omitempty"`
-	Relaunch        *processDetachedRelaunchRequest       `json:",omitempty"`
-	Resume          *processDetachedResumeRequest         `json:",omitempty"`
-	Options         processAgentCreateOptions
-	Output          cli.OutputMode
-	Caller          coremetadata.ProcessIdentity
-	RegistryPath    string
-	Context         *mutationruntime.ProcessCreateContext `json:",omitempty"`
-	ResumeContext   *mutationruntime.ProcessCreateContext `json:",omitempty"`
+	RelaunchContext  *mutationruntime.ProcessCreateContext `json:",omitempty"`
+	Relaunch         *processDetachedRelaunchRequest       `json:",omitempty"`
+	Resume           *processDetachedResumeRequest         `json:",omitempty"`
+	Options          processAgentCreateOptions
+	Output           cli.OutputMode
+	Caller           coremetadata.ProcessIdentity
+	RegistryPath     string
+	Context          *mutationruntime.ProcessCreateContext `json:",omitempty"`
+	ResumeContext    *mutationruntime.ProcessCreateContext `json:",omitempty"`
+	Reserve          bool                                  `json:",omitempty"`
+	ReserveOperation string                                `json:",omitempty"`
 }
 type processDetachedReply struct {
 	Preparation           *mutationruntime.ProcessResumePreparation `json:",omitempty"`
@@ -206,6 +208,15 @@ func runProcessDetachedEntry(route string, command *createCommand, resume *agent
 	}
 	if req.RegistryPath != intmetadata.PathFor(stateDir) {
 		return errors.New("process-detached-registry-mismatch")
+	}
+	if !req.Reserve && req.ReserveOperation != "" {
+		return errors.New("process-detached-reserve-operation-unexpected")
+	}
+	if req.Reserve {
+		if req.Context == nil || req.Resume != nil || req.Relaunch != nil || !mutationruntime.ValidReserveOperation(req.ReserveOperation) {
+			return errors.New("process-detached-reserve-sdk-only")
+		}
+		return runProcessDetachedReserve(conn, encoder, decoder, req, identity, command)
 	}
 	if req.Relaunch != nil {
 		if resume == nil || req.Resume != nil {

@@ -324,6 +324,9 @@ func (c *Client) deleteProcess(ctx context.Context, req core.DeleteRequest, reg 
 	}
 	var warnings bytes.Buffer
 	mutations.RecordDeletion(func() (string, error) { return c.paths.StateDir, nil }, mutations.NewDeletionRecord(mutationruntime.ChildDeletionOperation(plan.Kind), operation, mutations.DeletionViaSDK, outcome.Actor, mutations.DeletionTargetsOf(mutations.DeletePlan(plan)), outcome.Affected), &warnings)
+	for _, notice := range outcome.Notices {
+		warnings.WriteString(notice + "\n")
+	}
 	out.Notice = strings.TrimSuffix(warnings.String(), "\n")
 	return out, nil
 }

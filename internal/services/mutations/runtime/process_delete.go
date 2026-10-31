@@ -300,6 +300,8 @@ type ProcessDeleteOutcome struct {
 	Targets  []ProcessDeleteTarget
 	Affected []mutations.DeletionAffected
 	Actor    mutations.DeletionActor
+	// Notices report cleanup that failed after the deletion committed.
+	Notices []string
 }
 
 // Execute stops every running target through its owner, waits for the exact
@@ -419,6 +421,14 @@ func (d *ProcessAgentDeleter) Execute(ctx context.Context, plan DeletePlan, Targ
 			return ProcessDeleteOutcome{}, refusal
 		}
 		return ProcessDeleteOutcome{}, err
+	}
+	// The Registry no longer names these Agents. Their frozen reservation launch
+	// goes with them, under the guard still held. A failed removal leaves a file
+	// that names no Agent and cannot start anything; it is reported, not undone.
+	for _, target := range final {
+		if err := RemoveCreatedLaunch(d.RegistryPath, target.Agent); err != nil {
+			outcome.Notices = append(outcome.Notices, fmt.Sprintf("reservation launch of agent uid:%s was not removed: %v", target.Agent, err))
+		}
 	}
 	return outcome, nil
 }
