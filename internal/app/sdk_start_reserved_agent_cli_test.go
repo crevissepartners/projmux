@@ -199,6 +199,49 @@ func TestPublicStartReservedAgentRefusesWhatIsNotItsReservation(t *testing.T) {
 	}
 }
 
+func TestPublicStartReservedAgentRefusesADamagedLaunchFile(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		write func(t *testing.T, path string)
+	}{
+		{"malformed json", func(t *testing.T, path string) {
+			if err := os.WriteFile(path, []byte("{not json"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"unsafe permissions", func(t *testing.T, path string) {
+			if err := os.Chmod(path, 0644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newStartFixture(t)
+			ctx := reserveContext(t)
+			reserved := r.reserve(t, ctx)
+			uid := reserved.Agent.Metadata.UID
+			tc.write(t, r.launchPath(uid))
+			before, err := os.ReadFile(r.launchPath(uid))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = r.client.StartReservedAgent(ctx, core.StartReservedAgentRequest{Agent: "uid:" + uid})
+			wantStartRefusal(t, err, projmux.CodeReservationStale)
+			after, readErr := os.ReadFile(r.launchPath(uid))
+			if readErr != nil || !bytes.Equal(before, after) {
+				t.Fatalf("a refusal changed the launch file: %v", readErr)
+			}
+			reg, regErr := r.f.store.LoadReadOnly()
+			if regErr != nil {
+				t.Fatal(regErr)
+			}
+			if agent, ok := reg.Agent(uid); !ok || agent.Status.Phase != coremetadata.PhasePending {
+				t.Fatalf("a refusal changed the Agent: %+v %v", agent, ok)
+			}
+		})
+	}
+}
+
 func TestPublicStartReservedAgentTakesOverFromAGoneWorker(t *testing.T) {
 	r := newStartFixture(t)
 	ctx := reserveContext(t)

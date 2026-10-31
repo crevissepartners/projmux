@@ -625,6 +625,23 @@ func (p *Handle) ProviderStartRejected(binding Binding) bool {
 	return p.providerStartRejected && p.completionSucceeded && p.pid == 0 && p.exit == nil && p.supervisorPID > 0
 }
 
+// SupervisorNotStarted proves a finished launch failed before its supervisor
+// ran: no supervisor and no provider process were ever recorded for it. The
+// Reserve transaction is read-only, so such a failure left nothing behind.
+func (p *Handle) SupervisorNotStarted(binding Binding) bool {
+	if p == nil || binding != p.launch.Binding {
+		return false
+	}
+	select {
+	case <-p.done:
+	default:
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.supervisorPID == 0 && p.pid == 0
+}
+
 // ProviderStartRejected delegates to the same owned Handle proof; the wrapper
 // cannot independently certify provider birth or completion cleanup.
 func (c *CodexHandle) ProviderStartRejected(binding Binding) bool {

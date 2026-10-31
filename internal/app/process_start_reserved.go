@@ -74,6 +74,9 @@ func (c *createCommand) claimReservedStart(registryPath, uid string, owner corem
 	defer unlock()
 	path := mutationruntime.CreatedLaunchPath(registryPath, uid)
 	stored, err := readCreatedLaunch(path)
+	if errors.Is(err, processhost.ErrResumeRefused) {
+		return createdLaunchRecord{}, result, startReservedRefusal("reservation-stale", uid, "has a damaged or unsafe frozen launch")
+	}
 	if err != nil {
 		return createdLaunchRecord{}, result, err
 	}
@@ -162,9 +165,10 @@ func (c *createCommand) startReservedProcessAgent(ctx context.Context, uid strin
 	}
 	handle, err := startProcessClaude(ctx, host, processhost.Launch{Binding: result.Binding, Command: record.Command}, path, nil)
 	if err != nil {
-		// The rollback of a failed create treats these two as an unstarted
-		// reservation whose Registry state is untouched; so does a retry.
-		if handle == nil || handle.ProviderStartRejected(result.Binding) {
+		// The rollback of a failed create treats a nil handle and a rejected provider
+		// start as an unstarted reservation whose Registry state is untouched; so
+		// does a retry. A failure before the supervisor ran left nothing either.
+		if handle == nil || handle.ProviderStartRejected(result.Binding) || handle.SupervisorNotStarted(result.Binding) {
 			return early(err)
 		}
 		result.Handle = handle

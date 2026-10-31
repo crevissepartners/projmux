@@ -676,7 +676,8 @@ the shape of `CreateAgentResult`.
   no longer matches the Agent or its files, or is damaged) or
   `reservation-starting` (another worker owns the start). A refusal changes
   nothing. A start also gives the reservation back, so the same call can be
-  repeated, when the host rejects the provider start.
+  repeated, when the provider host fails before it runs or rejects the provider
+  start. A damaged or unsafe frozen launch file is `reservation-stale` too.
 - One worker at a time owns a reservation. A worker that died is recognised by
   its recorded process identity; only proof that it is gone frees the mark.
 - A failure after the provider started rolls the Agent back like a failed
