@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -163,9 +164,14 @@ func TestPublicStartReservedAgentRefusesWhatIsNotItsReservation(t *testing.T) {
 		}},
 		{"started by an unknown worker", projmux.CodeReservationStarting, func(rec *createdLaunchRecord) { rec.Starting = true }},
 	}
-	for _, tc := range cases {
+	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			reserved := r.reserve(t, ctx)
+			request := r.request()
+			request.Name = fmt.Sprintf("refused-%d", i)
+			reserved, err := r.client.ReserveAgent(ctx, request)
+			if err != nil {
+				t.Fatalf("reserve: %v", err)
+			}
 			uid := reserved.Agent.Metadata.UID
 			r.tamper(t, uid, func(record *createdLaunchRecord) {
 				record.Command.Env = append(record.Command.Env, "PMX_TEST_START_SECRET="+startReservedSecret)
