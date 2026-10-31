@@ -126,6 +126,7 @@ Client.RegisterAccount	Public v0 provider account catalog SDK entrypoint or refu
 Client.RelaunchAgent	Public v0 exact tmux Agent relaunch entrypoint; shared CLI/SDK plan, native fixture, failure recovery and external consumer tests cover this path.
 Client.RemoveAccount	Public v0 provider account catalog SDK entrypoint or refusal adapter retained for external consumers; covered by CLI/SDK parity, public field coverage, and GOWORK=off consumer fixtures.
 Client.Rename	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
+Client.ReserveAgent	Public v0 reserved process Agent SDK entrypoint for external consumers; the binary does not import pkg/projmux, covered by TestPublicReserveAgentFreezesLaunchAndStaysPending and TestPublicReserveAgentRollsBackOnFailure.
 Client.ResetAgentGuidance	Public v0 global guidance editing SDK entrypoint or adapter; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
 Client.ResolveResourceGraphFromPrepared	Public v0 supplied-inventory resource graph SDK entrypoint or its adapter (ObserveGraphInventory/ResolveResourceGraphFromPrepared); reachable from external consumers rather than the CLI binary; covered by resolver JSON parity, zero file/tmux/process I/O, deterministic overlay, inventory field coverage and GOWORK=off consumer tests.
 Client.ResumeAgent	Public v0 tmux Agent resume entrypoint or its external-only closure; SDK/CLI parity, refusal, rollback and boundary tests cover this path.
