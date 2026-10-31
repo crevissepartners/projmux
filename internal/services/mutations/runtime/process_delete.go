@@ -116,6 +116,42 @@ func IsProcessAgentPlan(registry coremetadata.Registry, plan DeletePlan) bool {
 	return true
 }
 
+// IsVirtualProcessPlan reports whether every target is a virtual Window or a
+// process Pane whose descendants are all process Panes. It admits plans that
+// remove process Windows and Panes through their owner hosts, never tmux.
+func IsVirtualProcessPlan(reg coremetadata.Registry, plan DeletePlan) bool {
+	if len(plan.Targets) == 0 {
+		return false
+	}
+	for _, target := range plan.Targets {
+		switch plan.Kind {
+		case coremetadata.KindWindow:
+			if !reg.IsVirtualWindow(target.Match.UID) {
+				return false
+			}
+			// Retained tmux rows of released Agents have no eligible anchor.
+			// Their removal is Registry-only; living tmux Panes are never closed.
+			continue
+		case coremetadata.KindPane:
+			pane, ok := reg.Pane(target.Match.UID)
+			if !ok || pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess {
+				return false
+			}
+		default:
+			return false
+		}
+		for _, child := range target.Descendants {
+			if child.Kind == coremetadata.KindPane {
+				pane, ok := reg.Pane(child.UID)
+				if !ok || pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
 // Classify judges one Agent from the Registry and kernel birth evidence.
 // It never probes under the Registry lock; callers revalidate the result with
 // ProcessDeleteSignature inside the transaction.

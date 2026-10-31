@@ -434,39 +434,8 @@ func writeProcessDeletePlan(stdout io.Writer, spelling string, plan deletePlan, 
 	return err
 }
 
-// processDeleteAgentUIDs includes the live owners removed by a virtual Window
-// cascade and the owner of a process Pane whose Agent is retained.
 func isVirtualDeletePlan(reg coremetadata.Registry, plan deletePlan) bool {
-	if len(plan.Targets) == 0 {
-		return false
-	}
-	for _, target := range plan.Targets {
-		switch plan.Kind {
-		case coremetadata.KindWindow:
-			if !reg.IsVirtualWindow(target.Match.UID) {
-				return false
-			}
-			// Retained tmux rows of released Agents have no eligible anchor.
-			// Their removal is Registry-only; living tmux Panes are never closed.
-			continue
-		case coremetadata.KindPane:
-			pane, ok := reg.Pane(target.Match.UID)
-			if !ok || pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess {
-				return false
-			}
-		default:
-			return false
-		}
-		for _, child := range target.Descendants {
-			if child.Kind == coremetadata.KindPane {
-				pane, ok := reg.Pane(child.UID)
-				if !ok || pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess {
-					return false
-				}
-			}
-		}
-	}
-	return true
+	return mutationruntime.IsVirtualProcessPlan(reg, mutationruntime.DeletePlan(plan))
 }
 
 func (c *deleteCommand) runVirtualDelete(spelling string, plan deletePlan, flags deleteSocketFlags, dryRun, yes bool, stdout, stderr io.Writer) error {
