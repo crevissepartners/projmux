@@ -39,6 +39,7 @@ type processDetachedRequest struct {
 	RegistryPath    string
 	Context         *mutationruntime.ProcessCreateContext `json:",omitempty"`
 	ResumeContext   *mutationruntime.ProcessCreateContext `json:",omitempty"`
+	Reserve         bool                                  `json:",omitempty"`
 }
 type processDetachedReply struct {
 	Preparation           *mutationruntime.ProcessResumePreparation `json:",omitempty"`
@@ -206,6 +207,12 @@ func runProcessDetachedEntry(route string, command *createCommand, resume *agent
 	}
 	if req.RegistryPath != intmetadata.PathFor(stateDir) {
 		return errors.New("process-detached-registry-mismatch")
+	}
+	if req.Reserve {
+		if req.Context == nil || req.Resume != nil || req.Relaunch != nil {
+			return errors.New("process-detached-reserve-sdk-only")
+		}
+		return runProcessDetachedReserve(conn, encoder, decoder, req, identity, command)
 	}
 	if req.Relaunch != nil {
 		if resume == nil || req.Resume != nil {

@@ -256,6 +256,7 @@ EqualTeardownPlans	Serialization-free teardown plan comparison retained as the c
 EvaluateTurnFreeThreadLiveAttach	Test-only installed qualification API retained for method-independent semantic capability reduction.
 ExecuteDetachedProcessCreate	Public Client.CreateAgent detached execution closure shares the owned launcher and app callbacks; exercised by public-only consumer and CLI parity fixtures.
 ExecuteDetachedProcessRelaunch	Public RelaunchAgent owned startup closure; SDK process fixture and external caller-exit tests cover exact source admission and independent lifetime.
+ExecuteDetachedProcessReserve	Public ReserveAgent detached reservation closure: the SDK asks the owned no-provider worker to reserve a Pending Claude process Agent; the binary does not import pkg/projmux, covered by TestPublicReserveAgentFreezesLaunchWithoutProcess and TestPublicReserveAgentRollsBackOnFailure.
 ExecuteDetachedProcessResume	Public ResumeAgent detached startup closure shares CLI launch execution; external caller-exit and explicit-domain fixtures protect captured routing.
 ExecuteProcessResumePreparation	Public SDK child-free preparation executor using a directly reaped transient helper; lifecycle, cancellation and external consumer fixtures cover captured routing.
 ExplicitSocketRenamer	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
@@ -665,6 +666,7 @@ ValidateKeymapChord	Internal keymap/catalog compatibility entrypoint retained fo
 ValidateKeymapConflicts	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 ValidateProfileName	Public pure profile name validation SDK entrypoint; covered by core parity, no-access and external consumer calls.
 VerifyDetachedProcessCreate	Public detached SDK startup verifier closure binds typed committed resources to the exact owner and generation; exercised by stale/ambiguous/wrong-owner guards.
+VerifyDetachedProcessReserve	Public ReserveAgent startup verifier closure binds the prepared reply to a Pending Agent with no activation; covered by TestPublicReserveAgentFreezesLaunchWithoutProcess.
 VersionTuple.normalized	Test-only installed qualification helper retained for explicit unknown version evidence.
 Window.ResourceKind	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 WindowForPane	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.

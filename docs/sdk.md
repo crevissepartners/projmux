@@ -640,6 +640,32 @@ store is not empty, and never touches an owner socket.
   (`process-attention-damaged`) whose `Unwrap` reaches `ErrProcessAttentionDamaged`
   and the original cause; the read never repairs the store.
 
+## Reserve a process Agent without starting it
+
+`Client.ReserveAgent(ctx, core.ReserveAgentRequest{...})` creates one Claude
+process Agent in `Pending` with its launch frozen and starts no provider
+process. The entry that starts a reservation comes in a later change; until it
+exists a reservation can only be deleted.
+
+- Exactly one of `Window` (an existing Window of `Project`) and `NewWindow`
+  (`core.ReserveNewWindow{Name, Labels}`, a Window created with the
+  reservation) is set; any other shape is `create-request-invalid`. There is no
+  `Host`, `Detach`, `Pane`, `Placement` or `Payload`.
+- The result carries the reserved `Binding`, the `Agent` and the receipt. The
+  Agent has no activation and its Pane holds that Binding.
+- The frozen launch is a private file (mode 0600, at most 64 KiB) in the
+  `created-launches` store, named by the digest of the Agent UID. It shares no
+  file with `deferred-launches`. A launch that cannot be frozen fails the
+  reservation and removes the Agent, its Pane and a Window the call created.
+- A provider other than Claude is a `reserve-provider-unsupported` refusal;
+  nothing is created.
+- `Delete` of a reserved Agent removes its frozen launch. A launch that could
+  not be removed after the deletion committed is reported in the result's
+  `Notice`; the deletion stays.
+- The reservation request travels as a field that is absent from every other
+  request. An installed projmux executable built before it reads requests with
+  unknown fields rejected and so refuses a reservation request before any effect.
+
 ## Mark a process Agent whose host died offline
 
 `Client.MarkAgentOffline(ctx, core.MarkAgentOfflineRequest{Ref: "uid:..."})`
