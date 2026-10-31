@@ -656,7 +656,10 @@ exists a reservation can only be deleted.
 - The frozen launch is a private file (mode 0600, at most 64 KiB) in the
   `created-launches` store, named by the digest of the Agent UID. It shares no
   file with `deferred-launches`. A launch that cannot be frozen fails the
-  reservation and removes the Agent, its Pane and a Window the call created.
+  reservation and removes the Agent, its Pane and a Window the call created,
+  except a protected Agent, which stays. A failure that leaves a reservation
+  behind sets `Refusal.AgentUID` and the result's `Binding`, and `errors.As`
+  reaches a `CreateProcessError` with the exact refs.
 - A provider other than Claude is a `reserve-provider-unsupported` refusal;
   nothing is created.
 - `Delete` of a reserved Agent removes its frozen launch. A launch that could
