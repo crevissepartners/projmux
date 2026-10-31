@@ -651,8 +651,8 @@ exists a reservation can only be deleted.
   (`core.ReserveNewWindow{Name, Labels}`, a Window created with the
   reservation) is set; any other shape is `create-request-invalid`. There is no
   `Host`, `Detach`, `Pane`, `Placement` or `Payload`.
-- The result carries the reserved `Binding`, the `Agent` and the receipt. The
-  Agent has no activation and its Pane holds that Binding.
+- The result carries the reserved `Binding`, `Agent` and receipt; the Agent has
+  no activation.
 - The frozen launch is a private file (mode 0600, at most 64 KiB) in the
   `created-launches` store, named by the digest of the Agent UID. It shares no
   file with `deferred-launches`. A launch that cannot be frozen fails the
@@ -660,14 +660,12 @@ exists a reservation can only be deleted.
   except a protected Agent, which stays. A failure that leaves a reservation
   behind sets `Refusal.AgentUID` and the result's `Binding`, and `errors.As`
   reaches a `CreateProcessError` with the exact refs.
-- A provider other than Claude is a `reserve-provider-unsupported` refusal;
-  nothing is created.
-- `Delete` of a reserved Agent removes its frozen launch. A launch that could
-  not be removed after the deletion committed is reported in the result's
-  `Notice`; the deletion stays.
-- The reservation request travels as a field that is absent from every other
-  request. An installed projmux executable built before it reads requests with
-  unknown fields rejected and so refuses a reservation request before any effect.
+- Another provider is a `reserve-provider-unsupported` refusal.
+- `Delete` of a reserved Agent removes its frozen launch, and with the last
+  Agent of a new Window the Window. A launch that could not be removed after the
+  deletion committed is reported in the result's `Notice`; the deletion stays.
+- An installed projmux executable built before this entry rejects a reservation
+  request, which carries a field no other request has, before any effect.
 
 ## Mark a process Agent whose host died offline
 

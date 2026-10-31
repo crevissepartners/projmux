@@ -132,6 +132,10 @@ func TestPublicReserveAgentNewWindowReservationIsDeletable(t *testing.T) {
 	if _, ok := after.Window(r.f.window); !ok {
 		t.Fatal("the existing Window was removed")
 	}
+	// DeleteAgent of the last Agent of a virtual process Window removes the Window.
+	if _, ok := after.Window(result.Binding.WindowUID); ok {
+		t.Fatal("the reservation's new Window remains after its Agent was deleted")
+	}
 }
 
 func TestPublicReserveAgentRejectsRequestShape(t *testing.T) {
