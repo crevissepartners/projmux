@@ -372,6 +372,11 @@ observer recovery; Config, State, Registry, executable and tmux socket stay expl
 exposed. The same `Options.ProjmuxExecutable` contract applies. The tmux CLI
 rejects `-o`; the SDK receipt uses its shared operation receipt model.
 
+`ResumeAgent` and `RelaunchAgent` take no Labels input and do not change the
+labels of the Agent they act on. Tests cover a process Agent resumed after its
+host was lost and a Claude Agent relaunched from tmux to process and back; both
+keep the labels a caller set.
+
 
 Invalid `Options.ProjmuxExecutable` values in `ResumeAgent` and `RelaunchAgent`
 now return `CodeExecutableInvalid` (`executable-invalid`) before effects, replacing
