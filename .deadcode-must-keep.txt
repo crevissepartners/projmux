@@ -487,6 +487,7 @@ RenderThemeSource.TmuxStandaloneConfigWithAIBadgeStyleDesktopNotifyModeLiveResou
 RenderTmuxBindingBody	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
 Renderer.ContentLayout	Untitled entry point of ContentLayoutWithTitle retained as the frame inner-width seam.
 Renderer.RenderFrame	Untitled entry point of RenderFrameWithTitle retained as the frame geometry and CRLF golden seam.
+ReportNativeObserverStartup	Public v0 SDK native Codex create/resume observer closure for external frontends; the binary does not import pkg/projmux, covered by TestNativeObserverDiagnosticNormalizesEveryReceipt, TestSDKNativeCodexCreateObserverStaysOnItsTmuxServer (explicit-child-exits lane) and TestObserverFallbackJournalInstallsWhereTheJournalMayAppend.
 RequireActive	Test-only guard API retained: every test package that links the Registry store, a tmux runner, or provider exec code runs behind it.
 ReservedKeymapAuthoringBase	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 ResetKeymapBinding	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
@@ -821,6 +822,7 @@ mutationQuery	Shared explicit-ref query adapter for public v0 Rename and Delete 
 nativeAppendPartialNextItemLines	Default-theme entry point of nativeAppendPartialNextItemLinesWithTheme retained as the partial multiline item seam.
 nativeInteractiveItemLines	Default-theme entry point over InteractiveRowLines retained as the multiline selection seam.
 nativeInteractiveListLines	Default-theme entry point over InteractiveListLines retained as the interactive list line seam.
+nativeObserverDiagnostic	Public v0 SDK native Codex create/resume observer closure for external frontends; the binary does not import pkg/projmux, covered by TestNativeObserverDiagnosticNormalizesEveryReceipt, which pins the closed reasons and the fixed notice.
 nativePromptLine	Default-theme entry point over projmuxpicker.PromptLine retained as the inline match count seam.
 nativePromptLineWithCursor	Default-theme cursor entry point over PromptLineWithCursorLabel retained as the query cursor rendering seam.
 nativeRenderableListLine	Default-theme entry point over RenderableListLine retained as the selected-line padding seam.
@@ -842,6 +844,7 @@ notifySidebarEntriesWithLive	Fallback-locale collapsed-entry projection of the l
 notifySidebarStateBadge	Live-display entry point of notifySidebarStateBadgeForDisplay retained as the sidebar state palette seam.
 observationRefusal	Observation-specific refusal mapping is retained inside the pure teardown authority proof surface.
 observeChildExit	Owned-child exit observation preserves PID/group identity until signals precede actual Wait; retained for processhost lifecycle proof.
+observedNativeObserverSocket	Public v0 SDK native Codex create/resume observer closure for external frontends; the binary does not import pkg/projmux, covered by TestObservedNativeObserverSocketHandsOverTheExactPhysicalPath and TestSDKNativeCodexCreateObserverStaysOnItsTmuxServer (existing-app-server and fresh-no-server lanes).
 openReadyThreadClient	The default-endpoint client helper remains behind installed protocol qualification wrappers, not generation-pinned product routing.
 ownedStream.Close	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 ownedStream.Read	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.

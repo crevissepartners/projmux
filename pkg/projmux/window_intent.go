@@ -268,11 +268,12 @@ func (c *Client) createTmuxWindowFromIntent(ctx context.Context, intent core.Win
 	if err != nil {
 		return result, createRefusal(err, "WindowCreateIntent")
 	}
+	var observerNotices []string
 	if native != nil {
-		native.Observe(out.Agent)
+		observerNotices = append(observerNotices, native.Observe(out.Agent)...)
 	}
 	if nativeResume != nil {
-		nativeResume.Observe(out.Agent)
+		observerNotices = append(observerNotices, nativeResume.Observe(out.Agent)...)
 	}
 	var historyNotice string
 	if resume != nil {
@@ -295,6 +296,7 @@ func (c *Client) createTmuxWindowFromIntent(ctx context.Context, intent core.Win
 	if historyNotice != "" {
 		notices = append(notices, historyNotice)
 	}
+	notices = append(notices, observerNotices...)
 	profile := planner.ProfileReceipt()
 	if resume != nil {
 		profile = resume.Profile

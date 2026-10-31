@@ -163,7 +163,7 @@ var (
 	// every other family.
 	allowedLevels     = stringSet("info", "warn", "error")
 	allowedComponents = stringSet("cli", "runtime", "session-state", "notify", "focus", "ai", "resource", "usage", "topology", "create", "agent", "registry", "mutation", codexBrokerComponent)
-	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", sessionStateOutcomeEvent, "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome", "usage.collect.outcome", "topology.outcome", "topology.agent.skipped", teardownDecisionEvent, ownerStopEvent, attentionSyncEvent, surfaceUnshownEvent, createOutcomeEvent, agentMessageForeignSourceEvent, claudeRegistrationEvent, claudeHandoffRouteEvent, registryLockAcquisitionEvent, codexBrokerRefusalEvent, mutationLockSummaryEvent, mutationLockWaitEvent)
+	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", sessionStateOutcomeEvent, "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome", "usage.collect.outcome", "topology.outcome", "topology.agent.skipped", teardownDecisionEvent, ownerStopEvent, attentionSyncEvent, surfaceUnshownEvent, createOutcomeEvent, agentMessageForeignSourceEvent, codexObserverFallbackEvent, claudeRegistrationEvent, claudeHandoffRouteEvent, registryLockAcquisitionEvent, codexBrokerRefusalEvent, mutationLockSummaryEvent, mutationLockWaitEvent)
 	allowedResults    = stringSet("started", "success", "error")
 	allowedKinds      = stringSet("usage", "exit", "runtime")
 	allowedBackends   = stringSet("tmux")
@@ -372,6 +372,9 @@ func validateEventShape(event Event, policies ...*MutationLockPolicy) error {
 	}
 	if event.Event == agentMessageForeignSourceEvent {
 		return validateAgentMessageForeignSourceEvent(event)
+	}
+	if event.Event == codexObserverFallbackEvent {
+		return validateCodexObserverFallbackEvent(event)
 	}
 	if event.Event == claudeRegistrationEvent {
 		return validateClaudeRegistrationEvent(event)
