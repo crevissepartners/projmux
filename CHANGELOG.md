@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.18.1](https://github.com/crevissepartners/projmux/compare/v0.18.0...v0.18.1) (2026-10-31)
+
+
+### Features
+
+* **process:** let a detached owner serve bounded events to readers ([#1694](https://github.com/crevissepartners/projmux/issues/1694)) ([8eb9d02](https://github.com/crevissepartners/projmux/commit/8eb9d02495a010022b8f3c051a18f866436a1d56))
+* **sdk:** list resume candidates and resume one in a new Window from an intent ([#1692](https://github.com/crevissepartners/projmux/issues/1692)) ([51c67ce](https://github.com/crevissepartners/projmux/commit/51c67ce3fc2c0b4dc8ea1c2a5a8d896111fad85d))
+* **sdk:** read every Agent's process attention in one call ([#1701](https://github.com/crevissepartners/projmux/issues/1701)) ([493d59e](https://github.com/crevissepartners/projmux/commit/493d59e2697a007d07abe3e8b5f314793bfbae67))
+* **sdk:** read headless Agent process state and events ([#1695](https://github.com/crevissepartners/projmux/issues/1695)) ([1c38938](https://github.com/crevissepartners/projmux/commit/1c38938f188aa7d192dcea0832c913b119ff7eb5))
+* **sdk:** report why a process owner is gone and whether its turn can be interrupted ([#1698](https://github.com/crevissepartners/projmux/issues/1698)) ([355836d](https://github.com/crevissepartners/projmux/commit/355836d850f597a259f0d8731dfd37b956b5ce25))
+* **sdk:** reserve a process Agent without starting it ([#1704](https://github.com/crevissepartners/projmux/issues/1704)) ([372171b](https://github.com/crevissepartners/projmux/commit/372171b44eaa24352ab74f17b87ddf79a0298209))
+* **sdk:** resume a Codex app-server conversation in a new Window from an intent ([#1693](https://github.com/crevissepartners/projmux/issues/1693)) ([0e7dd46](https://github.com/crevissepartners/projmux/commit/0e7dd46c7517969b1645db6a8f5eca46b88d286e))
+* **sdk:** send operator coordination messages to a Claude Agent ([#1696](https://github.com/crevissepartners/projmux/issues/1696)) ([6a06ed5](https://github.com/crevissepartners/projmux/commit/6a06ed5930e6fd549437db844aee19d12aaf58fe))
+* **sdk:** start a reserved process Agent ([#1705](https://github.com/crevissepartners/projmux/issues/1705)) ([ff19156](https://github.com/crevissepartners/projmux/commit/ff19156b487851a8f81a7d825ab08e94b3714af1))
+
+
+### Bug Fixes
+
+* **sdk:** keep native Codex observer on its exact tmux server ([#1702](https://github.com/crevissepartners/projmux/issues/1702)) ([8692fa3](https://github.com/crevissepartners/projmux/commit/8692fa3aa1ea99d7b8ca76857747ef3c1fef5ddd))
+
 ## [0.18.0](https://github.com/crevissepartners/projmux/compare/v0.17.2...v0.18.0) (2026-10-28)
 
 
