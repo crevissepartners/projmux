@@ -136,7 +136,6 @@ func VerifyDetachedProcessReserve(load func() (coremetadata.Registry, error), re
 	return nil
 }
 
-
 // ReserveVerifyHook is a test seam: a non-nil result rejects a prepared reservation.
 var ReserveVerifyHook func(ProcessDetachedReply) error
 
