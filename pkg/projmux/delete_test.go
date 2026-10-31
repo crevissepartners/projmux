@@ -161,6 +161,7 @@ func TestDeleteSDKInjectedFailuresAndNoSelfKill(t *testing.T) {
 		})
 	}
 }
+
 // processDeleteWindowFixture saves a virtual process Window holding the given
 // number of reserved process Agents, each with its own process Pane.
 func processDeleteWindowFixture(t *testing.T, agents int) (c *Client, path, window string, agentUIDs, paneUIDs []string) {
