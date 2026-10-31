@@ -176,6 +176,7 @@ type Handle struct {
 	statusDone             chan struct{}
 	spawnErr               error
 	providerStartRejected  bool
+	beforeSupervisor       bool
 	completionSucceeded    bool
 	stopOnce               sync.Once
 	ownerStopped           bool
@@ -303,6 +304,7 @@ func (p *Handle) boot(ctx context.Context) error {
 		err = ctx.Err()
 	}
 	if err != nil {
+		p.markBeforeSupervisor()
 		return err
 	}
 	if err = p.spawn(ctx); err != nil {
@@ -342,13 +344,13 @@ func (p *Handle) spawn(ctx context.Context) error {
 	// of exec.Wait; descendants holding an output FD cannot hold Wait hostage.
 	inR, inW, err := os.Pipe()
 	if err != nil {
-		return err
+		return p.markBeforeSupervisorErr(err)
 	}
 	outR, outW, err := os.Pipe()
 	if err != nil {
 		_ = inR.Close()
 		_ = inW.Close()
-		return err
+		return p.markBeforeSupervisorErr(err)
 	}
 	errR, errW, err := os.Pipe()
 	if err != nil {
@@ -356,7 +358,7 @@ func (p *Handle) spawn(ctx context.Context) error {
 		_ = inW.Close()
 		_ = outR.Close()
 		_ = outW.Close()
-		return err
+		return p.markBeforeSupervisorErr(err)
 	}
 	lifeR, lifeW, err := os.Pipe()
 	if err != nil {
@@ -366,7 +368,7 @@ func (p *Handle) spawn(ctx context.Context) error {
 		_ = outW.Close()
 		_ = errR.Close()
 		_ = errW.Close()
-		return err
+		return p.markBeforeSupervisorErr(err)
 	}
 	specR, specW, err := os.Pipe()
 	if err != nil {
@@ -378,7 +380,7 @@ func (p *Handle) spawn(ctx context.Context) error {
 		_ = errW.Close()
 		_ = lifeR.Close()
 		_ = lifeW.Close()
-		return err
+		return p.markBeforeSupervisorErr(err)
 	}
 	statusR, statusW, err := os.Pipe()
 	if err != nil {
@@ -392,7 +394,7 @@ func (p *Handle) spawn(ctx context.Context) error {
 		_ = lifeW.Close()
 		_ = specR.Close()
 		_ = specW.Close()
-		return err
+		return p.markBeforeSupervisorErr(err)
 	}
 	all := []*os.File{inR, inW, outR, outW, errR, errW, lifeR, lifeW, specR, specW, statusR, statusW}
 	cleanup := func() {
@@ -409,7 +411,7 @@ func (p *Handle) spawn(ctx context.Context) error {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err = cmd.Start(); err != nil {
 		cleanup()
-		return err
+		return p.markBeforeSupervisorErr(err)
 	}
 	_ = inR.Close()
 	_ = outW.Close()
@@ -626,8 +628,9 @@ func (p *Handle) ProviderStartRejected(binding Binding) bool {
 }
 
 // SupervisorNotStarted proves a finished launch failed before its supervisor
-// ran: no supervisor and no provider process were ever recorded for it. The
-// Reserve transaction is read-only, so such a failure left nothing behind.
+// ran: boot stopped at the read-only Reserve transaction or the context, or
+// spawn failed allocating pipes or executing the supervisor. A later failure,
+// such as a supervisor that never completes its handshake, is not evidence.
 func (p *Handle) SupervisorNotStarted(binding Binding) bool {
 	if p == nil || binding != p.launch.Binding {
 		return false
@@ -639,7 +642,18 @@ func (p *Handle) SupervisorNotStarted(binding Binding) bool {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.supervisorPID == 0 && p.pid == 0
+	return p.beforeSupervisor && p.supervisorPID == 0 && p.pid == 0
+}
+
+func (p *Handle) markBeforeSupervisor() {
+	p.mu.Lock()
+	p.beforeSupervisor = true
+	p.mu.Unlock()
+}
+
+func (p *Handle) markBeforeSupervisorErr(err error) error {
+	p.markBeforeSupervisor()
+	return err
 }
 
 // ProviderStartRejected delegates to the same owned Handle proof; the wrapper
