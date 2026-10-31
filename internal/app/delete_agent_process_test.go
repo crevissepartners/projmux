@@ -332,7 +332,7 @@ func TestVirtualProcessPlanAdmitsOnlyProcessWindowsAndPanes(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := mutationruntime.IsVirtualProcessPlan(*process, mutationruntime.DeletePlan(tc.plan)); got != tc.want {
+			if got := mutationruntime.IsVirtualProcessPlan(*process, tc.plan); got != tc.want {
 				t.Fatalf("IsVirtualProcessPlan=%t want %t", got, tc.want)
 			}
 			if got := isVirtualDeletePlan(*process, tc.plan); got != tc.want {

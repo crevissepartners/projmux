@@ -435,7 +435,7 @@ func writeProcessDeletePlan(stdout io.Writer, spelling string, plan deletePlan, 
 }
 
 func isVirtualDeletePlan(reg coremetadata.Registry, plan deletePlan) bool {
-	return mutationruntime.IsVirtualProcessPlan(reg, mutationruntime.DeletePlan(plan))
+	return mutationruntime.IsVirtualProcessPlan(reg, plan)
 }
 
 func (c *deleteCommand) runVirtualDelete(spelling string, plan deletePlan, flags deleteSocketFlags, dryRun, yes bool, stdout, stderr io.Writer) error {
