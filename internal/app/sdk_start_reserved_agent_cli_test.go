@@ -11,6 +11,7 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"github.com/crevissepartners/projmux/pkg/projmux"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
 )
@@ -238,9 +239,17 @@ func TestPublicStartReservedAgentLateFailureRollsBackLikeCreate(t *testing.T) {
 				t.Fatalf("reserve: %v", err)
 			}
 			r.f.config(t, "[hooks.post-create]\nruntime = \"process\"\nrun = \"exit 7\"\n")
-			_, err = r.client.StartReservedAgent(ctx, core.StartReservedAgentRequest{Agent: "uid:" + reserved.Agent.Metadata.UID})
+			result, err := r.client.StartReservedAgent(ctx, core.StartReservedAgentRequest{Agent: "uid:" + reserved.Agent.Metadata.UID})
 			if err == nil || !strings.Contains(err.Error(), "process-post-create-hook-failed") {
 				t.Fatalf("want the hook failure, got %v", err)
+			}
+			var detail *projmux.CreateProcessError
+			var refusal *projmux.Refusal
+			if !errors.As(err, &detail) || detail.Binding != reserved.Binding || result.Binding != reserved.Binding {
+				t.Fatalf("the failure must carry the reserved Binding: result %+v error %v", result.Binding, err)
+			}
+			if !errors.As(err, &refusal) || refusal.AgentUID != reserved.Agent.Metadata.UID {
+				t.Fatalf("the refusal must name the Agent: %v", err)
 			}
 			reg, regErr := r.f.store.LoadReadOnly()
 			if regErr != nil {
@@ -256,6 +265,33 @@ func TestPublicStartReservedAgentLateFailureRollsBackLikeCreate(t *testing.T) {
 				t.Fatalf("a rolled-back Agent keeps its frozen launch: %v", statErr)
 			}
 		})
+	}
+}
+
+func TestPublicStartReservedAgentVerifyRejectionRollsBack(t *testing.T) {
+	r := newStartFixture(t)
+	ctx := reserveContext(t)
+	reserved := r.reserve(t, ctx)
+	uid := reserved.Agent.Metadata.UID
+	mutationruntime.StartVerifyHook = func(mutationruntime.ProcessDetachedReply) error { return errors.New("injected start rejection") }
+	t.Cleanup(func() { mutationruntime.StartVerifyHook = nil })
+	_, err := r.client.StartReservedAgent(ctx, core.StartReservedAgentRequest{Agent: "uid:" + uid})
+	if err == nil || !strings.Contains(err.Error(), "injected start rejection") {
+		t.Fatalf("want the caller's rejection, got %v", err)
+	}
+	reg, regErr := r.f.store.LoadReadOnly()
+	if regErr != nil {
+		t.Fatal(regErr)
+	}
+	// The provider had started, so the worker rolls back like a failed create; nothing is kept.
+	if _, ok := reg.Agent(uid); ok {
+		t.Fatal("a started Agent the caller rejected was kept")
+	}
+	if _, statErr := os.Stat(r.launchPath(uid)); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("a rolled-back Agent keeps its frozen launch: %v", statErr)
+	}
+	if _, ok := reg.Window(r.f.window); !ok {
+		t.Fatal("the existing Window was removed")
 	}
 }
 

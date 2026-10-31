@@ -681,7 +681,9 @@ the shape of `CreateAgentResult`.
   its recorded process identity; only proof that it is gone frees the mark.
 - A failure after the provider started rolls the Agent back like a failed
   `CreateAgent`, including a Window the reservation created, and names what it
-  could not remove as `ReserveAgent` does.
+  could not remove as `ReserveAgent` does. That includes a start the caller's
+  own proof rejects: the reservation is not kept then.
+- A start uses the creator recorded when the Agent was reserved.
 - The stored command and its environment never appear in an error, `Notice` or
   receipt. A started Agent's frozen launch is removed; a removal that fails is a
   `Notice`.

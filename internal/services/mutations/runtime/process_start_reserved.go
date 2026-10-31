@@ -43,7 +43,13 @@ func ExecuteDetachedProcessStartReserved(ctx context.Context, frozen ProcessCrea
 		if ready.Binding != reserved {
 			return processhost.ErrStale
 		}
-		return VerifyDetachedProcessCreate(storage.LoadReadOnly, ready, owner)
+		if err := VerifyDetachedProcessCreate(storage.LoadReadOnly, ready, owner); err != nil {
+			return err
+		}
+		if hook := StartVerifyHook; hook != nil {
+			return hook(ready)
+		}
+		return nil
 	}, Cleanup: func(owner coremetadata.ProcessIdentity, _ ProcessDetachedReply) error {
 		return AwaitDetachedProcessStartCleanup(storage.LoadReadOnly, owner, reserved)
 	}}
@@ -60,6 +66,9 @@ func ExecuteDetachedProcessStartReserved(ctx context.Context, frozen ProcessCrea
 	}
 	return reply, err
 }
+
+// StartVerifyHook is a test seam: a non-nil result rejects a started reservation.
+var StartVerifyHook func(ProcessDetachedReply) error
 
 // reservedProcessBinding is the Binding a Pending process Agent was reserved with.
 func reservedProcessBinding(reg coremetadata.Registry, agentUID string) (processhost.Binding, error) {
