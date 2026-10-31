@@ -108,8 +108,9 @@ func (c *Client) createAgent(ctx context.Context, req core.CreateAgentRequest, r
 	if err != nil {
 		return result, err
 	}
+	var observerNotices []string
 	if native != nil {
-		native.Observe(out)
+		observerNotices = native.Observe(out)
 	}
 	activationErr := c.confirmActivations(checked, out.ActivationTargets)
 	projection, err := c.createProjection(socket, core.KindAgent, first)
@@ -123,6 +124,7 @@ func (c *Client) createAgent(ctx context.Context, req core.CreateAgentRequest, r
 	if declined != "" {
 		result.Notices = append(result.Notices, declined)
 	}
+	result.Notices = append(result.Notices, observerNotices...)
 	receipt := createReceipt(metadata.KindAgent, out.Results, out.SelectedWindowUIDs)
 	receipt.Profile = planner.ProfileReceipt()
 	if err := unregisterCopy(receipt, &result.Receipt); err != nil {

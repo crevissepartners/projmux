@@ -636,6 +636,30 @@ jq -rR 'fromjson? | select(.event == "codex.broker.refusal") | .code' "$(projmux
 Replace `.code` with `"\(.source) \(.operation) \(.code)"` to split the
 counts by receiving process and operation.
 
+### Codex observer fallbacks
+
+An SDK create or resume of a native Codex Agent that starts its lifecycle
+observer and does not find it serving writes one `component=agent`,
+`event=codex.observer.fallback` `info`/`success` record, under a run ID the
+create generates, in the operations journal of the State directory that create
+wrote to. The Agent keeps the provider hook as its authority and the create
+still succeeds; the same create returns one fixed notice, so an SDK caller
+outside the projmux process sees it too. The record is written only inside a
+projmux process that installs the journal. It carries only:
+
+- `source`: `sdk`, and `operation`: `observer-start`.
+- `code`: `observer-start-failed` (the observer could not be launched, or the
+  Pane's tmux socket could not be observed), `observer-exited`,
+  `observer-timeout` (the start is still pending), or `observer-reported`
+  (the observer itself reported a fallback or a retry; its own wording is not
+  repeated). A ready or stale start writes nothing.
+- the opaque `agent_uid` (`agent-...`) and `pane_uid` (`pane-...`).
+
+The observer's stderr and environment, socket paths, the thread id, and the
+wrapped cause are never recorded; any other reason or a non-UID value drops
+the record. A pending or reported start is not a claim that the observer died.
+Appends are best effort and never change the create.
+
 ## Mutation lock measurements
 
 Internal callers may declare a closed inventory with `NewMutationLockPolicy`,

@@ -190,8 +190,9 @@ func (c *Client) resumeAgentPlanWithApplication(ctx context.Context, plan mutati
 		workspace.CWD = plan.ProjectRoot
 	}
 	application = mutationruntime.PreparedAgentSettingsApplication(mutationruntime.AgentApplicationSource{ModelArg: prepared.Settings.Model(plan.ModelOverride), NativeReady: nativeExecution != nil && nativeExecution.ThreadID != "", ReplyOnly: plan.DialogueReplyOnly, Provider: plan.Provider, Host: "tmux", Settings: prepared.Settings, Resumed: prepared.Resumed, Guidance: prepared.Guidance, Links: prepared.Links, Workspace: workspace, Annotations: plan.LaunchAnnotations()})
+	var observerNotices []string
 	if native != nil {
-		native.ObserveResume(plan.AgentUID, out, nativeExecution.ThreadID)
+		observerNotices = native.ObserveResume(plan.AgentUID, out, nativeExecution.ThreadID)
 	}
 	projection, err := c.createProjection(socket, core.KindAgent, mutationruntime.ShellCreateResource{UID: plan.AgentUID})
 	if err != nil {
@@ -206,6 +207,7 @@ func (c *Client) resumeAgentPlanWithApplication(ctx context.Context, plan mutati
 			result.Notices = append(result.Notices, notice)
 		}
 	}
+	result.Notices = append(result.Notices, observerNotices...)
 	if out.NameReason != "" {
 		result.Notices = append([]string{mutationruntime.AgentPaneNameNotice(plan.AgentName, out.NameReason)}, result.Notices...)
 	}

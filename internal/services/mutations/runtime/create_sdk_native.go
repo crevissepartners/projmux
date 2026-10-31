@@ -12,10 +12,14 @@ import (
 	"github.com/crevissepartners/projmux/internal/version"
 	"maps"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
 const nativeCodexTimeout = 25 * time.Second
+
+const nativeObserverSocketTimeout = 5 * time.Second
 
 type SDKNativeCreation struct {
 	Engine *NativeCreationEngine
@@ -80,19 +84,24 @@ func (p *SDKAgentPlanner) PrepareNative(ctx context.Context) (*SDKNativeCreation
 		}}
 	return n, nil
 }
-func (n *SDKNativeCreation) Observe(out AgentCreateResult) {
-	n.SDKNativeSession.Observe(out)
+func (n *SDKNativeCreation) Observe(out AgentCreateResult) []string {
+	return n.SDKNativeSession.Observe(out)
 }
-func (n *SDKNativeSession) Observe(out AgentCreateResult) {
+
+// Observe starts each created Agent's observer and returns the fixed notices
+// for any that is not serving; nil when every observer is.
+func (n *SDKNativeSession) Observe(out AgentCreateResult) []string {
 	p := n.Planner
 	for _, row := range out.NativeHistory {
 		_ = sessionhistory.Append(p.Paths.StateDir, row)
 	}
+	var notices []string
 	for _, target := range out.NativeBindings {
-		n.observeIdentity(NativeObserverIdentity{AgentUID: target.Work.Agent.Metadata.UID, PaneUID: target.Work.Pane.Metadata.UID, RuntimeID: target.PaneID, Generation: target.Work.Activation.Generation, ThreadID: target.Binding.ThreadID})
+		notices = append(notices, n.observeIdentity(NativeObserverIdentity{AgentUID: target.Work.Agent.Metadata.UID, PaneUID: target.Work.Pane.Metadata.UID, RuntimeID: target.PaneID, Generation: target.Work.Activation.Generation, ThreadID: target.Binding.ThreadID})...)
 	}
+	return notices
 }
-func (n *SDKNativeSession) observeIdentity(id NativeObserverIdentity) {
+func (n *SDKNativeSession) observeIdentity(id NativeObserverIdentity) []string {
 	p := n.Planner
 	authority := NativeObserverAuthority{Identity: id, Runner: p.Runtime.Runner, Load: p.Store.Load, Acquire: func() (func(), error) {
 		path, err := agentcontrol.FencePath(p.Paths.StateDir, id.PaneUID)
@@ -108,7 +117,11 @@ func (n *SDKNativeSession) observeIdentity(id NativeObserverIdentity) {
 		}
 		return err == nil, err
 	}, Launch: func() NativeObserverStartup {
-		args := []string{"internal", "agent-hook", "ingest", "codex-broker-watch", "--agent-uid", id.AgentUID, "--pane-uid", id.PaneUID, "--pane", id.RuntimeID, "--generation", id.Generation, "--thread", id.ThreadID, "--state-domain", n.Route.Endpoint.StateDomainID, "--endpoint-generation", n.Route.Endpoint.EndpointGenerationID, "--endpoint-state", string(n.Route.State), "--tui-executable", n.Route.TUIExecutable, "--endpoint-default", "true", "--tmux-socket-path", p.Runtime.Target.Value, "--config-dir", p.Paths.ConfigDir, "--state-dir", p.Paths.StateDir, "--registry-path", store.PathFor(p.Paths.StateDir), "--projmux-executable", p.Executable}
+		socket, err := observedNativeObserverSocket(p.Runtime.Runner, id.RuntimeID, p.Runtime.ExpectedSocketPath)
+		if err != nil {
+			return NativeObserverStartup{Status: "fallback", Reason: "observer-start-failed"}
+		}
+		args := []string{"internal", "agent-hook", "ingest", "codex-broker-watch", "--agent-uid", id.AgentUID, "--pane-uid", id.PaneUID, "--pane", id.RuntimeID, "--generation", id.Generation, "--thread", id.ThreadID, "--state-domain", n.Route.Endpoint.StateDomainID, "--endpoint-generation", n.Route.Endpoint.EndpointGenerationID, "--endpoint-state", string(n.Route.State), "--tui-executable", n.Route.TUIExecutable, "--endpoint-default", "true", "--tmux-socket-path", socket, "--config-dir", p.Paths.ConfigDir, "--state-dir", p.Paths.StateDir, "--registry-path", store.PathFor(p.Paths.StateDir), "--projmux-executable", p.Executable}
 		// #nosec G204 -- PrepareNative validates this explicit executable; argv is the fixed hidden observer route and exact binding.
 		cmd := tmuxexec.Command(p.Executable, args...)
 		values := maps.Clone(n.Environment.Values)
@@ -119,7 +132,30 @@ func (n *SDKNativeSession) observeIdentity(id NativeObserverIdentity) {
 		}
 		return LaunchNativeObserverProcess(cmd, NativeObserverTimeout, false)
 	}}
-	starter.Start(context.Background())
+	return ReportNativeObserverStartup(p.Paths.StateDir, id, starter.Start(context.Background()))
+}
+
+// observedNativeObserverSocket asks the server that owns the materialized Pane
+// for its physical socket path. The observer child runs with a fixed environment
+// that cannot resolve a logical tmux socket name the way the creator does, so
+// it is handed the one exact path the creator's own route reached. A planned
+// physical socket must agree with what the server reports. The error is fixed
+// text: tmux output and paths never enter it.
+func observedNativeObserverSocket(runner TmuxCommandRunner, paneID, expected string) (string, error) {
+	if runner == nil || paneID == "" {
+		return "", errors.New("native observer socket is unavailable")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), nativeObserverSocketTimeout)
+	defer cancel()
+	out, err := runner.Run(ctx, "tmux", "display-message", "-p", "-t", paneID, "-F", "#{socket_path}")
+	path := strings.TrimSpace(string(out))
+	if err != nil || !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return "", errors.New("native observer socket is not an exact absolute path")
+	}
+	if expected != "" && filepath.Clean(expected) != path {
+		return "", errors.New("native observer socket differs from the planned route")
+	}
+	return path, nil
 }
 
 func (p *SDKAgentPlanner) NativeSession() (*SDKNativeSession, error) {
@@ -178,6 +214,6 @@ func (n *SDKNativeSession) Resume(ctx context.Context, route NativeCodexRoute, w
 	return client.ResumeThreadWithSettings(ctx, id, w.CWD, w.AdditionalWritableRoots, settings)
 }
 
-func (n *SDKNativeSession) ObserveResume(agentUID string, out AgentResumeResult, threadID string) {
-	n.observeIdentity(NativeObserverIdentity{AgentUID: agentUID, PaneUID: out.PaneUID, RuntimeID: out.PaneID, Generation: out.Generation, ThreadID: threadID})
+func (n *SDKNativeSession) ObserveResume(agentUID string, out AgentResumeResult, threadID string) []string {
+	return n.observeIdentity(NativeObserverIdentity{AgentUID: agentUID, PaneUID: out.PaneUID, RuntimeID: out.PaneID, Generation: out.Generation, ThreadID: threadID})
 }
