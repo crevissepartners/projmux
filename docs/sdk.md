@@ -726,7 +726,17 @@ DryRun: true})` previews one exact process Agent without stopping its provider
 or claimant. Set `Confirm: true` and clear `DryRun` to execute the reviewed
 request. Project and Window can scope the exact UID. Process Agent deletion
 requires no tmux socket; an explicitly supplied SocketPath must still be
-absolute. Direct process Pane and Window deletion remains unsupported.
+absolute.
+
+`Kind: core.KindWindow` on a virtual process Window, and `Kind: core.KindPane`
+on a process Pane, delete through the same executor and admission as the CLI.
+`DeleteResult.Processes` lists every member Agent that is stopped and removed
+with the Window, and `Plan.Affected` shows the cascade, including the virtual
+Window that goes with its last Pane. `Confirm` follows the CLI rule: a lone leaf
+Pane needs none, every other plan does. An Agent that has no process Pane, and a
+plan that mixes tmux and process resources (for example a tmux-anchored Window
+that holds a process Pane), are refused with `delete-process-unsupported`; the
+message names the Window or Pane uids involved and nothing is changed.
 
 CLI and SDK use the same delete executor and protected `delete-stop` owner
 admission. Protection and the exact cascade are rechecked before Stop or claim

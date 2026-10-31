@@ -30,7 +30,9 @@ const (
 	CodeDeleteExecutionFailed    Code = "delete-execution-failed"
 )
 
-// Delete removes tmux Windows/Panes/Agents or one exact process Agent.
+// Delete removes tmux Windows/Panes/Agents, one exact process Agent, and
+// process Windows or Panes (stopping their running providers first). A plan
+// that mixes tmux and process resources is refused with CodeDeleteProcessUnsupported.
 // DryRun writes nothing. Confirm is required unless the CLI's leaf Pane rule
 // exempts the plan. Cancellation is effective before admission only; admitted
 // execution and compensation finish regardless of cancellation. Partial kill
@@ -130,7 +132,7 @@ func (c *Client) deleteWithRunner(ctx context.Context, req core.DeleteRequest, r
 	if err := unregisterCopy(mutations.PreviewDelete(mutations.DeletePlan(plan)), &out.Plan); err != nil {
 		return out, err
 	}
-	if mutationruntime.IsProcessAgentPlan(reg, plan) {
+	if mutationruntime.IsProcessAgentPlan(reg, plan) || mutationruntime.IsVirtualProcessPlan(reg, plan) {
 		return c.deleteProcess(ctx, req, reg, plan, out)
 	}
 	if err := deleteTmuxOnly(reg, plan); err != nil {
@@ -235,25 +237,29 @@ func deleteRefusal(code Code, err error) error {
 	}
 	return &Refusal{Code: code, AgentUID: protectedAgentUID, message: err.Error(), cause: err}
 }
+// deleteTmuxOnly refuses what reaches the tmux path with a process resource in
+// it. Process-only plans were routed to deleteProcess before this runs, so what
+// is left mixes tmux and process resources, or is an Agent with no process Pane.
 func deleteTmuxOnly(reg metadata.Registry, plan mutationruntime.DeletePlan) error {
 	for _, t := range plan.Targets {
+		uid := t.Match.UID
 		if plan.Kind == metadata.KindPane {
-			if p, ok := reg.Pane(t.Match.UID); ok && p.Spec.Runtime.EffectiveKind() == metadata.RuntimeProcess {
-				return &Refusal{Code: CodeDeleteProcessUnsupported, message: "Delete cannot remove a process Pane"}
+			if p, ok := reg.Pane(uid); ok && p.Spec.Runtime.EffectiveKind() == metadata.RuntimeProcess {
+				return &Refusal{Code: CodeDeleteProcessUnsupported, message: fmt.Sprintf("Delete cannot remove process Pane uid:%s: the plan mixes tmux and process resources", uid)}
 			}
 		}
 		if plan.Kind == metadata.KindAgent {
-			if a, ok := reg.Agent(t.Match.UID); ok && reg.IsVirtualWindow(a.Metadata.OwnerUID()) {
-				return &Refusal{Code: CodeDeleteProcessUnsupported, message: "Delete cannot remove a process Agent"}
+			if a, ok := reg.Agent(uid); ok && reg.IsVirtualWindow(a.Metadata.OwnerUID()) {
+				return &Refusal{Code: CodeDeleteProcessUnsupported, message: fmt.Sprintf("Delete cannot remove Agent uid:%s of process Window uid:%s: it has no process-only Pane to stop", uid, a.Metadata.OwnerUID())}
 			}
 		}
-		if reg.IsVirtualWindow(t.Match.UID) {
-			return &Refusal{Code: CodeDeleteProcessUnsupported, message: "Delete requires a tmux Window; process lifecycle is unsupported"}
+		if reg.IsVirtualWindow(uid) {
+			return &Refusal{Code: CodeDeleteProcessUnsupported, message: fmt.Sprintf("Delete cannot remove process Window uid:%s: the plan mixes tmux and process resources", uid)}
 		}
 		for _, d := range t.Descendants {
 			if d.Kind == metadata.KindPane {
 				if p, ok := reg.Pane(d.UID); ok && p.Spec.Runtime.EffectiveKind() == metadata.RuntimeProcess {
-					return &Refusal{Code: CodeDeleteProcessUnsupported, message: "Delete cannot remove process descendants"}
+					return &Refusal{Code: CodeDeleteProcessUnsupported, message: fmt.Sprintf("Delete cannot remove uid:%s: process descendant Pane uid:%s mixes tmux and process resources", uid, d.UID)}
 				}
 			}
 		}
@@ -265,7 +271,9 @@ func deleteQuery(req core.DeleteRequest) (selector.Query, error) {
 }
 
 func (c *Client) deleteProcess(ctx context.Context, req core.DeleteRequest, reg metadata.Registry, plan mutationruntime.DeletePlan, out core.DeleteResult) (core.DeleteResult, error) {
-	if !plan.ExactUID || len(plan.Targets) != 1 {
+	// Like the CLI, only an Agent plan is limited to one exact uid; a process
+	// Window or Pane is admitted by its virtual-Window shape.
+	if plan.Kind == metadata.KindAgent && (!plan.ExactUID || len(plan.Targets) != 1) {
 		return out, deleteRefusal(CodeDeleteRuntimeRefused, mutationruntime.ProcessDeleteRefusal("process-delete-refused", "", "delete agent requires one exact uid: Agent reference"))
 	}
 	if req.SocketPath != "" && !filepath.IsAbs(req.SocketPath) {
@@ -296,7 +304,7 @@ func (c *Client) deleteProcess(ctx context.Context, req core.DeleteRequest, reg 
 	if req.DryRun {
 		return out, nil
 	}
-	if !req.Confirm {
+	if plan.NeedsConfirmation() && !req.Confirm {
 		return out, &Refusal{Code: CodeConfirmationRequired, message: "DeleteRequest.Confirm is required; use DryRun to review the deletion plan first"}
 	}
 	operation, err := (&mutationruntime.DeleteExecutor{}).MintOperationID()
