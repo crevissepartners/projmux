@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/crevissepartners/projmux/internal/testutil/liveguard"
 )
 
 // copiedCLI returns the copied product binary named by env and skips without
@@ -17,6 +19,9 @@ func copiedCLI(t testing.TB, env string) string {
 	if product == "" {
 		t.Skipf("set %s to a copied product binary", env)
 	}
+	// Every command the CLI starts inherits the mark, so the provider guard's
+	// failure log names the test that started the chain.
+	liveguard.MarkTest(t)
 	return product
 }
 

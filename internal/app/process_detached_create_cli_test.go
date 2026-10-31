@@ -23,6 +23,7 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/testutil/liveguard"
 )
 
 // CombinedOutput must finish without waiting for detached owner stdio. Each
@@ -198,6 +199,7 @@ func TestDetachedClaudeChildSurvivesHostReadDeadlineCLI(t *testing.T) {
 		t.Skip("set PMX_TEST_CLAUDE_REGRESSION_CLI to the tagged copied CLI")
 	}
 	t.Setenv("PMX_TEST_CLI", product)
+	liveguard.MarkTest(t)
 	t.Run("claude/terminated", func(t *testing.T) {
 		testProcessChildSurvivesParentProviderScenarioCLI(t, false, "claude", syscall.SIGTERM, true)
 	})
