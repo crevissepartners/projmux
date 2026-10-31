@@ -27,6 +27,9 @@ type createdLaunchRecord struct {
 	Files         map[string]string
 	// Starting marks the one start that owns the reservation.
 	Starting bool `json:",omitempty"`
+	// StartingOwner is the worker that set Starting; only proof that it is gone
+	// frees the reservation for another start.
+	StartingOwner *coremetadata.ProcessIdentity `json:",omitempty"`
 }
 
 func writeCreatedLaunch(path string, record createdLaunchRecord) error {

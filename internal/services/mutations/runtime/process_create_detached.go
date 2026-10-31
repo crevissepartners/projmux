@@ -33,6 +33,11 @@ type ProcessDetachedCreateRequest struct {
 
 	// ReserveOperation is the caller's id, to find remains it never saw.
 	ReserveOperation string `json:",omitempty"`
+
+	// StartReserved starts the Agent named by StartAgent from its frozen launch.
+	StartReserved bool `json:",omitempty"`
+
+	StartAgent string `json:",omitempty"`
 }
 
 type ProcessCreateCommitted struct {

@@ -644,7 +644,7 @@ store is not empty, and never touches an owner socket.
 
 `Client.ReserveAgent(ctx, core.ReserveAgentRequest{...})` creates one `Pending`
 Claude process Agent with its launch frozen and starts no provider process. The
-entry that starts it comes later; until then a reservation can only be deleted.
+reservation is started by `Client.StartReservedAgent`, described below.
 
 - Exactly one of `Window` (an existing Window of `Project`) and `NewWindow`
   (`core.ReserveNewWindow{Name, Labels}`) is set, else `create-request-invalid`.
@@ -662,6 +662,30 @@ entry that starts it comes later; until then a reservation can only be deleted.
 - `Delete` of a reserved Agent removes its frozen launch, and with the last
   Agent of a new Window the Window. A launch left behind is reported in `Notice`.
 - An older executable rejects a reservation request before any effect.
+
+## Start a reserved process Agent
+
+`Client.StartReservedAgent(ctx, core.StartReservedAgentRequest{Agent: "uid:..."})`
+starts the provider process of an Agent that `ReserveAgent` left `Pending`, from
+the launch frozen then. The Agent keeps the reserved `Binding`. The request
+takes no Project, Window or creator: the reservation fixed them. The result has
+the shape of `CreateAgentResult`.
+
+- Before any provider exists, a start refuses with `reservation-missing` (no
+  reserved Pending Agent, or no frozen launch), `reservation-stale` (the launch
+  no longer matches the Agent or its files, or is damaged) or
+  `reservation-starting` (another worker owns the start). A refusal changes
+  nothing. A start also gives the reservation back, so the same call can be
+  repeated, when the host rejects the provider start.
+- One worker at a time owns a reservation. A worker that died is recognised by
+  its recorded process identity; only proof that it is gone frees the mark.
+- A failure after the provider started rolls the Agent back like a failed
+  `CreateAgent`, including a Window the reservation created, and names what it
+  could not remove as `ReserveAgent` does.
+- The stored command and its environment never appear in an error, `Notice` or
+  receipt. A started Agent's frozen launch is removed; a removal that fails is a
+  `Notice`.
+- An older executable rejects the request before any effect.
 
 ## Mark a process Agent whose host died offline
 

@@ -41,6 +41,8 @@ type processDetachedRequest struct {
 	ResumeContext    *mutationruntime.ProcessCreateContext `json:",omitempty"`
 	Reserve          bool                                  `json:",omitempty"`
 	ReserveOperation string                                `json:",omitempty"`
+	StartReserved    bool                                  `json:",omitempty"`
+	StartAgent       string                                `json:",omitempty"`
 }
 type processDetachedReply struct {
 	Preparation           *mutationruntime.ProcessResumePreparation `json:",omitempty"`
@@ -211,6 +213,12 @@ func runProcessDetachedEntry(route string, command *createCommand, resume *agent
 	}
 	if !req.Reserve && req.ReserveOperation != "" {
 		return errors.New("process-detached-reserve-operation-unexpected")
+	}
+	if req.StartReserved || req.StartAgent != "" {
+		if !req.StartReserved || req.StartAgent == "" || req.Context == nil || req.Reserve || req.Resume != nil || req.Relaunch != nil || len(req.Options.Payload) != 0 {
+			return errors.New("process-detached-start-reserved-sdk-only")
+		}
+		return runProcessDetachedStartReserved(conn, encoder, decoder, req, identity, command)
 	}
 	if req.Reserve {
 		if req.Context == nil || req.Resume != nil || req.Relaunch != nil || !mutationruntime.ValidReserveOperation(req.ReserveOperation) {
