@@ -64,13 +64,14 @@ func checkRelaunchPreparation(reg m.Registry, registryPath string, requested boo
 }
 
 // checkRelaunchPrepareReply closes the one success a Prepare request has: a
-// complete reply, and for an execution the proof. A waiting claim or a live owner
-// reply never satisfies it.
-func checkRelaunchPrepareReply(requested bool, phase string, dryRun bool, p *ProcessResumePreparation) error {
+// complete reply that agrees with the request on DryRun, carries no claim, and
+// for an execution holds the proof. A waiting claim or a live owner reply never
+// satisfies it. requestDryRun comes from the request, never from the reply.
+func checkRelaunchPrepareReply(requested bool, requestDryRun bool, phase string, replyDryRun bool, claim bool, p *ProcessResumePreparation) error {
 	if !requested {
 		return nil
 	}
-	if phase != "complete" || (!dryRun && p == nil) {
+	if phase != "complete" || replyDryRun != requestDryRun || claim || (!requestDryRun && p == nil) {
 		return processhost.ErrStale
 	}
 	return nil
@@ -101,7 +102,7 @@ func LaunchDetachedProcessRelaunch(ctx context.Context, executable string, wire 
 		var plan struct{ DryRun bool }
 		_ = json.Unmarshal(ready.Relaunch, &plan)
 		if wire.RelaunchContext != nil {
-			if err := checkRelaunchPrepareReply(wire.Relaunch.Prepare, ready.Phase, plan.DryRun, ready.Preparation); err != nil {
+			if err := checkRelaunchPrepareReply(wire.Relaunch.Prepare, slices.Contains(wire.Relaunch.Args, "--dry-run"), ready.Phase, plan.DryRun, len(ready.Claim) != 0, ready.Preparation); err != nil {
 				return err
 			}
 		}
