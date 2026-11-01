@@ -128,7 +128,7 @@ func (c *Client) relaunchProcessAgent(ctx context.Context, q core.RelaunchAgentR
 	if q.Prompt != "" {
 		args = append(args, "--", q.Prompt)
 	}
-	wire := runtime.ProcessDetachedRelaunchRequest{Args: args, Source: target.Clone()}
+	wire := runtime.ProcessDetachedRelaunchRequest{Args: args, Source: target.Clone(), AllowHostLost: q.AllowHostLost}
 	if p, ok := reg.Pane(target.Status.PaneRef); ok {
 		clone := p.Clone()
 		wire.Pane = &clone

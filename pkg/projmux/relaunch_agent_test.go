@@ -575,3 +575,20 @@ func TestRelaunchProcessSocketRequestIsIndependentFromClientDefault(t *testing.T
 		})
 	}
 }
+
+func TestRelaunchAllowHostLostRefusesTmuxSource(t *testing.T) {
+	c, _, uid, _ := sdkStopFixture(t)
+	for name, req := range map[string]core.RelaunchAgentRequest{
+		"tmux source":            {Ref: "uid:" + uid, AllowHostLost: true},
+		"tmux source to process": {Ref: "uid:" + uid, AllowHostLost: true, Host: "process", Detach: true},
+		"tmux source dry run":    {Ref: "uid:" + uid, AllowHostLost: true, DryRun: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := c.RelaunchAgent(context.Background(), req)
+			var refused *Refusal
+			if !errors.As(err, &refused) || refused.Code != CodeRelaunchRequestInvalid || refused.AgentUID != uid {
+				t.Fatalf("want %s for %s got %v", CodeRelaunchRequestInvalid, uid, err)
+			}
+		})
+	}
+}

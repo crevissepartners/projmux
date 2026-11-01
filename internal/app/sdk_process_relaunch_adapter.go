@@ -37,7 +37,11 @@ func (c *agentCommand) runSDKProcessRelaunchOwner(life context.Context, cancel c
 		return finishSDKRelaunch(session, planned.Result)
 	}
 	if planned.Result.PromptRequired {
-		return fail(usageError("agent relaunch: lost-host Claude requires an explicit first prompt; nothing was changed; recover with: " + planned.Result.RelaunchCommand))
+		err := usageError("agent relaunch: lost-host Claude requires an explicit first prompt; nothing was changed; recover with: " + planned.Result.RelaunchCommand)
+		// The CLI exits with this usage error; the SDK refuses it as an invalid request.
+		raw, _ := json.Marshal(planned.Result)
+		_ = session.encoder.Encode(processDetachedReply{Owner: session.identity, Relaunch: raw, Error: err.Error(), ErrorCode: "relaunch-request-invalid"})
+		return err
 	}
 	if planned.Result.ConfirmationRequired && !request.yes {
 		return fail(usageError(fmt.Sprintf("agent relaunch: agent/%s is %s with interaction %s; restarting would cut that turn; re-run with --yes (%s); nothing was changed", target.Metadata.Name, target.Status.Phase, planned.Result.Interaction, relaunchReasonAgentBusy)))
@@ -143,6 +147,9 @@ func finishSDKRelaunch(s *processDetachedRelaunchSession, result agentRelaunchRe
 func encodeDetachedRelaunchError(encoder interface{ Encode(any) error }, owner m.ProcessIdentity, binding processhost.Binding, result *agentRelaunchResult, err error) error {
 	code := "relaunch-execution-failed"
 	if errors.Is(err, processhost.ErrStale) {
+		code = "relaunch-source-stale"
+	}
+	if strings.Contains(err.Error(), "host-lost preparation source changed") {
 		code = "relaunch-source-stale"
 	}
 	for _, token := range []string{relaunchReasonAgentBusy, relaunchReasonSelfTarget, relaunchReasonNoConversation, relaunchReasonProviderUnsupported, "profile-resume-unavailable", "relaunch-profile-not-found", "relaunch-profile-invalid"} {

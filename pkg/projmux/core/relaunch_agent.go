@@ -5,6 +5,8 @@ package core
 // to an empty string selects none. SocketPath is an explicit absolute socket.
 // No actor, active Pane, destination or first prompt is inferred.
 // Process destinations require Detach; Binding optionally fences the source generation.
+// AllowHostLost opts a same-host process relaunch into recovering an Agent whose
+// host process and child are both gone, like PrepareAgentResumeRequest.AllowHostLost.
 type RelaunchAgentRequest struct {
 	Ref, Project, Window  string
 	Host, Prompt          string
@@ -15,6 +17,7 @@ type RelaunchAgentRequest struct {
 	Reset                 []string
 	SocketPath            string
 	DryRun, Confirm       bool
+	AllowHostLost         bool
 }
 
 // RelaunchAgentResult keeps the plan even when execution fails. Recovery names
