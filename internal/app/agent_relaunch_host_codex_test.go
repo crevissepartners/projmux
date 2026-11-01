@@ -1362,9 +1362,14 @@ func waitCodexFixturePeerExit(t *testing.T, process coremetadata.ProcessIdentity
 // directory (a detached observer such as `internal agent-hook ingest
 // codex-broker-watch` gets that directory as an argument and owns no socket the
 // broker cleanup could find). Each process is logged, its birth is read again
-// right before SIGTERM, and it must exit. Without /proc it does nothing.
+// right before SIGTERM, and it must exit. Without /proc it does nothing. An
+// empty root never matches the environment and an empty stateDir never matches
+// argv, so a caller that has only one of them cannot select a foreign process.
 func stopFixtureProcesses(t *testing.T, root, stateDir string) {
 	t.Helper()
+	if root == "" && stateDir == "" {
+		return
+	}
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return
@@ -1386,7 +1391,9 @@ func stopFixtureProcesses(t *testing.T, root, stateDir string) {
 		}
 		cmdline, _ := os.ReadFile(filepath.Join("/proc", entry.Name(), "cmdline"))
 		argv := strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00")
-		if !slices.Contains(strings.Split(string(environ), "\x00"), "PMX_TEST_PROCESS_ROOT="+root) && !slices.Contains(argv, stateDir) {
+		byRoot := root != "" && slices.Contains(strings.Split(string(environ), "\x00"), "PMX_TEST_PROCESS_ROOT="+root)
+		byState := stateDir != "" && slices.Contains(argv, stateDir)
+		if !byRoot && !byState {
 			continue
 		}
 		t.Logf("fixture process left after the test: pid=%d argv=%q", pid, argv)
