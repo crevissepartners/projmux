@@ -598,6 +598,9 @@ func TestRelaunchAllowHostLostRefusesWrongShape(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			if tc.journal {
+				if err := os.MkdirAll(filepath.Dir(journal), 0700); err != nil {
+					t.Fatal(err)
+				}
 				if err := os.WriteFile(journal, []byte("{}"), 0600); err != nil {
 					t.Fatal(err)
 				}
