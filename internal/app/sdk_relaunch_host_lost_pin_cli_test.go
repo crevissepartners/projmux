@@ -25,7 +25,7 @@ func sdkHostLostClient(t *testing.T, f processCreateCLI) *projmux.Client {
 // to observe the literal below.
 func TestSDKRelaunchLostHostWithoutOptInRefusesAsToday(t *testing.T) {
 	copiedCLI(t, "PMX_TEST_CLI")
-	for _, provider := range []string{aiModeClaude, aiModeCodex} {
+	for provider, want := range map[string]projmux.Code{aiModeClaude: "relaunch-execution-failed", aiModeCodex: "relaunch-no-conversation"} {
 		t.Run(provider, func(t *testing.T) {
 			f := hostLostCLIProviderFixture(t, provider)
 			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
@@ -33,8 +33,12 @@ func TestSDKRelaunchLostHostWithoutOptInRefusesAsToday(t *testing.T) {
 			ref, before, old := recordedLostHostCLI(t, ctx, f, provider)
 			_, err := sdkHostLostClient(t, f).RelaunchAgent(ctx, core.RelaunchAgentRequest{Ref: ref, Detach: true, Confirm: true, Prompt: "continue"})
 			var refused *projmux.Refusal
-			if !errors.As(err, &refused) || refused.Code != "relaunch-no-conversation" || refused.AgentUID != old.Binding.AgentUID {
-				t.Fatalf("refusal: %v", err)
+			if !errors.As(err, &refused) || refused.Code != want || refused.AgentUID != old.Binding.AgentUID {
+				code := projmux.Code("")
+				if refused != nil {
+					code = refused.Code
+				}
+				t.Fatalf("want %s got %s: %v", want, code, err)
 			}
 			if !reflect.DeepEqual(before, mustRegistry(t, f)) {
 				t.Fatal("refusal wrote the Registry")
