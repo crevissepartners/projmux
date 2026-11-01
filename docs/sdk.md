@@ -1717,6 +1717,11 @@ is known and leaves the Registry unchanged:
 - `CodeSelectorInvalid` with `Field` `MarkProcessOwnerRequest.Owner` or
   `MarkProcessOwnerRequest.Binding.<field>`: blank Owner or a missing field.
 
+The check compares `Binding` with the recorded activation; it does not prove that
+the owner process is alive and grants no control authority. The label is ordinary
+Agent metadata: the generic label command and other label writers can also set or
+remove `process-owner`.
+
 The SDK writes no diagnostics journal; recording a refusal is the caller's job.
 `ResumeAgent`, `RelaunchAgent` and `StartReservedAgent` still leave labels
 unchanged. Cancellation before the locked write preserves
