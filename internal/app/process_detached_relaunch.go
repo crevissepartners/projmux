@@ -152,6 +152,7 @@ func runProcessDetachedRelaunchOwner(conn net.Conn, encoder *json.Encoder, decod
 		return errors.New("process-detached-relaunch-request-invalid")
 	}
 	request.allowHostLost = wire.AllowHostLost
+	request.prepare = wire.Prepare
 	reg, err := command.loadRegistry()
 	if err != nil {
 		return err

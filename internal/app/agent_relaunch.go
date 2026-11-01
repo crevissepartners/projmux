@@ -99,6 +99,7 @@ type agentRelaunchRequest struct {
 	json          bool
 	socket        deleteSocketFlags
 	allowHostLost bool // Only the public CLI opts into explicit lost-host recovery.
+	prepare       bool // Only the SDK asks a same-host Claude relaunch for a frozen, ownerless recipe.
 }
 
 // settings is what the relaunch asks of the Agent's layers.

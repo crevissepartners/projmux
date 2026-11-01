@@ -128,7 +128,7 @@ func (c *Client) relaunchProcessAgent(ctx context.Context, q core.RelaunchAgentR
 	if q.Prompt != "" {
 		args = append(args, "--", q.Prompt)
 	}
-	wire := runtime.ProcessDetachedRelaunchRequest{Args: args, Source: target.Clone(), AllowHostLost: q.AllowHostLost}
+	wire := runtime.ProcessDetachedRelaunchRequest{Args: args, Source: target.Clone(), AllowHostLost: q.AllowHostLost, Prepare: q.Prepare}
 	if p, ok := reg.Pane(target.Status.PaneRef); ok {
 		clone := p.Clone()
 		wire.Pane = &clone
@@ -169,6 +169,13 @@ func (c *Client) relaunchProcessAgent(ctx context.Context, q core.RelaunchAgentR
 			return out, &Refusal{Code: detail.Code, AgentUID: target.Metadata.UID, message: err.Error(), cause: detail}
 		}
 		return out, relaunchRefusal(err)
+	}
+	if reply.Preparation != nil {
+		out.Preparation = &core.AgentResumePreparation{}
+		if err = unregisterCopy(reply.Preparation, out.Preparation); err != nil {
+			out.Preparation = nil
+			return out, err
+		}
 	}
 	return out, nil
 }
