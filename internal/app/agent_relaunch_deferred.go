@@ -71,6 +71,7 @@ func (c *agentCommand) startDeferredRelaunch(ctx context.Context, cancel context
 			}
 			proof := preparedResumeProjection(candidate, record)
 			c.hostTransferResult.proof = &proof
+			c.hostTransferResult.rollback = func() error { return c.rollbackDetachedRelaunchClaim(record, previous) }
 		}
 		return nil
 	}

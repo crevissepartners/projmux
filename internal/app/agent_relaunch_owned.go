@@ -39,6 +39,8 @@ type agentHostTransferResult struct {
 	processRecovery string
 	// proof is the SDK's full evidence of Prepared; Prepared keeps its four fields.
 	proof *mutationruntime.ProcessResumePreparation
+	// rollback restores the prior recipe if the SDK never acknowledges Prepared.
+	rollback func() error
 }
 
 type agentHostTransferLifetime struct {

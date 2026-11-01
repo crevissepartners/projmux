@@ -75,7 +75,7 @@ func (c *agentCommand) runSDKProcessRelaunchOwner(life context.Context, cancel c
 	}
 	// Process destinations return through finishOwned/finishClaim. A tmux
 	// destination completes synchronously and acknowledges its exact rebind.
-	return finishSDKRelaunch(session, c.hostTransferResult.Result, c.hostTransferResult.proof)
+	return finishSDKPrepared(session, c.hostTransferResult)
 }
 
 // An unfinished Codex host transfer takes precedence over every relaunch, as
@@ -133,6 +133,17 @@ func (c *agentCommand) runSDKCodexTransferRecovery(life context.Context, session
 	}
 	result.Outcome, result.NewPaneUID = personaOutcomeResumed, recovered
 	return finishSDKRelaunch(session, result, nil)
+}
+
+// finishSDKPrepared acknowledges a result and, when a Prepare exchange fails
+// after its recipe was frozen, restores the prior recipe through the guarded
+// rollback: the caller never received the proof, so no recipe may remain.
+func finishSDKPrepared(s *processDetachedRelaunchSession, r *agentHostTransferResult) error {
+	err := finishSDKRelaunch(s, r.Result, r.proof)
+	if err != nil && r.rollback != nil {
+		err = errors.Join(err, r.rollback())
+	}
+	return err
 }
 
 func finishSDKRelaunch(s *processDetachedRelaunchSession, result agentRelaunchResult, proof *mutationruntime.ProcessResumePreparation) error {

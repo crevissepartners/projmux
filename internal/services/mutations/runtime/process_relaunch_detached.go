@@ -51,13 +51,26 @@ func checkRelaunchPreparation(reg m.Registry, registryPath string, requested boo
 	if p == nil {
 		return nil
 	}
-	if !requested || p.AgentUID != agent {
+	if !requested || p.AgentUID != agent || p.AgentUID == "" || p.PaneUID == "" || p.Conversation == "" || p.LaunchDigest == "" {
 		return processhost.ErrStale
 	}
 	a, ok := reg.Agent(p.AgentUID)
 	pane, ambiguous := ProcessAgentPane(reg, p.AgentUID)
 	claim, claimErr := ReadDeferredClaim(DeferredClaimPath(registryPath, p.AgentUID))
 	if !ok || ambiguous || pane == nil || a.Status.Phase != m.PhaseOffline || a.Status.PaneRef != p.PaneUID || pane.Metadata.UID != p.PaneUID || pane.Metadata.OwnerUID() != p.AgentUID || pane.Status.ProcessSession == nil || pane.Status.ProcessSession.Binding != p.Binding || !pane.Status.Activation.IsZero() || claimErr != nil || claim.Agent != "" {
+		return processhost.ErrStale
+	}
+	return nil
+}
+
+// checkRelaunchPrepareReply closes the one success a Prepare request has: a
+// complete reply, and for an execution the proof. A waiting claim or a live owner
+// reply never satisfies it.
+func checkRelaunchPrepareReply(requested bool, phase string, dryRun bool, p *ProcessResumePreparation) error {
+	if !requested {
+		return nil
+	}
+	if phase != "complete" || (!dryRun && p == nil) {
 		return processhost.ErrStale
 	}
 	return nil
@@ -85,6 +98,13 @@ func LaunchDetachedProcessRelaunch(ctx context.Context, executable string, wire 
 		if err != nil {
 			return err
 		}
+		var plan struct{ DryRun bool }
+		_ = json.Unmarshal(ready.Relaunch, &plan)
+		if wire.RelaunchContext != nil {
+			if err := checkRelaunchPrepareReply(wire.Relaunch.Prepare, ready.Phase, plan.DryRun, ready.Preparation); err != nil {
+				return err
+			}
+		}
 		if err := checkRelaunchPreparation(reg, wire.RegistryPath, wire.Relaunch.Prepare, ready.Preparation, ready.Binding.Agent); err != nil {
 			return err
 		}
@@ -102,9 +122,6 @@ func LaunchDetachedProcessRelaunch(ctx context.Context, executable string, wire 
 				return nil
 			}
 			if wire.Relaunch.Prepare {
-				if ready.Preparation == nil {
-					return processhost.ErrStale
-				}
 				return nil
 			}
 			a, ok := reg.Agent(result.AgentUID)
