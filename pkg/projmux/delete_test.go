@@ -161,36 +161,135 @@ func TestDeleteSDKInjectedFailuresAndNoSelfKill(t *testing.T) {
 		})
 	}
 }
-func TestDeleteSDKProcessRejectionBeforeAnyEffect(t *testing.T) {
-	reg, uid, state, c := deleteFailureFixture(t)
+
+// processDeleteWindowFixture saves a virtual process Window holding the given
+// number of reserved process Agents, each with its own process Pane.
+func processDeleteWindowFixture(t *testing.T, agents int) (c *Client, path, window string, agentUIDs, paneUIDs []string) {
+	t.Helper()
+	reg, primary, state, c := deleteFailureFixture(t)
 	m := store.DefaultMutator()
 	project := reg.Projects[0].Metadata.UID
-	if err := m.DeleteWindow(&reg, uid); err != nil {
+	if err := m.DeleteWindow(&reg, primary); err != nil {
 		t.Fatal(err)
 	}
-	window, _, pane, err := m.CreateProcessWindow(&reg, project, metadata.BootstrapWindow{Name: "process"}, metadata.CreateAgentOptions{Name: "worker", Provider: "codex", OperationID: "op-process"}, metadata.ProcessBinding{HostInstanceID: "host", Generation: "gen", OperationID: "op-process"})
+	w, a, p, err := m.CreateProcessWindow(&reg, project, metadata.BootstrapWindow{Name: "process"}, metadata.CreateAgentOptions{Name: "worker", Provider: "codex", OperationID: "op-process"}, metadata.ProcessBinding{HostInstanceID: "host", Generation: "gen", OperationID: "op-process"})
 	if err != nil {
 		t.Fatal(err)
 	}
+	agentUIDs, paneUIDs = []string{a.Metadata.UID}, []string{p.Metadata.UID}
+	for i := 1; i < agents; i++ {
+		op := "op-process-" + strconv.Itoa(i)
+		extra, err := m.CreateAgent(&reg, w.Metadata.UID, metadata.CreateAgentOptions{Name: "worker-" + strconv.Itoa(i), Provider: "codex", OperationID: op})
+		if err != nil {
+			t.Fatal(err)
+		}
+		pane, err := m.AttachAgentPane(&reg, extra.Metadata.UID, metadata.BootstrapPane{}, op)
+		if err != nil {
+			t.Fatal(err)
+		}
+		binding := metadata.ProcessBinding{HostInstanceID: "host", Generation: "gen-" + strconv.Itoa(i), OperationID: op,
+			ProjectUID: project, WindowUID: w.Metadata.UID, AgentUID: extra.Metadata.UID, PaneUID: pane.Metadata.UID}
+		if err := m.ReserveProcessBinding(&reg, binding); err != nil {
+			t.Fatal(err)
+		}
+		agentUIDs, paneUIDs = append(agentUIDs, extra.Metadata.UID), append(paneUIDs, pane.Metadata.UID)
+	}
+	if err := reg.Validate(); err != nil {
+		t.Fatal(err)
+	}
 	data, _ := json.Marshal(reg)
-	path := store.PathFor(state)
+	path = store.PathFor(state)
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, tc := range []struct {
-		kind core.Kind
-		uid  string
-	}{{core.KindWindow, window.Metadata.UID}, {core.KindPane, pane.Metadata.UID}} {
-		runner := &deleteFailureRunner{path: filepath.Join(t.TempDir(), "s")}
-		result, err := c.deleteWithRunner(context.Background(), core.DeleteRequest{Kind: tc.kind, Ref: "uid:" + tc.uid, SocketPath: runner.path, Confirm: true}, runner)
-		var refusal *Refusal
-		if !errors.As(err, &refusal) || refusal.Code != CodeDeleteProcessUnsupported || result.Committed {
-			t.Fatalf("%s %+v %v", tc.kind, result, err)
+	return c, path, w.Metadata.UID, agentUIDs, paneUIDs
+}
+
+func TestDeleteSDKRemovesProcessWindowWithMemberAgents(t *testing.T) {
+	c, path, window, agents, panes := processDeleteWindowFixture(t, 2)
+	// The Root is the managed root session owner the runtime classifies for the
+	// Window, which is the fixture's Project, not the Window itself.
+	registered, err := store.NewStore(path).LoadReadOnly()
+	if err != nil || len(registered.Projects) != 1 {
+		t.Fatalf("fixture Registry: %v", err)
+	}
+	project := registered.Projects[0].Metadata.UID
+	runner := &deleteFailureRunner{path: filepath.Join(t.TempDir(), "s")}
+	result, err := c.deleteWithRunner(context.Background(), core.DeleteRequest{Kind: core.KindWindow, Ref: "uid:" + window, SocketPath: runner.path, Confirm: true}, runner)
+	if err != nil || !result.Committed || len(result.Processes) != len(agents) {
+		t.Fatalf("process Window delete: %+v %v", result, err)
+	}
+	got := map[string]bool{}
+	for _, process := range result.Processes {
+		got[process.AgentUID] = process.WindowUID == window && process.RootKind == core.KindProject && process.RootUID == project
+	}
+	for _, agent := range agents {
+		if !got[agent] {
+			t.Fatalf("member Agent %s missing from the plan: %+v", agent, result.Processes)
 		}
-		after, _ := os.ReadFile(path)
-		if !bytes.Equal(data, after) || runner.pidReads+runner.kills+runner.queued != 0 {
-			t.Fatal("process refusal touched state/runtime")
+	}
+	saved, err := store.NewStore(path).LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := saved.Window(window); ok {
+		t.Fatal("process Window remains")
+	}
+	for _, uid := range agents {
+		if _, ok := saved.Agent(uid); ok {
+			t.Fatalf("member Agent %s remains", uid)
 		}
+	}
+	for _, uid := range panes {
+		if _, ok := saved.Pane(uid); ok {
+			t.Fatalf("process descendant Pane %s remains", uid)
+		}
+	}
+	if runner.pidReads+runner.kills+runner.queued != 0 {
+		t.Fatal("process delete used the tmux runtime")
+	}
+}
+
+func TestDeleteSDKRemovesProcessPaneAndCascadesLastWindow(t *testing.T) {
+	c, path, window, _, panes := processDeleteWindowFixture(t, 1)
+	result, err := c.Delete(context.Background(), core.DeleteRequest{Kind: core.KindPane, Ref: "uid:" + panes[0], SocketPath: filepath.Join(t.TempDir(), "s"), Confirm: true})
+	if err != nil || !result.Committed || len(result.Processes) != 1 {
+		t.Fatalf("process Pane delete: %+v %v", result, err)
+	}
+	saved, err := store.NewStore(path).LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := saved.Pane(panes[0]); ok {
+		t.Fatal("process Pane remains")
+	}
+	if _, ok := saved.Window(window); ok {
+		t.Fatal("the last Pane's virtual Window remains")
+	}
+}
+
+func TestDeleteSDKProcessWindowDryRunChangesNothing(t *testing.T) {
+	c, path, window, agents, _ := processDeleteWindowFixture(t, 2)
+	before, _ := os.ReadFile(path)
+	result, err := c.Delete(context.Background(), core.DeleteRequest{Kind: core.KindWindow, Ref: "uid:" + window, SocketPath: filepath.Join(t.TempDir(), "s"), DryRun: true})
+	if err != nil || result.Committed || len(result.Processes) != len(agents) {
+		t.Fatalf("dry run: %+v %v", result, err)
+	}
+	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
+		t.Fatal("dry run changed the Registry")
+	}
+}
+
+func TestDeleteSDKProcessWindowNeedsConfirmation(t *testing.T) {
+	c, path, window, _, _ := processDeleteWindowFixture(t, 1)
+	before, _ := os.ReadFile(path)
+	result, err := c.Delete(context.Background(), core.DeleteRequest{Kind: core.KindWindow, Ref: "uid:" + window, SocketPath: filepath.Join(t.TempDir(), "s")})
+	var refusal *Refusal
+	if !errors.As(err, &refusal) || refusal.Code != CodeConfirmationRequired || result.Committed {
+		t.Fatalf("unconfirmed delete: %+v %v", result, err)
+	}
+	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
+		t.Fatal("refused delete changed the Registry")
 	}
 }
 

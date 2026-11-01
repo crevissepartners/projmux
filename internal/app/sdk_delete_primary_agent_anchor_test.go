@@ -3,7 +3,6 @@ package app
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,7 +11,6 @@ import (
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	store "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/testutil/liveguard"
-	"github.com/crevissepartners/projmux/pkg/projmux"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
 )
 
@@ -82,19 +80,6 @@ func TestDeletePrimaryAgentWindowSDKCLIParity(t *testing.T) {
 					req.DryRun, req.Confirm = !commit, commit
 					if sdk {
 						result, err := client.Delete(context.Background(), req)
-						if runtime == metadata.RuntimeProcess {
-							// Keep the existing SDK boundary: direct process Window
-							// deletion is unsupported, not a new feature of this fix.
-							var refusal *projmux.Refusal
-							if !errors.As(err, &refusal) || refusal.Code != projmux.CodeDeleteProcessUnsupported || result.Committed {
-								t.Fatalf("process SDK boundary: %+v %v", result, err)
-							}
-							after, err := os.ReadFile(path)
-							if err != nil || !bytes.Equal(before, after) {
-								t.Fatalf("process refusal changed Registry: %v", err)
-							}
-							continue
-						}
 						if err != nil || result.Committed != commit || len(result.Plan.Targets) != 1 {
 							t.Fatalf("SDK delete: %+v %v", result, err)
 						}
