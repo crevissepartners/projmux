@@ -575,3 +575,47 @@ func TestRelaunchProcessSocketRequestIsIndependentFromClientDefault(t *testing.T
 		})
 	}
 }
+
+// Every shape the opt-in refuses is paired with the same request without it:
+// the control must not reach the AllowHostLost refusal, so the cause is the
+// field and not an older check that happens to refuse the same request.
+func TestRelaunchAllowHostLostRefusesWrongShape(t *testing.T) {
+	const marker = "AllowHostLost recovers a process Agent on its own host only"
+	process, _, processUID, _ := sdkStopFixture(t)
+	tmux, _, plan, _ := relaunchFailureFixture(t)
+	tmuxUID := plan.Target.Metadata.UID
+	journal := runtime.CodexHostTransferPath(process.paths.StateDir, processUID)
+	for name, tc := range map[string]struct {
+		client  *Client
+		uid     string
+		req     core.RelaunchAgentRequest
+		journal bool
+	}{
+		"process source moved to tmux":   {process, processUID, core.RelaunchAgentRequest{Ref: "uid:" + processUID, Host: "tmux", DryRun: true}, false},
+		"tmux source":                    {tmux, tmuxUID, core.RelaunchAgentRequest{Ref: "uid:" + tmuxUID, DryRun: true}, false},
+		"tmux source to process":         {tmux, tmuxUID, core.RelaunchAgentRequest{Ref: "uid:" + tmuxUID, Host: "process", Detach: true, DryRun: true}, false},
+		"unfinished Codex host transfer": {process, processUID, core.RelaunchAgentRequest{Ref: "uid:" + processUID, Host: "process", Detach: true, DryRun: true}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if tc.journal {
+				if err := os.MkdirAll(filepath.Dir(journal), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(journal, []byte("{}"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				defer os.Remove(journal)
+			}
+			_, control := tc.client.RelaunchAgent(context.Background(), tc.req)
+			if control != nil && strings.Contains(control.Error(), marker) {
+				t.Fatalf("control without AllowHostLost reached the refusal: %v", control)
+			}
+			tc.req.AllowHostLost = true
+			_, err := tc.client.RelaunchAgent(context.Background(), tc.req)
+			var refused *Refusal
+			if !errors.As(err, &refused) || refused.Code != CodeRelaunchRequestInvalid || refused.AgentUID != tc.uid || !strings.Contains(err.Error(), marker) {
+				t.Fatalf("want %s for %s with %q got %v", CodeRelaunchRequestInvalid, tc.uid, marker, err)
+			}
+		})
+	}
+}

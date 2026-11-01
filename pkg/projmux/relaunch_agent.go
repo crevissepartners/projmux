@@ -96,6 +96,9 @@ func (c *Client) relaunchAgent(ctx context.Context, q core.RelaunchAgentRequest,
 		_, statErr := os.Lstat(runtime.CodexHostTransferPath(c.paths.StateDir, target.Metadata.UID))
 		pendingTransfer = !errors.Is(statErr, os.ErrNotExist)
 	}
+	if q.AllowHostLost && (!processSource || pendingTransfer || (q.Host != "" && q.Host != "process")) {
+		return out, &Refusal{Code: CodeRelaunchRequestInvalid, AgentUID: target.Metadata.UID, message: "RelaunchAgentRequest.AllowHostLost recovers a process Agent on its own host only"}
+	}
 	if processSource || pendingTransfer || (q.Host != "" && q.Host != "tmux") {
 		if processSource && q.Host != "tmux" {
 			q.SocketPath = requestSocket

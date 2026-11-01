@@ -1426,9 +1426,16 @@ the exact resources before public Stop/Resume/Delete recovery and do not retry
 automatically. The existing CLI admission and output contracts are unchanged.
 `CodeRelaunchProcessUnsupported` remains exported for source compatibility.
 
-Host-lost recovery is outside this SDK relaunch contract; use the public CLI
-`agent relaunch` recovery path after inspecting the exact resources. The SDK
-refuses absent ownership evidence without replacing it with an invented Wait.
+`RelaunchAgentRequest.AllowHostLost` (default false) opts a same-host process
+relaunch into the CLI `agent relaunch` recovery of an Agent whose host process
+and child are both gone. CORE proves the absence again; the only caller
+evidence is the optional `Binding` fence. With false or omitted the request is
+refused as today, and the SDK never invents a Wait or ownership evidence. True
+on an Agent that is not host-lost behaves like false. Before any effect,
+`CodeRelaunchRequestInvalid` refuses true with a tmux source or destination, a
+host move, an unfinished Codex host transfer, or a Claude Agent with an empty
+`Prompt` (a `DryRun` is not refused). A stale `Binding`, or a source that changed
+after planning, is `CodeRelaunchSourceStale`.
 
 ## Profile name validation
 
