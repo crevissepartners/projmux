@@ -91,6 +91,7 @@ Client.ListRecordedSessions	Public v0 complete recorded session history SDK, con
 Client.ListResources	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 Client.ListResumeCandidates	Public v0 resume candidate SDK closure for external frontends: the CLI resume picker's service discovery with its depth, limit, budgets and Codex catalog; covered by TestListResumeCandidatesMatchesPicker.
 Client.MarkAgentOffline	Public v0 lost-host process retirement API; exercised by SDK/CLI parity, kernel absence refusal, no-op and external consumer tests.
+Client.MarkProcessOwner	Public v0 activation-fenced process-owner label write; verified by SDK stale-binding, foreign-owner and idempotence tests.
 Client.MessageArchiveFiles	Public SDK entrypoint for caller-owned archive paths without file access.
 Client.MessageStatus	Public SDK Client.MessageStatus entrypoint; external consumers follow original receipts without replay.
 Client.Models	Public v0 Agent catalog SDK entrypoint or its read-only adapter; retained for external modules and exercised by catalog parity and GOWORK=off consumer tests.
