@@ -1683,6 +1683,50 @@ protect an Agent. Setting the label grants no deletion permission. Web session
 authorization and the consumer's `agent.protection` mutation lock remain the
 consumer's responsibility; this method supplies neither.
 
+### Process Agent owner mark
+
+`MarkProcessOwner` writes the label `process-owner=<Owner>` on one process
+Agent, only while `Binding` is that Agent's current process activation. Take the
+`core.ProcessBinding` unchanged from the Resume, Relaunch or StartReserved
+result; all seven fields are required. The activation check, the comparison with
+the existing value and the write share one locked Registry update. The key is
+fixed; this is not a general label write.
+
+```go
+result, err := client.MarkProcessOwner(ctx, core.MarkProcessOwnerRequest{
+    Binding: binding,
+    Owner:   "web",
+})
+// Set ReplaceForeign: true to overwrite a different non-empty owner.
+```
+
+`Owner` is stored as given and must not be blank. The same value succeeds with
+`Changed` false and no Registry rewrite. `Previous` is the `process-owner` value
+before the call on every success: `Owner` itself when unchanged, empty when none
+was set. `Agent` is the projection from the same Registry commit.
+
+Handle `*projmux.Refusal` with `errors.As`; each carries `AgentUID` when an Agent
+is known and leaves the Registry unchanged:
+
+- `CodeProcessOwnerMarkStale`: `Binding` is not the current activation (a
+  replaced generation or operation, a retired or not yet started process, a
+  tmux Agent, or any binding field that does not match).
+- `CodeProcessOwnerMarkForeign`: another non-empty owner is set and
+  `ReplaceForeign` is false.
+- `CodeResourceNotFound`: the Agent does not exist.
+- `CodeSelectorInvalid` with `Field` `MarkProcessOwnerRequest.Owner` or
+  `MarkProcessOwnerRequest.Binding.<field>`: blank Owner or a missing field.
+
+The check compares `Binding` with the recorded activation; it does not prove that
+the owner process is alive and grants no control authority. The label is ordinary
+Agent metadata: the generic label command and other label writers can also set or
+remove `process-owner`.
+
+The SDK writes no diagnostics journal; recording a refusal is the caller's job.
+`ResumeAgent`, `RelaunchAgent` and `StartReservedAgent` still leave labels
+unchanged. Cancellation before the locked write preserves
+`errors.Is(err, context.Canceled)`.
+
 ### Prepared Claude process resumes
 
 `PrepareAgentResume` explicitly freezes the existing process Claude resume

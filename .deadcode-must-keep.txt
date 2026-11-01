@@ -91,6 +91,7 @@ Client.ListRecordedSessions	Public v0 complete recorded session history SDK, con
 Client.ListResources	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 Client.ListResumeCandidates	Public v0 resume candidate SDK closure for external frontends: the CLI resume picker's service discovery with its depth, limit, budgets and Codex catalog; covered by TestListResumeCandidatesMatchesPicker.
 Client.MarkAgentOffline	Public v0 lost-host process retirement API; exercised by SDK/CLI parity, kernel absence refusal, no-op and external consumer tests.
+Client.MarkProcessOwner	Public v0 activation-fenced process-owner label write; verified by SDK stale-binding, foreign-owner and idempotence tests.
 Client.MessageArchiveFiles	Public SDK entrypoint for caller-owned archive paths without file access.
 Client.MessageStatus	Public SDK Client.MessageStatus entrypoint; external consumers follow original receipts without replay.
 Client.Models	Public v0 Agent catalog SDK entrypoint or its read-only adapter; retained for external modules and exercised by catalog parity and GOWORK=off consumer tests.
@@ -380,6 +381,7 @@ LoadStatusbarRowOneVisibilitySet	Internal configuration-generation compatibility
 LoadStatusbarRowOneVisibilityState	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
 Localizer.Styled	Styled-fragment lookup retained as the test seam that pins the kind-mismatch error of the live catalog lookup.
 LookupCanonicalRoute	Canonical spelling lookup is retained for route coverage and generated-reference consumers.
+MarkProcessOwner	Public MarkProcessOwner SDK closure: decides and writes the activation-fenced process-owner label in one Registry update; the binary does not import pkg/projmux, covered by TestMarkProcessOwnerDecidesAndWritesInOneUpdate.
 MarkTest	Test-only CLI attribution proof: liveguard.MarkTest names the calling test in the provider stand-in guard log so a PATH codex/claude invocation is attributed to its parent test; called only from process-host CLI tests and covered by TestMarkTestNamesTheCallerInTheGuardLog, TestMarkTestRefusesAParallelTest and TestMarkedWrapperSurvivesAnAllowlistedEnvironment.
 Matrix	Whole cardinality table copy retained as the test seam that pins the declared verb-kind cells and their canonical route adoption.
 MeasureSameTickReplacement	Test-only host probe retained: socket-replacement tests skip only where a same-path replacement shares the original socket identity.
