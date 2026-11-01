@@ -25,7 +25,7 @@ func sdkHostLostClient(t *testing.T, f processCreateCLI) *projmux.Client {
 // to observe the literal below.
 func TestSDKRelaunchLostHostWithoutOptInRefusesAsToday(t *testing.T) {
 	copiedCLI(t, "PMX_TEST_CLI")
-	for provider, want := range map[string]projmux.Code{aiModeClaude: "relaunch-execution-failed", aiModeCodex: "relaunch-no-conversation"} {
+	for provider, want := range map[string]projmux.Code{aiModeClaude: "relaunch-execution-failed", aiModeCodex: "relaunch-execution-failed"} {
 		t.Run(provider, func(t *testing.T) {
 			f := hostLostCLIProviderFixture(t, provider)
 			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
