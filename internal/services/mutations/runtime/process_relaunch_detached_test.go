@@ -126,9 +126,12 @@ func TestCheckRelaunchPreparationOnValidRegistry(t *testing.T) {
 		mutate func(*m.Registry, *ProcessResumePreparation)
 		want   error
 	}{
-		"exact proof":            {func(*m.Registry, *ProcessResumePreparation) {}, nil},
-		"agent still running":    {func(r *m.Registry, _ *ProcessResumePreparation) { r.Agents[0].Status.Phase = m.PhaseRunning }, processhost.ErrStale},
-		"pane still activated":   {func(r *m.Registry, _ *ProcessResumePreparation) { _, _, p := stopFixture(); r.Panes[0].Status.Activation = p.Status.Activation }, processhost.ErrStale},
+		"exact proof":         {func(*m.Registry, *ProcessResumePreparation) {}, nil},
+		"agent still running": {func(r *m.Registry, _ *ProcessResumePreparation) { r.Agents[0].Status.Phase = m.PhaseRunning }, processhost.ErrStale},
+		"pane still activated": {func(r *m.Registry, _ *ProcessResumePreparation) {
+			_, _, p := stopFixture()
+			r.Panes[0].Status.Activation = p.Status.Activation
+		}, processhost.ErrStale},
 		"binding differs":        {func(_ *m.Registry, p *ProcessResumePreparation) { p.Binding.Generation += "x" }, processhost.ErrStale},
 		"pane differs":           {func(_ *m.Registry, p *ProcessResumePreparation) { p.PaneUID = "other" }, processhost.ErrStale},
 		"agent points elsewhere": {func(r *m.Registry, _ *ProcessResumePreparation) { r.Agents[0].Status.PaneRef = "other" }, processhost.ErrStale},
