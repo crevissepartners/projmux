@@ -207,6 +207,13 @@ func processDeleteWindowFixture(t *testing.T, agents int) (c *Client, path, wind
 
 func TestDeleteSDKRemovesProcessWindowWithMemberAgents(t *testing.T) {
 	c, path, window, agents, panes := processDeleteWindowFixture(t, 2)
+	// The Root is the managed root session owner the runtime classifies for the
+	// Window, which is the fixture's Project, not the Window itself.
+	registered, err := store.NewStore(path).LoadReadOnly()
+	if err != nil || len(registered.Projects) != 1 {
+		t.Fatalf("fixture Registry: %v", err)
+	}
+	project := registered.Projects[0].Metadata.UID
 	runner := &deleteFailureRunner{path: filepath.Join(t.TempDir(), "s")}
 	result, err := c.deleteWithRunner(context.Background(), core.DeleteRequest{Kind: core.KindWindow, Ref: "uid:" + window, SocketPath: runner.path, Confirm: true}, runner)
 	if err != nil || !result.Committed || len(result.Processes) != len(agents) {
@@ -214,7 +221,7 @@ func TestDeleteSDKRemovesProcessWindowWithMemberAgents(t *testing.T) {
 	}
 	got := map[string]bool{}
 	for _, process := range result.Processes {
-		got[process.AgentUID] = process.WindowUID == window && process.RootKind == core.KindWindow && process.RootUID == window
+		got[process.AgentUID] = process.WindowUID == window && process.RootKind == core.KindProject && process.RootUID == project
 	}
 	for _, agent := range agents {
 		if !got[agent] {
