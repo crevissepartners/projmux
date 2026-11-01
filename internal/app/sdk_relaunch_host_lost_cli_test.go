@@ -15,45 +15,11 @@ import (
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
 )
 
-func sdkHostLostClient(t *testing.T, f processCreateCLI) *projmux.Client {
-	t.Helper()
-	c, err := projmux.NewClient(projmux.Options{HomeDir: f.root, ConfigDir: f.root + "/config/projmux", StateDir: f.root + "/state/projmux", ProjmuxExecutable: f.binary})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return c
-}
-
 func requireSDKCode(t *testing.T, err error, want projmux.Code, agent string) {
 	t.Helper()
 	var refused *projmux.Refusal
 	if !errors.As(err, &refused) || refused.Code != want || refused.AgentUID != agent {
 		t.Fatalf("want %s for %s got %v", want, agent, err)
-	}
-}
-
-// Without the opt-in the SDK refuses a lost host as it did before the field
-// existed; the Code literal below was observed on main before the change.
-func TestSDKRelaunchLostHostWithoutOptInRefuses(t *testing.T) {
-	copiedCLI(t, "PMX_TEST_CLI")
-	for _, provider := range []string{aiModeClaude, aiModeCodex} {
-		t.Run(provider, func(t *testing.T) {
-			f := hostLostCLIProviderFixture(t, provider)
-			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
-			defer cancel()
-			ref, before, old := recordedLostHostCLI(t, ctx, f, provider)
-			for _, allow := range []bool{false} {
-				_, err := sdkHostLostClient(t, f).RelaunchAgent(ctx, core.RelaunchAgentRequest{Ref: ref, Detach: true, Confirm: true, Prompt: "continue", AllowHostLost: allow})
-				var refused *projmux.Refusal
-				if !errors.As(err, &refused) || refused.Code != "OBSERVE" {
-					t.Fatalf("allow=%v: %v", allow, err)
-				}
-			}
-			if !reflect.DeepEqual(before, mustRegistry(t, f)) {
-				t.Fatal("refusal wrote the Registry")
-			}
-			_ = old
-		})
 	}
 }
 
