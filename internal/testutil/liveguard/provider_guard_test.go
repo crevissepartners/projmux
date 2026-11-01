@@ -91,6 +91,13 @@ func TestProviderGuardFailsAPackageThatRunsTheRealProvider(t *testing.T) {
 			t.Errorf("stderr lacks %q:\n%s", want, stderr)
 		}
 	}
+	// The record attributes the run: the stand-in's own process, the guard
+	// owner it descends from, and the chain between them.
+	for _, want := range []string{"owner-is-ancestor=yes", "ancestor[0] pid=", "exe="} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr lacks the attribution %q:\n%s", want, stderr)
+		}
+	}
 	assertProviderGuardChildCleanedUp(t, stderr)
 
 	code, stderr = runProviderGuardChild(t, "clean")
@@ -142,7 +149,7 @@ func runProviderGuardChild(t *testing.T, mode string, extraEnv ...string) (int, 
 	for _, entry := range os.Environ() {
 		key, value, _ := strings.Cut(entry, "=")
 		switch {
-		case key == providerGuardChildEnv || key == rootEnv || key == fixtureOptInEnv:
+		case key == providerGuardChildEnv || key == rootEnv || key == fixtureOptInEnv || key == "PMX_TEST_PARENT_TEST":
 			continue
 		case key == "PATH":
 			var kept []string
@@ -192,5 +199,29 @@ func assertProviderGuardChildCleanedUp(t *testing.T, stderr string) {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Errorf("guard child left %s behind (stat err %v)", path, err)
 		}
+	}
+}
+
+// TestProviderGuardNamesTheParentTest is the attribution half: the failing log
+// names the test that started the command chain, taken from the stand-in's own
+// environment, and says "unmarked" when no test marked the chain. The parent
+// test is an exact name, not a list of candidates.
+func TestProviderGuardNamesTheParentTest(t *testing.T) {
+	t.Parallel()
+
+	code, stderr := runProviderGuardChild(t, "runs-codex", "PMX_TEST_PARENT_TEST=TestCallerOfTheRealCodex")
+	if code != 1 {
+		t.Fatalf("guard child exit = %d, want 1; stderr:\n%s", code, stderr)
+	}
+	if want := "parent-test=TestCallerOfTheRealCodex"; !strings.Contains(stderr, want) {
+		t.Errorf("stderr lacks %q:\n%s", want, stderr)
+	}
+
+	code, stderr = runProviderGuardChild(t, "runs-codex")
+	if code != 1 {
+		t.Fatalf("guard child exit = %d, want 1; stderr:\n%s", code, stderr)
+	}
+	if want := "parent-test=unmarked"; !strings.Contains(stderr, want) {
+		t.Errorf("stderr lacks %q:\n%s", want, stderr)
 	}
 }

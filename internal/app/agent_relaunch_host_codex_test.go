@@ -136,6 +136,17 @@ func codexHostMoveCLIFixture(t *testing.T) (processCreateCLI, coremetadata.Agent
 		}
 		f.store = intmetadata.NewStore(intmetadata.PathFor(paths.StateDir))
 	}
+	// Last cleanup before the fixture root goes (t.Cleanup is LIFO): the socket
+	// cleanups below stop only what they can reach through a socket, and a
+	// broker or observer that is already running when the fixture is created,
+	// or a child that owns no socket, outlives them and keeps probing `codex` on
+	// its PATH after the root is gone. This stops every process that carries the
+	// fixture root or names its state directory, whatever sockets it owns.
+	reapPaths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stopFixtureProcesses(t, f.root, reapPaths.StateDir) })
 	codexHome, err := os.MkdirTemp(os.TempDir(), "c")
 	if err != nil {
 		t.Fatal(err)
@@ -475,6 +486,92 @@ func TestCodexHostMoveActualCLIRecovery(t *testing.T) {
 	for _, fault := range []string{"", "init", "observer", "split"} {
 		t.Run(fault, func(t *testing.T) { codexHostMoveRecoveryCLI(t, fault) })
 	}
+}
+
+// TestCodexHostMoveFixtureReapsBaselineProcess pins the fixture's final reap.
+// On every platform it checks that the shared fixture's cleanup removes the
+// fixture root. On Linux, which reads /proc, it also checks the selection
+// contract: a process that carries the fixture root, is still running when
+// the final cleanup begins, and owns no socket the fixture's socket cleanups
+// can see is stopped before the fixture root is removed. The run 1698
+// survivor, a broker alive at the last cleanup, is such a process. Other
+// platforms say nothing about process reaping here. The decoy's own pid, uid
+// and birth are kept and the verdict is its exit by SIGTERM, never a scan.
+func TestCodexHostMoveFixtureReapsBaselineProcess(t *testing.T) {
+	if os.Getenv("PMX_TEST_CLI") == "" {
+		t.Skip("set PMX_TEST_CLI")
+	}
+	_, procErr := os.Stat("/proc/self/environ")
+	var (
+		root     string
+		stateDir string
+		decoy    coremetadata.ProcessIdentity
+		exited   = make(chan error, 1)
+		cmd      *exec.Cmd
+	)
+	// Registered before the fixture, so it runs after every fixture cleanup.
+	t.Cleanup(func() {
+		if root != "" {
+			if _, err := os.Stat(root); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("fixture root %s was not removed by the fixture cleanup: %v", root, err)
+			}
+		}
+		if cmd == nil {
+			return
+		}
+		select {
+		case err := <-exited:
+			var exit *exec.ExitError
+			if !errors.As(err, &exit) {
+				t.Errorf("baseline decoy pid=%d ended without a signal: %v", decoy.PID, err)
+				return
+			}
+			if status, ok := exit.Sys().(syscall.WaitStatus); !ok || !status.Signaled() || status.Signal() != syscall.SIGTERM {
+				t.Errorf("baseline decoy pid=%d was not stopped by the fixture reap's SIGTERM: %v", decoy.PID, err)
+			}
+			return
+		case <-time.After(3 * time.Second):
+		}
+		t.Errorf("baseline fixture process survived the fixture cleanup: pid=%d birth=%v", decoy.PID, decoy)
+		// The verdict is recorded; now collect everything the fixture owned,
+		// including a real baseline process besides the decoy, by the same
+		// exact-identity selection the fixture uses.
+		stopFixtureProcesses(t, root, stateDir)
+		if current, _, err := localipc.Process(decoy.PID); err == nil && current == decoy {
+			if err := syscall.Kill(decoy.PID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+				t.Errorf("could not stop the surviving decoy pid=%d: %v", decoy.PID, err)
+			}
+		}
+		select {
+		case <-exited:
+		case <-time.After(3 * time.Second):
+			t.Errorf("surviving decoy pid=%d is still running after SIGKILL", decoy.PID)
+		}
+	})
+	f, _, _, _ := codexHostMoveCLIFixture(t)
+	root = f.root
+	if procErr != nil {
+		return
+	}
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateDir = paths.StateDir
+	started := exec.Command("sleep", "300")
+	started.Env = append(os.Environ(), "PMX_TEST_PROCESS_ROOT="+f.root)
+	started.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := started.Start(); err != nil {
+		t.Fatal(err)
+	}
+	identity, _, err := localipc.Process(started.Process.Pid)
+	if err != nil || identity.OwnerUID != uint32(os.Getuid()) {
+		_ = started.Process.Kill()
+		_ = started.Wait()
+		t.Fatalf("decoy identity: %v", err)
+	}
+	decoy, cmd = identity, started
+	go func() { exited <- started.Wait() }()
 }
 
 // Exercise the staged consumer through the copied CLI. The provider is held
@@ -1297,6 +1394,10 @@ func stopFixtureProcesses(t *testing.T, root, stateDir string) {
 			continue
 		}
 		if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
+			// ESRCH: the process left on its own after the birth check.
+			if !errors.Is(err, syscall.ESRCH) {
+				t.Errorf("could not stop fixture process pid=%d birth=%v: %v", pid, process, err)
+			}
 			continue
 		}
 		waitCodexFixturePeerExit(t, process)
