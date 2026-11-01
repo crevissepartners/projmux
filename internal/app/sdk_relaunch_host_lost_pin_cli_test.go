@@ -21,7 +21,8 @@ func sdkHostLostClient(t *testing.T, f processCreateCLI) *projmux.Client {
 }
 
 // Without the opt-in the SDK refuses a lost host as it did before the field
-// existed; the Code literal below was observed on main before the change.
+// existed. This file names no new API, so it also runs against the base commit
+// to observe the literal below.
 func TestSDKRelaunchLostHostWithoutOptInRefusesAsToday(t *testing.T) {
 	copiedCLI(t, "PMX_TEST_CLI")
 	for _, provider := range []string{aiModeClaude, aiModeCodex} {
@@ -32,7 +33,7 @@ func TestSDKRelaunchLostHostWithoutOptInRefusesAsToday(t *testing.T) {
 			ref, before, old := recordedLostHostCLI(t, ctx, f, provider)
 			_, err := sdkHostLostClient(t, f).RelaunchAgent(ctx, core.RelaunchAgentRequest{Ref: ref, Detach: true, Confirm: true, Prompt: "continue"})
 			var refused *projmux.Refusal
-			if !errors.As(err, &refused) || refused.Code != "OBSERVE" || refused.AgentUID != old.Binding.AgentUID {
+			if !errors.As(err, &refused) || refused.Code != "relaunch-no-conversation" || refused.AgentUID != old.Binding.AgentUID {
 				t.Fatalf("refusal: %v", err)
 			}
 			if !reflect.DeepEqual(before, mustRegistry(t, f)) {
