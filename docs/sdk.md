@@ -1431,11 +1431,38 @@ relaunch into the CLI `agent relaunch` recovery of an Agent whose host process
 and child are both gone. CORE proves the absence again; the only caller
 evidence is the optional `Binding` fence. With false or omitted the request is
 refused as today, and the SDK never invents a Wait or ownership evidence. True
-on an Agent that is not host-lost behaves like false. Before any effect,
-`CodeRelaunchRequestInvalid` refuses true with a tmux source or destination, a
-host move, an unfinished Codex host transfer, or a Claude Agent with an empty
-`Prompt` (a `DryRun` is not refused). A stale `Binding`, or a source that changed
-after planning, is `CodeRelaunchSourceStale`.
+on an Agent that is not host-lost behaves like false.
+
+Before any effect, `CodeRelaunchRequestInvalid` refuses true with a tmux source
+or destination, a host move, or an unfinished Codex host transfer. It also
+refuses the execution of a lost-host Claude relaunch with an empty `Prompt`; this
+applies only to a Claude Agent that is actually host-lost, and a `DryRun` of it is
+not refused.
+
+`CodeRelaunchSourceStale` refuses a stale `Binding`. It also refuses a
+host-lost source that changed after planning; that classification is limited to
+the `host-lost preparation source changed` refusal.
+
+The result carries the CLI's own answers for that lost-host Claude relaunch with
+an empty `Prompt`. `PromptRequired` is true and `RelaunchCommand` names the CLI
+recovery (`projmux agent relaunch uid:<agent> --detach --yes -- <prompt>`), in a
+`DryRun` result and also in the partial result that accompanies the refusal of its
+execution. Both stay empty and false otherwise. The SDK copies them and never
+computes them.
+
+`RelaunchAgentRequest.Prepare` (default false) asks a same-host process Claude
+relaunch with `Detach` and an empty `Prompt` for a frozen, ownerless recipe
+instead of the waiting claim. The result carries `Preparation`, the same proof
+`PrepareAgentResume` returns, and `ClaimWaiting` is false: the Agent is Offline on
+its own Pane with no owner, claim or child, and `Outcome` reads as it does for
+`ClaimWaiting`. Start the first input as in "Prepared Claude process resumes":
+validate the proof, then `ResumeAgent{Prompt, Binding: proof.Binding,
+Preparation: &proof}`. The proof is observed evidence, not authorization. Omitted
+or false, the relaunch keeps the waiting claim and `Preparation` stays nil.
+`Prepare` keeps this shape for a `DryRun` too: a `DryRun` of the right shape only
+plans and has no `Preparation`. A Codex Agent, a non-empty `Prompt`, a tmux source
+or destination, a host move, or a missing `Detach` is refused before any effect
+with `CodeRelaunchRequestInvalid`.
 
 ## Profile name validation
 

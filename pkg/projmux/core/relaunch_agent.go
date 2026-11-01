@@ -7,6 +7,8 @@ package core
 // Process destinations require Detach; Binding optionally fences the source generation.
 // AllowHostLost opts a same-host process relaunch into recovering an Agent whose
 // host process and child are both gone, like PrepareAgentResumeRequest.AllowHostLost.
+// Prepare asks a same-host process Claude relaunch with an empty Prompt and
+// Detach to leave a frozen, ownerless recipe and return its proof in Preparation.
 type RelaunchAgentRequest struct {
 	Ref, Project, Window  string
 	Host, Prompt          string
@@ -18,6 +20,7 @@ type RelaunchAgentRequest struct {
 	SocketPath            string
 	DryRun, Confirm       bool
 	AllowHostLost         bool
+	Prepare               bool
 }
 
 // RelaunchAgentResult keeps the plan even when execution fails. Recovery names
@@ -28,6 +31,10 @@ type RelaunchAgentRequest struct {
 // CurrentModel and CurrentEffort are the model and effort the Agent records
 // from its last launch, the CLI's currentModel and currentEffort. They can
 // differ from CurrentSettings, which holds what the layers resolve to now.
+// PromptRequired and RelaunchCommand are the CLI's promptRequired and
+// relaunchCommand: a lost-host Claude relaunch with an empty Prompt needs a first
+// prompt, and RelaunchCommand names the recovery. They also accompany the refusal
+// of that execution. Preparation is non-nil only when Prepare froze a recipe.
 // SettingsApplication is non-nil only once the resume step has completed; a
 // dry run, an unchanged outcome or a refusal before resume leaves it nil.
 type RelaunchAgentResult struct {
@@ -36,6 +43,9 @@ type RelaunchAgentResult struct {
 	CurrentModel, CurrentEffort                      string
 	Binding                                          ProcessBinding
 	ClaimWaiting                                     bool
+	PromptRequired                                   bool
+	RelaunchCommand                                  string
+	Preparation                                      *AgentResumePreparation
 	Phase                                            AgentPhase
 	Interaction                                      string
 	PaneUID, NewPaneUID                              string

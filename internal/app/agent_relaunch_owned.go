@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 type agentProcessRelaunchState string
@@ -36,6 +37,8 @@ type agentHostTransferResult struct {
 	Owned           *agentHostTransferLifetime
 	stopAdmission   func() bool
 	processRecovery string
+	// proof is the SDK's full evidence of Prepared; Prepared keeps its four fields.
+	proof *mutationruntime.ProcessResumePreparation
 }
 
 type agentHostTransferLifetime struct {

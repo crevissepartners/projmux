@@ -619,3 +619,45 @@ func TestRelaunchAllowHostLostRefusesWrongShape(t *testing.T) {
 		})
 	}
 }
+
+// Prepare keeps its whole shape for a dry run too, and refuses before any effect.
+func TestRelaunchPrepareRefusesWrongShape(t *testing.T) {
+	const marker = "RelaunchAgentRequest.Prepare requires a same-host process Claude relaunch"
+	process, _, processUID, _ := sdkStopFixture(t)
+	tmux, _, plan, _ := relaunchFailureFixture(t)
+	tmuxUID := plan.Target.Metadata.UID
+	journal := runtime.CodexHostTransferPath(process.paths.StateDir, processUID)
+	for name, tc := range map[string]struct {
+		client  *Client
+		uid     string
+		req     core.RelaunchAgentRequest
+		journal bool
+	}{
+		"codex dry run":                  {process, processUID, core.RelaunchAgentRequest{Ref: "uid:" + processUID, Detach: true, DryRun: true}, false},
+		"codex execution":                {process, processUID, core.RelaunchAgentRequest{Ref: "uid:" + processUID, Detach: true, Confirm: true}, false},
+		"prompt":                         {process, processUID, core.RelaunchAgentRequest{Ref: "uid:" + processUID, Detach: true, Prompt: "continue", DryRun: true}, false},
+		"no detach":                      {process, processUID, core.RelaunchAgentRequest{Ref: "uid:" + processUID, DryRun: true}, false},
+		"process source moved to tmux":   {process, processUID, core.RelaunchAgentRequest{Ref: "uid:" + processUID, Host: "tmux", DryRun: true}, false},
+		"tmux source":                    {tmux, tmuxUID, core.RelaunchAgentRequest{Ref: "uid:" + tmuxUID, DryRun: true}, false},
+		"tmux source to process":         {tmux, tmuxUID, core.RelaunchAgentRequest{Ref: "uid:" + tmuxUID, Host: "process", Detach: true, DryRun: true}, false},
+		"unfinished Codex host transfer": {process, processUID, core.RelaunchAgentRequest{Ref: "uid:" + processUID, Host: "process", Detach: true, DryRun: true}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if tc.journal {
+				if err := os.MkdirAll(filepath.Dir(journal), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(journal, []byte("{}"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				defer os.Remove(journal)
+			}
+			tc.req.Prepare = true
+			_, err := tc.client.RelaunchAgent(context.Background(), tc.req)
+			var refused *Refusal
+			if !errors.As(err, &refused) || refused.Code != CodeRelaunchRequestInvalid || refused.AgentUID != tc.uid || !strings.Contains(err.Error(), marker) {
+				t.Fatalf("want %s for %s with %q got %v", CodeRelaunchRequestInvalid, tc.uid, marker, err)
+			}
+		})
+	}
+}

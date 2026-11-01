@@ -22,6 +22,12 @@ func (c *agentCommand) runSDKProcessRelaunchOwner(life context.Context, cancel c
 	} else if journal != nil {
 		return c.runSDKCodexTransferRecovery(life, session, reg, target, request, path, journal)
 	}
+	// Prepare keeps its shape for a dry run too; the SDK refuses it first.
+	if request.prepare && (m.NormalizeProvider(target.Spec.Provider) != aiModeClaude || strings.TrimSpace(strings.Join(request.prompt, " ")) != "" || !request.detach || (request.host != "" && request.host != "process")) {
+		err := usageError("agent relaunch: Prepare requires a same-host process Claude relaunch with Detach and an empty Prompt; nothing was changed")
+		_ = session.encoder.Encode(processDetachedReply{Owner: session.identity, Error: err.Error(), ErrorCode: "relaunch-request-invalid"})
+		return err
+	}
 	preview := request
 	preview.dryRun = true
 	var planned agentHostTransferResult
@@ -34,7 +40,7 @@ func (c *agentCommand) runSDKProcessRelaunchOwner(life context.Context, cancel c
 		return fail(err)
 	}
 	if request.dryRun {
-		return finishSDKRelaunch(session, planned.Result)
+		return finishSDKRelaunch(session, planned.Result, nil)
 	}
 	if planned.Result.PromptRequired {
 		err := usageError("agent relaunch: lost-host Claude requires an explicit first prompt; nothing was changed; recover with: " + planned.Result.RelaunchCommand)
@@ -69,7 +75,7 @@ func (c *agentCommand) runSDKProcessRelaunchOwner(life context.Context, cancel c
 	}
 	// Process destinations return through finishOwned/finishClaim. A tmux
 	// destination completes synchronously and acknowledges its exact rebind.
-	return finishSDKRelaunch(session, c.hostTransferResult.Result)
+	return finishSDKRelaunch(session, c.hostTransferResult.Result, c.hostTransferResult.proof)
 }
 
 // An unfinished Codex host transfer takes precedence over every relaunch, as
@@ -126,12 +132,12 @@ func (c *agentCommand) runSDKCodexTransferRecovery(life context.Context, session
 		return fail(processhost.ErrStale)
 	}
 	result.Outcome, result.NewPaneUID = personaOutcomeResumed, recovered
-	return finishSDKRelaunch(session, result)
+	return finishSDKRelaunch(session, result, nil)
 }
 
-func finishSDKRelaunch(s *processDetachedRelaunchSession, result agentRelaunchResult) error {
+func finishSDKRelaunch(s *processDetachedRelaunchSession, result agentRelaunchResult, proof *mutationruntime.ProcessResumePreparation) error {
 	raw, _ := json.Marshal(result)
-	if err := s.encoder.Encode(processDetachedReply{Owner: s.identity, Binding: processhost.Binding{Agent: result.AgentUID}, Phase: "complete", Relaunch: raw}); err != nil {
+	if err := s.encoder.Encode(processDetachedReply{Owner: s.identity, Binding: processhost.Binding{Agent: result.AgentUID}, Phase: "complete", Relaunch: raw, Preparation: proof}); err != nil {
 		return err
 	}
 	var commit string

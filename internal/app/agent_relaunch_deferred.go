@@ -37,22 +37,41 @@ func (c *agentCommand) startDeferredRelaunch(ctx context.Context, cancel context
 		return err
 	}
 	result.SettingsApplication = frozenAgentSettingsApplication(record, true)
-	if session := detachedRelaunchSession(ctx); session != nil {
+	// An SDK Prepare request freezes the same ownerless recipe as the typed
+	// in-process consumer; every other detached request keeps its waiting claim.
+	session := detachedRelaunchSession(ctx)
+	if session != nil && !request.prepare {
 		return session.finishClaim(ctx, cancel, c, claim, record, previous, result, request)
 	}
 	if c.hostTransferResult != nil {
+		refuse := func(cause error) error {
+			if session != nil {
+				return errors.Join(cause, c.rollbackDetachedRelaunchClaim(record, previous))
+			}
+			return cause
+		}
 		// Prepared has no child, waiter or standby claimant. A Close failure
 		// remains a failure; it cannot be acknowledged as successful preparation.
 		if err = claim.Close(); err != nil {
-			return err
+			return refuse(err)
 		}
-		if !c.hostTransferResult.stopAdmission() || ctx.Err() != nil || c.hostTransferContext.Err() != nil {
-			return context.Canceled
+		// A detached session has no admission bridge to remove.
+		if (session == nil && !c.hostTransferResult.stopAdmission()) || ctx.Err() != nil || c.hostTransferContext.Err() != nil {
+			return refuse(context.Canceled)
 		}
 		result.Phase = coremetadata.PhaseOffline
 		result.NewPaneUID = record.Retired.Binding.PaneUID
 		c.hostTransferResult.Result = result
 		c.hostTransferResult.Prepared = processPreparedProjection(record)
+		if session != nil {
+			// The SDK reports Prepared as finishClaim reports a waiting claim.
+			c.hostTransferResult.Result.Outcome = personaOutcomeResumed
+			if result.Restart {
+				c.hostTransferResult.Result.Outcome = personaOutcomeRestarted
+			}
+			proof := preparedResumeProjection(candidate, record)
+			c.hostTransferResult.proof = &proof
+		}
 		return nil
 	}
 	output := stdout

@@ -99,6 +99,9 @@ func (c *Client) relaunchAgent(ctx context.Context, q core.RelaunchAgentRequest,
 	if q.AllowHostLost && (!processSource || pendingTransfer || (q.Host != "" && q.Host != "process")) {
 		return out, &Refusal{Code: CodeRelaunchRequestInvalid, AgentUID: target.Metadata.UID, message: "RelaunchAgentRequest.AllowHostLost recovers a process Agent on its own host only"}
 	}
+	if q.Prepare && (!processSource || pendingTransfer || metadata.NormalizeProvider(target.Spec.Provider) != "claude" || strings.TrimSpace(q.Prompt) != "" || !q.Detach || (q.Host != "" && q.Host != "process")) {
+		return out, &Refusal{Code: CodeRelaunchRequestInvalid, AgentUID: target.Metadata.UID, message: "RelaunchAgentRequest.Prepare requires a same-host process Claude relaunch with Detach and an empty Prompt"}
+	}
 	if processSource || pendingTransfer || (q.Host != "" && q.Host != "tmux") {
 		if processSource && q.Host != "tmux" {
 			q.SocketPath = requestSocket

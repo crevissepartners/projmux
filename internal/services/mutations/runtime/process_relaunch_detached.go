@@ -24,6 +24,8 @@ type ProcessDetachedRelaunchRequest struct {
 	Source        m.Agent
 	Pane          *m.Pane
 	AllowHostLost bool
+	// Prepare asks for a frozen, ownerless recipe and its proof, never an owner.
+	Prepare bool
 }
 type ProcessDetachedRelaunchEnvelope struct {
 	Relaunch        *ProcessDetachedRelaunchRequest
@@ -40,6 +42,26 @@ type ProcessRelaunchFailure struct {
 
 func (e *ProcessRelaunchFailure) Error() string { return e.Cause.Error() }
 func (e *ProcessRelaunchFailure) Unwrap() error { return e.Cause }
+
+// checkRelaunchPreparation accepts a proof only for a request that asked for
+// one, and then only for an exact ownerless recipe: the Agent Offline on its own
+// Pane, no activation and no claim. A reply without a proof passes here; the
+// caller decides whether its request needed one.
+func checkRelaunchPreparation(reg m.Registry, registryPath string, requested bool, p *ProcessResumePreparation, agent string) error {
+	if p == nil {
+		return nil
+	}
+	if !requested || p.AgentUID != agent {
+		return processhost.ErrStale
+	}
+	a, ok := reg.Agent(p.AgentUID)
+	pane, ambiguous := ProcessAgentPane(reg, p.AgentUID)
+	claim, claimErr := ReadDeferredClaim(DeferredClaimPath(registryPath, p.AgentUID))
+	if !ok || ambiguous || pane == nil || a.Status.Phase != m.PhaseOffline || a.Status.PaneRef != p.PaneUID || pane.Metadata.UID != p.PaneUID || pane.Metadata.OwnerUID() != p.AgentUID || pane.Status.ProcessSession == nil || pane.Status.ProcessSession.Binding != p.Binding || !pane.Status.Activation.IsZero() || claimErr != nil || claim.Agent != "" {
+		return processhost.ErrStale
+	}
+	return nil
+}
 
 func DetachedRelaunchSourceEqual(a, b *m.Agent) bool {
 	return reflect.DeepEqual(a.Spec, b.Spec) && reflect.DeepEqual(a.Metadata, b.Metadata) && a.Status.Phase == b.Status.Phase && a.Status.PaneRef == b.Status.PaneRef && a.Status.SessionRef.SameConversation(b.Status.SessionRef)
@@ -63,6 +85,9 @@ func LaunchDetachedProcessRelaunch(ctx context.Context, executable string, wire 
 		if err != nil {
 			return err
 		}
+		if err := checkRelaunchPreparation(reg, wire.RegistryPath, wire.Relaunch.Prepare, ready.Preparation, ready.Binding.Agent); err != nil {
+			return err
+		}
 		if ready.Phase == "complete" && wire.RelaunchContext != nil {
 			var result struct {
 				AgentUID   string
@@ -74,6 +99,12 @@ func LaunchDetachedProcessRelaunch(ctx context.Context, executable string, wire 
 				return processhost.ErrStale
 			}
 			if result.DryRun {
+				return nil
+			}
+			if wire.Relaunch.Prepare {
+				if ready.Preparation == nil {
+					return processhost.ErrStale
+				}
 				return nil
 			}
 			a, ok := reg.Agent(result.AgentUID)
