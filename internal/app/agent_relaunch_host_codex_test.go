@@ -136,6 +136,17 @@ func codexHostMoveCLIFixture(t *testing.T) (processCreateCLI, coremetadata.Agent
 		}
 		f.store = intmetadata.NewStore(intmetadata.PathFor(paths.StateDir))
 	}
+	// Last cleanup before the fixture root goes (t.Cleanup is LIFO): the socket
+	// cleanups below stop only what they can reach through a socket, and a
+	// broker or observer that is already running when the fixture is created,
+	// or a child that owns no socket, outlives them and keeps probing `codex` on
+	// its PATH after the root is gone. This stops every process that carries the
+	// fixture root or names its state directory, whatever sockets it owns.
+	reapPaths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stopFixtureProcesses(t, f.root, reapPaths.StateDir) })
 	codexHome, err := os.MkdirTemp(os.TempDir(), "c")
 	if err != nil {
 		t.Fatal(err)
@@ -1383,6 +1394,10 @@ func stopFixtureProcesses(t *testing.T, root, stateDir string) {
 			continue
 		}
 		if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
+			// ESRCH: the process left on its own after the birth check.
+			if !errors.Is(err, syscall.ESRCH) {
+				t.Errorf("could not stop fixture process pid=%d birth=%v: %v", pid, process, err)
+			}
 			continue
 		}
 		waitCodexFixturePeerExit(t, process)
