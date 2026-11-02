@@ -94,14 +94,38 @@ func TestSDKValidateFromPreparedParity(t *testing.T) {
 		valid  bool
 	}{
 		{"host-lost proof", func(*core.AgentResumePreparation, *core.ValidateAgentResumePreparationRequest) func() { return nil }, true},
-		{"digest", func(p *core.AgentResumePreparation, _ *core.ValidateAgentResumePreparationRequest) func() { p.LaunchDigest = "changed"; return nil }, false},
-		{"pane", func(p *core.AgentResumePreparation, _ *core.ValidateAgentResumePreparationRequest) func() { p.PaneUID = "wrong-pane"; return nil }, false},
-		{"conversation", func(p *core.AgentResumePreparation, _ *core.ValidateAgentResumePreparationRequest) func() { p.Conversation = "other"; return nil }, false},
-		{"stale binding", func(p *core.AgentResumePreparation, _ *core.ValidateAgentResumePreparationRequest) func() { p.Binding.Generation = "other-generation"; return nil }, false},
-		{"other agent", func(p *core.AgentResumePreparation, _ *core.ValidateAgentResumePreparationRequest) func() { p.AgentUID = "agent-other"; return nil }, false},
-		{"host-lost bit", func(p *core.AgentResumePreparation, _ *core.ValidateAgentResumePreparationRequest) func() { p.HostLost = false; return nil }, false},
-		{"empty ref", func(_ *core.AgentResumePreparation, r *core.ValidateAgentResumePreparationRequest) func() { r.Ref = ""; return nil }, false},
-		{"unknown ref", func(_ *core.AgentResumePreparation, r *core.ValidateAgentResumePreparationRequest) func() { r.Ref = "uid:agent-missing"; return nil }, false},
+		{"digest", func(p *core.AgentResumePreparation, _ *core.ValidateAgentResumePreparationRequest) func() {
+			p.LaunchDigest = "changed"
+			return nil
+		}, false},
+		{"pane", func(p *core.AgentResumePreparation, _ *core.ValidateAgentResumePreparationRequest) func() {
+			p.PaneUID = "wrong-pane"
+			return nil
+		}, false},
+		{"conversation", func(p *core.AgentResumePreparation, _ *core.ValidateAgentResumePreparationRequest) func() {
+			p.Conversation = "other"
+			return nil
+		}, false},
+		{"stale binding", func(p *core.AgentResumePreparation, _ *core.ValidateAgentResumePreparationRequest) func() {
+			p.Binding.Generation = "other-generation"
+			return nil
+		}, false},
+		{"other agent", func(p *core.AgentResumePreparation, _ *core.ValidateAgentResumePreparationRequest) func() {
+			p.AgentUID = "agent-other"
+			return nil
+		}, false},
+		{"host-lost bit", func(p *core.AgentResumePreparation, _ *core.ValidateAgentResumePreparationRequest) func() {
+			p.HostLost = false
+			return nil
+		}, false},
+		{"empty ref", func(_ *core.AgentResumePreparation, r *core.ValidateAgentResumePreparationRequest) func() {
+			r.Ref = ""
+			return nil
+		}, false},
+		{"unknown ref", func(_ *core.AgentResumePreparation, r *core.ValidateAgentResumePreparationRequest) func() {
+			r.Ref = "uid:agent-missing"
+			return nil
+		}, false},
 		{"sidecar missing", func(*core.AgentResumePreparation, *core.ValidateAgentResumePreparationRequest) func() {
 			raw, e := os.ReadFile(sidecar)
 			if e != nil || os.Remove(sidecar) != nil {
