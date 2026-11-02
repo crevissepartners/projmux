@@ -89,10 +89,10 @@ still reaches the validator and gets its refusal rather than a transport error.
 
 These `Paths` methods compute, from `ConfigDir` and `StateDir` alone, the
 setting files a frontend reads or watches. Each returns what the CLI uses for
-the same directories, pinned by `TestPathsFileGettersEqualInternal`; they read
-nothing and the file need not exist. The web's own `WebSettingsFile` is not one
-of them, and neither is the config-only fallback of the internal layout, since
-`ResolvePaths` always supplies both directories.
+the same directories, pinned by `TestPathsFileGettersEqualInternal`. They read
+nothing, the file need not exist, and they compute only these 15 paths; they
+never resolve a directory themselves, so `ResolvePaths` remains the way to
+obtain both directories.
 
 | Method | File |
 | --- | --- |
