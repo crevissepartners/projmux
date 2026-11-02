@@ -491,6 +491,23 @@ The CLI preserves its existing bootstrap migration and error journal policy;
 it does not promise that the entire HOME remains unwritten. Invalid CLI inputs
 exit 2. Existing five-key CLI output is unchanged.
 
+### Public names for status bar values, the unlimited question window, Codex policy mismatch and usage errors
+
+These names are additive: they carry the values the internal packages already
+use, so a consumer need not import `internal` to compare against them. Each is
+pinned equal to its internal source by `pkg/projmux/values_test.go`; no existing
+public name, CLI output or screen changes.
+
+| Name | Meaning |
+| --- | --- |
+| `core.StatusbarVisibility`, `StatusbarVisibilityOn` (`on`), `StatusbarVisibilityOff` (`off`) | Effective visibility text, as in `ConfigVisibilityState.Effective` and `ConfigToggleState.Effective` |
+| `core.StatusbarVisibilitySource`, `...SourceDefault` (`default`), `...SourceSaved` (`saved`), `...SourceCentral` (`central`) | Where a value came from, as in the `Source` fields. Resources use default or saved; central visibility uses default or central |
+| `core.StatusbarVisibilityState`, `core.DefaultStatusbarVisibilityState()` | Effective, Saved, Source and Invalid of one leaf; the default state is Effective `on`, Source `default`, nothing stored |
+| `core.AgentQuestionWindowUnlimitedWord` (`unlimited`) | The `ConfigValue.Window` text of a question window that lasts until answered |
+| `core.AgentQuestionWindowUnlimitedSeconds` (`604785`) | The seconds that window is installed as: the 7 day question hook timeout minus a 15 second margin. Compare against it rather than copying the number |
+| `projmux.ErrCodexThreadPolicyMismatch`, `projmux.CodexThreadPolicyMismatchReason` (`codex-thread-policy-mismatch`) | A Codex thread answered with a sandbox or approval policy other than the requested one. Use `errors.Is` with the sentinel on any wrapped error, including a `*Refusal` through `Unwrap`; the token starts the error text. It is never a safe fallback |
+| `projmux.IsUsageError(err)` | Whether err, or an error it wraps, was caused by invalid user input; the CLI exits 2 for exactly these. nil and ordinary errors are false |
+
 ## Legacy AI split mode
 
 `Client.GetAISplitMode() core.AISplitModeState` reads the first valid TUI
