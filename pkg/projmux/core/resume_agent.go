@@ -31,6 +31,11 @@ type ResumeAgentResult struct {
 	// off; it proves neither actual truncation nor a recorded Wait. It is false
 	// for failures, tmux, claim waiting and CORE results without that advisory.
 	MayBeTruncated bool
+	// SettingsApplication is the settings application the CLI reports for the
+	// same successful resume, from a process (frozen record or not, ordinary or
+	// host-lost) or tmux Agent. It is nil only for failures and claim waiting,
+	// and when a process owner built before this field omits it.
+	SettingsApplication *AgentSettingsApplication
 	// Preparation is nil on success. On failure it may acknowledge the unchanged
 	// plan or the same frozen plan readdressed after an exact failed child Wait.
 	Preparation *AgentResumePreparation

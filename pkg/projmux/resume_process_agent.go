@@ -113,6 +113,7 @@ func (c *Client) resumeProcessAgent(ctx context.Context, req core.ResumeAgentReq
 	}
 	if reply.Result != nil && !result.ClaimWaiting {
 		result.MayBeTruncated = reply.Result.MayBeTruncated
+		result.SettingsApplication = publicSettingsApplication(reply.Result.SettingsApplication)
 	}
 	return result, nil
 }
