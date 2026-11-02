@@ -481,8 +481,10 @@ func TestSDKNativeCodexCreateExplicitRootsAndFrozenEnvironment(t *testing.T) {
 // Authenticate each owned peer through a private fixture socket, then recheck
 // socket and process birth before stopping it. Retire readers before removing
 // fake providers, so recovery cannot seek an executable beyond the fixture.
+// A process that owns no socket is stopped last by the exact state argv.
 func cleanupSDKNativePeers(t *testing.T, state string) {
 	t.Helper()
+	defer stopFixtureProcesses(t, "", state)
 	for _, dir := range []string{"agent-control", "broker"} {
 		sockets, _ := filepath.Glob(filepath.Join(state, dir, "*.sock"))
 		for _, address := range sockets {
@@ -507,5 +509,115 @@ func cleanupSDKNativePeers(t *testing.T, state string) {
 				}
 			}
 		}
+	}
+}
+
+// fixtureSleeper is a child-less python3 sleeper. Its one Wait runs in a
+// goroutine that stores the result in err and then closes done, so every
+// observer, the test body and the cleanup alike, sees the same exit.
+type fixtureSleeper struct {
+	identity metadata.ProcessIdentity
+	done     chan struct{}
+	err      error
+}
+
+// startFixtureSleeper starts it in its own session with the given environment
+// additions and argv tail; PMX_TEST_PROCESS_ROOT is inherited from nowhere. If
+// the test ends first, the exact pid and birth that were recorded are killed
+// and collected.
+func startFixtureSleeper(t *testing.T, env []string, argv ...string) *fixtureSleeper {
+	t.Helper()
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Fatalf("python3 required for the sleeper: %v", err)
+	}
+	cmd := exec.Command(python, append([]string{"-c", "import time; time.sleep(300)"}, argv...)...)
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "PMX_TEST_PROCESS_ROOT=") {
+			cmd.Env = append(cmd.Env, kv)
+		}
+	}
+	cmd.Env = append(cmd.Env, env...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	identity, _, err := localipc.Process(cmd.Process.Pid)
+	if err != nil || identity.OwnerUID != uint32(os.Getuid()) {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		t.Fatalf("sleeper identity: %v", err)
+	}
+	sleeper := &fixtureSleeper{identity: identity, done: make(chan struct{})}
+	go func() {
+		sleeper.err = cmd.Wait()
+		close(sleeper.done)
+	}()
+	t.Cleanup(func() {
+		if current, _, err := localipc.Process(identity.PID); err == nil && current == identity {
+			_ = syscall.Kill(identity.PID, syscall.SIGKILL)
+		}
+		select {
+		case <-sleeper.done:
+		case <-time.After(3 * time.Second):
+			t.Errorf("sleeper pid=%d birth=%v is still running after SIGKILL", identity.PID, identity)
+		}
+	})
+	return sleeper
+}
+
+// stoppedWithin reports whether the sleeper's Wait returned within d.
+func (s *fixtureSleeper) stoppedWithin(d time.Duration) bool {
+	select {
+	case <-s.done:
+		return true
+	case <-time.After(d):
+		return false
+	}
+}
+
+// TestSDKNativeCleanupReapsSocketlessArgvOnlyProcess pins the SDK fixture's
+// process reap. A same-uid process that names the fixture state directory in
+// its argv, carries no PMX_TEST_PROCESS_ROOT and owns no socket is stopped by
+// SIGTERM when cleanupSDKNativePeers runs; a socket-only cleanup left it
+// running. A foreign process carries an explicit empty PMX_TEST_PROCESS_ROOT
+// and an empty argv element. An empty root alone and an empty state directory
+// alone must not select it, and it survives the SDK cleanup too. Without /proc
+// nothing may be stopped, so the same decoy must survive.
+func TestSDKNativeCleanupReapsSocketlessArgvOnlyProcess(t *testing.T) {
+	state := t.TempDir()
+	_, procErr := os.Stat("/proc/self/environ")
+	decoy := startFixtureSleeper(t, nil, state)
+	foreign := startFixtureSleeper(t, []string{"PMX_TEST_PROCESS_ROOT="}, "", filepath.Join(state, "other"))
+
+	stopFixtureProcesses(t, "", "")
+	stopFixtureProcesses(t, "", filepath.Join(state, "absent"))
+	stopFixtureProcesses(t, filepath.Join(state, "absent-root"), "")
+	for name, sleeper := range map[string]*fixtureSleeper{"decoy": decoy, "foreign": foreign} {
+		if sleeper.stoppedWithin(200 * time.Millisecond) {
+			t.Fatalf("%s was stopped by a selector that names neither of them: %v", name, sleeper.err)
+		}
+	}
+
+	cleanupSDKNativePeers(t, state)
+
+	if foreign.stoppedWithin(200 * time.Millisecond) {
+		t.Fatalf("foreign process pid=%d was stopped by the SDK cleanup: %v", foreign.identity.PID, foreign.err)
+	}
+	if procErr != nil {
+		if decoy.stoppedWithin(200 * time.Millisecond) {
+			t.Fatalf("decoy pid=%d was stopped without /proc: %v", decoy.identity.PID, decoy.err)
+		}
+		return
+	}
+	if !decoy.stoppedWithin(3 * time.Second) {
+		t.Fatalf("socketless argv-only decoy survived the SDK cleanup: pid=%d birth=%v", decoy.identity.PID, decoy.identity)
+	}
+	var exit *exec.ExitError
+	if !errors.As(decoy.err, &exit) {
+		t.Fatalf("socketless argv-only decoy pid=%d ended without a signal: %v", decoy.identity.PID, decoy.err)
+	}
+	if status, ok := exit.Sys().(syscall.WaitStatus); !ok || !status.Signaled() || status.Signal() != syscall.SIGTERM {
+		t.Fatalf("socketless argv-only decoy pid=%d was not stopped by SIGTERM: %v", decoy.identity.PID, decoy.err)
 	}
 }
