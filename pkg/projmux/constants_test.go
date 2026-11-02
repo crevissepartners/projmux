@@ -57,12 +57,19 @@ func TestRecordsDialogueReplyOnlyEqualsInternal(t *testing.T) {
 }
 
 func TestAINewWindowModesEqualInternalAndAreCopied(t *testing.T) {
+	want := slices.Clone(config.AINewWindowModes)
 	got := projmux.AINewWindowModes()
-	if !slices.Equal(got, config.AINewWindowModes) {
-		t.Fatalf("modes %v != %v", got, config.AINewWindowModes)
+	if !slices.Equal(got, want) {
+		t.Fatalf("modes %v != %v", got, want)
+	}
+	if &got[0] == &config.AINewWindowModes[0] {
+		t.Fatal("result aliases the internal slice")
 	}
 	got[0] = "changed"
-	if projmux.AINewWindowModes()[0] != config.AINewWindowModes[0] {
+	if !slices.Equal(config.AINewWindowModes, want) {
+		t.Fatalf("mutating the result changed the internal modes: %v", config.AINewWindowModes)
+	}
+	if !slices.Equal(projmux.AINewWindowModes(), want) {
 		t.Fatal("mutating the result changed the next call")
 	}
 }

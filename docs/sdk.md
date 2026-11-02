@@ -85,6 +85,35 @@ A caller that bounds a JSON request body before decoding it should leave room
 for escaping, at most six bytes per input byte, so that one byte past the limit
 still reaches the validator and gets its refusal rather than a transport error.
 
+### Config file paths
+
+These `Paths` methods compute, from `ConfigDir` and `StateDir` alone, the
+setting files a frontend reads or watches. Each returns what the CLI uses for
+the same directories, pinned by `TestPathsFileGettersEqualInternal`. They read
+nothing, the file need not exist, and they compute only these 15 paths; they
+never resolve a directory themselves, so `ResolvePaths` remains the way to
+obtain both directories.
+
+| Method | File |
+| --- | --- |
+| `PinFile()`, `GlobalConfigFile()` | persistent pin state; the optional global `config.toml` |
+| `AgentQuestionWindowSecondsFile()`, `AgentQuestionAnsweringFile()` | saved question window seconds and answering way |
+| `AgentApprovalWindowSecondsFile()`, `AgentApprovalAnsweringFile()` | saved permission window seconds and answering way |
+| `TmuxAISplitModeFile()`, `AIEnabledAgentsFile()` | TUI AI split mode; enabled AI agent providers |
+| `StatusbarNotificationsHUDVisibilityFile()`, `StatusbarAgentUsageHUDVisibilityFile()` | HUD visibility leaves |
+| `StatusbarGitVisibilityFile()`, `StatusbarClockVisibilityFile()`, `StatusbarProjectVisibilityFile()` | segment visibility leaves |
+| `StatusbarDefaultsFile()`, `LiveResourcesFile()` | central statusbar defaults; live resources toggle |
+
+### Default Codex model reader
+
+`ListDefaultCodexModels(ctx)` returns the Codex model suggestions from the same
+reader `Client.Models` uses when `Options.CodexModelLister` is nil. It attaches
+to the existing endpoint through its official read-only probe and proxy and
+never starts, stops or configures the daemon. It adds no bound beyond the attach's own
+probe timeout (the 15 second bound belongs to `Client.Models`), so pass a context with a deadline; an expired
+context fails with its error and starts nothing. `Client.Models` still returns
+the Claude list for Claude and refuses unsupported providers.
+
 ## Host-global Agent guidance
 
 `ReadAgentGuidance(ctx)` returns `core.AgentGuidanceFile`: user-file presence,

@@ -368,6 +368,7 @@ Ledger.Commands	Test-only installed qualification API retained for semantic comm
 Ledger.DistinctOperations	Test-only installed qualification API retained for content-free command reporting.
 Ledger.HasOperation	Test-only installed qualification API retained for canonical proxy observation proof.
 Ledger.record	Test-only installed qualification helper retained for owned lifecycle command evidence.
+ListDefaultCodexModels	Public v0 default Codex model reader SDK name for external frontends (Backlog 802 Task 3); the binary does not import pkg/projmux, covered by TestListDefaultCodexModelsIsTheDefaultReader.
 ListLinesWithScrollbar	Default-rows entry point of ListLinesWithScrollbarRows retained as the scrollbar thumb geometry seam.
 LoadAIBadgeStyle	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
 LoadDesktopNotifyModeForTmuxConfig	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
@@ -436,6 +437,22 @@ PaneActivation.IsZero	Public v0 resource SDK entrypoint or its JSON/selection ad
 PaneRuntimeSpec.EffectiveKind	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 ParseBinding	Native binding parser compatibility entrypoint retained after pure parser extraction; exercised by TestCaptureBindingsIncludeCustomOptionAndControlChords.
 ParseKeymapFile	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+Paths.AIEnabledAgentsFile	Public v0 config file path getter SDK name for external frontends (Backlog 802 Task 3); the binary does not import pkg/projmux, covered by TestPathsFileGettersEqualInternal.
+Paths.AgentApprovalAnsweringFile	Public v0 config file path getter SDK name for external frontends (Backlog 802 Task 3); the binary does not import pkg/projmux, covered by TestPathsFileGettersEqualInternal.
+Paths.AgentApprovalWindowSecondsFile	Public v0 config file path getter SDK name for external frontends (Backlog 802 Task 3); the binary does not import pkg/projmux, covered by TestPathsFileGettersEqualInternal.
+Paths.AgentQuestionAnsweringFile	Public v0 config file path getter SDK name for external frontends (Backlog 802 Task 3); the binary does not import pkg/projmux, covered by TestPathsFileGettersEqualInternal.
+Paths.AgentQuestionWindowSecondsFile	Public v0 config file path getter SDK name for external frontends (Backlog 802 Task 3); the binary does not import pkg/projmux, covered by TestPathsFileGettersEqualInternal.
+Paths.GlobalConfigFile	Public v0 config file path getter SDK name for external frontends (Backlog 802 Task 3); the binary does not import pkg/projmux, covered by TestPathsFileGettersEqualInternal.
+Paths.LiveResourcesFile	Public v0 config file path getter SDK name for external frontends (Backlog 802 Task 3); the binary does not import pkg/projmux, covered by TestPathsFileGettersEqualInternal.
+Paths.PinFile	Public v0 config file path getter SDK name for external frontends (Backlog 802 Task 3); the binary does not import pkg/projmux, covered by TestPathsFileGettersEqualInternal.
+Paths.StatusbarAgentUsageHUDVisibilityFile	Public v0 config file path getter SDK name for external frontends (Backlog 802 Task 3); the binary does not import pkg/projmux, covered by TestPathsFileGettersEqualInternal.
+Paths.StatusbarClockVisibilityFile	Public v0 config file path getter SDK name for external frontends (Backlog 802 Task 3); the binary does not import pkg/projmux, covered by TestPathsFileGettersEqualInternal.
+Paths.StatusbarDefaultsFile	Public v0 config file path getter SDK name for external frontends (Backlog 802 Task 3); the binary does not import pkg/projmux, covered by TestPathsFileGettersEqualInternal.
+Paths.StatusbarGitVisibilityFile	Public v0 config file path getter SDK name for external frontends (Backlog 802 Task 3); the binary does not import pkg/projmux, covered by TestPathsFileGettersEqualInternal.
+Paths.StatusbarNotificationsHUDVisibilityFile	Public v0 config file path getter SDK name for external frontends (Backlog 802 Task 3); the binary does not import pkg/projmux, covered by TestPathsFileGettersEqualInternal.
+Paths.StatusbarProjectVisibilityFile	Public v0 config file path getter SDK name for external frontends (Backlog 802 Task 3); the binary does not import pkg/projmux, covered by TestPathsFileGettersEqualInternal.
+Paths.TmuxAISplitModeFile	Public v0 config file path getter SDK name for external frontends (Backlog 802 Task 3); the binary does not import pkg/projmux, covered by TestPathsFileGettersEqualInternal.
+Paths.configPaths	Public v0 config file path getter SDK name for external frontends (Backlog 802 Task 3); the binary does not import pkg/projmux, covered by TestPathsFileGettersEqualInternal.
 PickerChromeStringAuditOptions	Picker-chrome profile of the governance string audit; it scopes the live guard that keeps picker chrome inside the catalog.
 PickerSettingsNotice	Public v0 Window create intent Resume closure for external frontends: commit-time candidate revalidation and the service resume-picker create; covered by TestResumeCandidateSelectionStaleBeforeEffects and TestWindowIntentCLIParity.
 Placeholders	Project link rule API of internal/core/projectlinks, retained for the web backend that lists the placeholders a template may use; no in-tree caller until that backend lands.

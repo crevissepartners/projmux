@@ -10,7 +10,8 @@ const (
 	// AnnotationAgentProfile names the profile the Agent was created from.
 	AnnotationAgentProfile = "projmux.io/profile"
 	// AnnotationAgentModel and AnnotationAgentEffort record the model and
-	// effort the Agent was created with.
+	// effort the Agent was last asked to run: the requested values written by
+	// create, resume and relaunch, not a reading of what the provider runs now.
 	AnnotationAgentModel  = "projmux.io/model"
 	AnnotationAgentEffort = "projmux.io/effort"
 	// AnnotationAgentProjectLinkRulesDigest is the digest of the Project label

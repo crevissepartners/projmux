@@ -1,6 +1,7 @@
 package projmux_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/services/agentcatalog"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"github.com/crevissepartners/projmux/pkg/projmux"
 )
@@ -189,5 +191,64 @@ func TestResolvePathsNoSideEffects(t *testing.T) {
 	}
 	if !reflect.DeepEqual(before, centralTree(t, root)) {
 		t.Fatal("path resolution changed directory tree, bytes, permissions or mtimes")
+	}
+}
+
+// The public getters must return exactly what the internal layout returns for
+// the same ConfigDir and StateDir, so a frontend reads the files the CLI writes.
+func TestPathsFileGettersEqualInternal(t *testing.T) {
+	getters := []struct {
+		name   string
+		public func(projmux.Paths) string
+		inner  func(config.Paths) string
+	}{
+		{"PinFile", projmux.Paths.PinFile, config.Paths.PinFile},
+		{"GlobalConfigFile", projmux.Paths.GlobalConfigFile, config.Paths.GlobalConfigFile},
+		{"AgentQuestionWindowSecondsFile", projmux.Paths.AgentQuestionWindowSecondsFile, config.Paths.AgentQuestionWindowSecondsFile},
+		{"AgentQuestionAnsweringFile", projmux.Paths.AgentQuestionAnsweringFile, config.Paths.AgentQuestionAnsweringFile},
+		{"AgentApprovalAnsweringFile", projmux.Paths.AgentApprovalAnsweringFile, config.Paths.AgentApprovalAnsweringFile},
+		{"AgentApprovalWindowSecondsFile", projmux.Paths.AgentApprovalWindowSecondsFile, config.Paths.AgentApprovalWindowSecondsFile},
+		{"TmuxAISplitModeFile", projmux.Paths.TmuxAISplitModeFile, config.Paths.TmuxAISplitModeFile},
+		{"AIEnabledAgentsFile", projmux.Paths.AIEnabledAgentsFile, config.Paths.AIEnabledAgentsFile},
+		{"StatusbarNotificationsHUDVisibilityFile", projmux.Paths.StatusbarNotificationsHUDVisibilityFile, config.Paths.StatusbarNotificationsHUDVisibilityFile},
+		{"StatusbarAgentUsageHUDVisibilityFile", projmux.Paths.StatusbarAgentUsageHUDVisibilityFile, config.Paths.StatusbarAgentUsageHUDVisibilityFile},
+		{"StatusbarGitVisibilityFile", projmux.Paths.StatusbarGitVisibilityFile, config.Paths.StatusbarGitVisibilityFile},
+		{"StatusbarClockVisibilityFile", projmux.Paths.StatusbarClockVisibilityFile, config.Paths.StatusbarClockVisibilityFile},
+		{"StatusbarProjectVisibilityFile", projmux.Paths.StatusbarProjectVisibilityFile, config.Paths.StatusbarProjectVisibilityFile},
+		{"StatusbarDefaultsFile", projmux.Paths.StatusbarDefaultsFile, config.Paths.StatusbarDefaultsFile},
+		{"LiveResourcesFile", projmux.Paths.LiveResourcesFile, config.Paths.LiveResourcesFile},
+	}
+	if len(getters) != 15 {
+		t.Fatalf("getter table has %d rows, want 15", len(getters))
+	}
+	for _, dirs := range []projmux.Paths{
+		{ConfigDir: "/home/sdk/.config/projmux", StateDir: "/home/sdk/.local/state/projmux"},
+		{ConfigDir: "/cfg/projmux", StateDir: "/state/projmux"},
+		{ConfigDir: "/cfg//nested/../projmux/", StateDir: "/state/projmux/"},
+		{ConfigDir: "relative/config", StateDir: "relative/state"},
+		{ConfigDir: "/only/config"},
+		{},
+	} {
+		inner := config.Paths{ConfigDir: dirs.ConfigDir, StateDir: dirs.StateDir}
+		for _, g := range getters {
+			got, want := g.public(dirs), g.inner(inner)
+			if got != want {
+				t.Fatalf("%s for %+v: public %q internal %q", g.name, dirs, got, want)
+			}
+		}
+	}
+	// A representative path is pinned so a renamed internal file is noticed.
+	if got := (projmux.Paths{ConfigDir: "/c", StateDir: "/s"}).PinFile(); got != "/c/"+config.PinsFileName {
+		t.Fatalf("PinFile = %q", got)
+	}
+}
+
+func TestListDefaultCodexModelsIsTheDefaultReader(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	got, gotErr := projmux.ListDefaultCodexModels(ctx)
+	want, wantErr := agentcatalog.ListDefaultCodexModels(ctx)
+	if !errors.Is(gotErr, context.Canceled) || !errors.Is(wantErr, context.Canceled) || got != nil || want != nil {
+		t.Fatalf("expired context: public (%v, %v) internal (%v, %v)", got, gotErr, want, wantErr)
 	}
 }
