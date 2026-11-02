@@ -15,10 +15,6 @@ type processResumeFilter = mutationruntime.ProcessResumeFilter
 type processResumePrevious = mutationruntime.ProcessResumePrevious
 type processResumeCandidate = mutationruntime.ProcessResumeCandidate
 
-func listResumableProcessAgents(registry coremetadata.Registry, filter processResumeFilter) []processResumeCandidate {
-	return mutationruntime.ListResumableProcessAgents(registry, filter)
-}
-
 func processResumeRefusal(registry coremetadata.Registry, agentUID string, ownerAlive bool) error {
 	return mutationruntime.ProcessResumeRefusal(registry, agentUID, ownerAlive)
 }
