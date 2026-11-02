@@ -506,7 +506,15 @@ public name, CLI output or screen changes.
 | `core.AgentQuestionWindowUnlimitedWord` (`unlimited`) | The `ConfigValue.Window` text of a question window that lasts until answered |
 | `core.AgentQuestionWindowUnlimitedSeconds` (`604785`) | The seconds that window is installed as: the 7 day question hook timeout minus a 15 second margin. Compare against it rather than copying the number |
 | `projmux.ErrCodexThreadPolicyMismatch`, `projmux.CodexThreadPolicyMismatchReason` (`codex-thread-policy-mismatch`) | A Codex thread answered with a sandbox or approval policy other than the requested one. Use `errors.Is` with the sentinel on any wrapped error, including a `*Refusal` through `Unwrap`; the token starts the error text. It is never a safe fallback |
-| `projmux.IsUsageError(err)` | Whether err, or an error it wraps, was caused by invalid user input; the CLI exits 2 for exactly these. nil and ordinary errors are false |
+| `projmux.IsUsageError(err)` | Whether err, or an error it wraps, carries the metadata usage marker (invalid user input). The CLI maps such an error to exit 2 only when nothing in the chain states an explicit exit code; an explicit exit code wins. nil and ordinary errors are false |
+| `core.ResourceAPIVersion` (`projmux.io/v1alpha1`) | The apiVersion stamped on every Registry resource |
+| `core.AnnotationAgentProfile` (`projmux.io/profile`), `AnnotationAgentModel` (`projmux.io/model`), `AnnotationAgentEffort` (`projmux.io/effort`), `AnnotationAgentProjectLinkRulesDigest` (`projmux.io/project-link-rules-digest`), `AnnotationCreatorAgent` (`projmux.io/creator-agent`) | The Agent annotation keys under `metadata.annotations` |
+| `projmux.RecordsDialogueReplyOnly(annotations)` | Whether an Agent's annotations record the reply-only activation; nil and empty maps are false |
+| `core.NotifyFileName` (`notify.json`) | Basename of the notification queue file in the state directory |
+| `core.AgentQuestionAnswering`, `AgentQuestionAnsweringClaude` (`claude`), `AgentQuestionAnsweringProjmux` (`projmux`); `core.AgentApprovalAnswering`, `AgentApprovalAnsweringClaude`, `AgentApprovalAnsweringProjmux` | The way a Claude question or permission request is answered, as in `ConfigValue.Answering` |
+| `core.DefaultAgentQuestionWindowSeconds`, `DefaultAgentApprovalWindowSeconds` (`900`) | The window used when nothing valid is saved |
+| `projmux.MaxPersonaBytes` | The byte limit of one persona file, defined by the persona validator rather than copied |
+| `projmux.AINewWindowModes()` | The modes a new AI window can open with, in the order refusals name them; the caller owns the returned slice |
 
 ## Legacy AI split mode
 

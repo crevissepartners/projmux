@@ -7,6 +7,7 @@
 # mandatory. This file suppresses only its exact, reason-bearing symbols when
 # they appear in deadcode output; unrelated new findings still fail the gate.
 
+AINewWindowModes	Public v0 value and judgement SDK name for external frontends (Backlog 802 Task 2); the binary does not import pkg/projmux, covered by TestAINewWindowModesEqualInternalAndAreCopied.
 Agent.ResourceKind	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 AgentActivation.IsZero	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 AgentCreation.WindowOperation	Public v0 Window create intent SDK closure for external frontends: one transaction for a Window and its new Agent with CreateAgent's validator; covered by TestWindowIntentCLIParity, TestWindowIntentCreatorProvenance, TestWindowIntentRollbackAndActivationUnknown and TestWindowIntentPublicPreflight.
@@ -475,6 +476,7 @@ Reader.ResolveIdentified	Public v0 coherent resource graph SDK entrypoint or its
 Reader.ResolveSupplied	Public v0 supplied-snapshot resource graph SDK entrypoint or its adapter (ObserveResourceGraphFromSnapshot); reachable from external consumers rather than the CLI binary; covered by resolver JSON/process key parity, zero Registry/process probe, ownership and GOWORK=off consumer tests.
 ReceiptAction	Public v0 operator message SDK closure for external frontends (Client.SendOperatorMessage); the binary does not import pkg/projmux; covered by TestPublicOperatorCoordinationParity, TestOperatorOriginCannotBeDecodedFromPeerInput and TestPublicOperatorMessageRefusals.
 RecordSession	Internal content-free provider session persistence seam retained until the foreground consumer records explicit resume state.
+RecordsDialogueReplyOnly	Public v0 value and judgement SDK name for external frontends (Backlog 802 Task 2); the binary does not import pkg/projmux, covered by TestRecordsDialogueReplyOnlyEqualsInternal.
 Recovery	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Refusal.Error	Public v0 instruction SDK entrypoint or its typed-refusal adapter, retained for external modules; exercised by test/sdk/consumer with GOWORK=off.
 Refusal.Unwrap	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
