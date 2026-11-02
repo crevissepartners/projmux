@@ -1798,6 +1798,15 @@ modified or replaced proof is a `Refusal` with `CodeResumePreparationStale`.
 A stale explicit request `Binding` remains `CodeResumePlanInvalid`; unsupported
 providers or input combinations remain `CodeResumeRequestInvalid`.
 
+A successful `PrepareAgentResume` also returns `SettingsApplication`: the frozen
+settings application of the prepared plan, computed by the same shared code as
+`RelaunchAgentResult.SettingsApplication` (`Entries` and `NotAppliedCount`), for
+ordinary and `AllowHostLost` prepares alike. An existing plan that is reused
+reports the same value. It is nil for refusals, and when
+`Options.ProjmuxExecutable` is an owner built before this field.
+`ValidateAgentResumePreparation` is unchanged. `Preparation` and CLI output are
+unchanged.
+
 Early stale-proof refusals preserve the Registry, sidecars, claims and provider
 state. They can still append an ordinary CLI error outcome to
 `logs/operations.jsonl`: a spawned validation or resume owner can each record

@@ -103,7 +103,7 @@ func (c *agentCommand) failedResumePreparation(p *mutationruntime.ProcessResumeP
 	return &proof
 }
 
-func runResumePreparation(ctx context.Context, c *agentCommand, wire processDetachedResumeRequest) (mutationruntime.ProcessResumePreparation, error) {
+func runResumePreparation(ctx context.Context, c *agentCommand, wire processDetachedResumeRequest) (mutationruntime.ProcessResumePreparation, *agentSettingsApplication, error) {
 	var zero mutationruntime.ProcessResumePreparation
 	opts := wire.options()
 	opts.Prompt = processResumeFirstFrame{}
@@ -111,25 +111,35 @@ func runResumePreparation(ctx context.Context, c *agentCommand, wire processDeta
 	opts.allowHostLost = wire.AllowHostLost
 	if wire.PreparationAction == "validate" {
 		if wire.Preparation == nil {
-			return zero, preparationStale("preparation required")
+			return zero, nil, preparationStale("preparation required")
 		}
 		opts.allowHostLost = wire.Preparation.HostLost
 		proof, _, err := c.readResumePreparation(ctx, opts, wire.Preparation)
-		return proof, err
+		return proof, nil, err
 	}
 	if wire.PreparationAction != "prepare" {
-		return zero, usageError("agent resume: invalid preparation action")
+		return zero, nil, usageError("agent resume: invalid preparation action")
 	}
 	if err := ctx.Err(); err != nil {
-		return zero, err
+		return zero, nil, err
 	}
 	result, err := c.prepareOwnedClaudeResume(ctx, opts)
 	if err != nil {
-		return zero, err
+		return zero, nil, err
 	}
 	if result.Prepared == nil || result.Owned != nil || result.State != agentProcessPrepared {
-		return zero, errors.New("process-resume-not-prepared")
+		return zero, nil, errors.New("process-resume-not-prepared")
 	}
-	proof, _, err := c.readResumePreparation(ctx, opts, nil)
-	return proof, err
+	return c.readPreparedResume(ctx, opts)
+}
+
+// readPreparedResume reads the current frozen plan once and derives the proof
+// and the settings application from that same record, so a recipe replaced
+// between this read and an earlier prepare cannot mix two plans in one reply.
+func (c *agentCommand) readPreparedResume(ctx context.Context, opts processAgentResumeOptions) (mutationruntime.ProcessResumePreparation, *agentSettingsApplication, error) {
+	proof, record, err := c.readResumePreparation(ctx, opts, nil)
+	if err != nil {
+		return proof, nil, err
+	}
+	return proof, frozenAgentSettingsApplication(record, true), nil
 }

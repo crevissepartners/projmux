@@ -46,6 +46,7 @@ type processDetachedRequest struct {
 }
 type processDetachedReply struct {
 	Preparation           *mutationruntime.ProcessResumePreparation `json:",omitempty"`
+	SettingsApplication   *agentSettingsApplication                 `json:",omitempty"`
 	Relaunch              json.RawMessage                           `json:",omitempty"`
 	ErrorDetail           json.RawMessage                           `json:",omitempty"`
 	Owner                 coremetadata.ProcessIdentity

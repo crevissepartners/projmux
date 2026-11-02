@@ -88,6 +88,60 @@ func TestSDKPreparedResumeValidationReadOnly(t *testing.T) {
 
 // No SDK caller admission runs in this test. The independent owner's wire must
 // reject the acknowledged digest itself before sidecar/Registry effects.
+// The prepare wire reports the frozen settings application the private
+// producer returns; validation and refused prepares report none.
+func TestRunResumePreparationReportsSettingsApplication(t *testing.T) {
+	c, opts, _, a := hostLostPreparedFixture(t)
+	wire := processDetachedResumeRequest{Agent: a.Binding.AgentUID, Previous: a.Binding, PreparationAction: "prepare"}
+	if proof, settings, err := runResumePreparation(context.Background(), c, wire); err == nil || settings != nil || proof.AgentUID != "" {
+		t.Fatalf("host-lost prepare without opt-in: proof %+v settings %+v err %v", proof, settings, err)
+	}
+	direct, err := c.prepareOwnedClaudeResume(context.Background(), opts)
+	if err != nil || direct.Result.SettingsApplication == nil || len(direct.Result.SettingsApplication.Entries) == 0 {
+		t.Fatalf("producer settings application %+v err %v", direct.Result.SettingsApplication, err)
+	}
+	wire.AllowHostLost = true
+	proof, settings, err := runResumePreparation(context.Background(), c, wire)
+	if err != nil || !reflect.DeepEqual(settings, direct.Result.SettingsApplication) || proof.LaunchDigest != direct.Prepared.LaunchDigest {
+		t.Fatalf("prepare wire settings %+v err %v, producer %+v", settings, err, direct.Result.SettingsApplication)
+	}
+	wire.PreparationAction, wire.Preparation = "validate", &proof
+	if _, settings, err = runResumePreparation(context.Background(), c, wire); err != nil || settings != nil {
+		t.Fatalf("validate reported settings %+v err %v", settings, err)
+	}
+}
+
+// A recipe replaced after the first prepare must not leave the reply with the
+// earlier plan's settings next to the later plan's proof: both come from the
+// record the last read returned.
+func TestPreparedResumeReplySettingsFollowTheProofRecord(t *testing.T) {
+	c, opts, _, a := hostLostPreparedFixture(t)
+	first, err := c.prepareOwnedClaudeResume(context.Background(), opts)
+	if err != nil || first.Result.SettingsApplication == nil {
+		t.Fatalf("prepare: %+v %v", first.Result.SettingsApplication, err)
+	}
+	_, record, err := c.readResumePreparation(context.Background(), opts, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replaced := *record
+	replaced.Model = "replaced-model"
+	if err = writeDeferredState(c.deferredStatePath("deferred-launches", a.Binding.AgentUID), &replaced); err != nil {
+		t.Fatal(err)
+	}
+	proof, settings, err := c.readPreparedResume(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, stored, err := c.readResumePreparation(context.Background(), opts, nil)
+	if err != nil || proof != current || !reflect.DeepEqual(settings, frozenAgentSettingsApplication(stored, true)) {
+		t.Fatalf("settings %+v do not follow the proof record %+v: %v", settings, current, err)
+	}
+	if reflect.DeepEqual(settings, first.Result.SettingsApplication) {
+		t.Fatal("replaced recipe still reports the first plan's settings")
+	}
+}
+
 func TestSDKPreparedResumeRechecksProof(t *testing.T) {
 	c, opts, store, a := hostLostPreparedFixture(t)
 	if _, err := c.prepareOwnedClaudeResume(context.Background(), opts); err != nil {
