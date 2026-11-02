@@ -194,6 +194,7 @@ func runProcessDetachedResumeOwner(conn net.Conn, encoder *json.Encoder, decoder
 			return fail(err)
 		}
 		reply.Result.MayBeTruncated = result.Previous.MayBeTruncated
+		reply.Result.SettingsApplication = result.settingsApplication
 	}
 	if err = encoder.Encode(reply); err != nil {
 		return fail(err)
