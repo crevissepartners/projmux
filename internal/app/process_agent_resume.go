@@ -90,45 +90,22 @@ func (c *agentCommand) processResumeCandidate(request processAgentResumeRequest)
 	if err != nil {
 		return processResumeCandidate{}, MapMetadataError(err)
 	}
-	opts := request.options
-	query := selector.Query{Agents: []selector.Ref{opts.Agent}}
-	if opts.Scope.Project != (selector.Ref{}) {
-		query.Project = &opts.Scope.Project
+	candidate, err := mutationruntime.ResolveProcessResumeCandidate(reg, c.resumeCandidateRequest(request.options))
+	return candidate, MapMetadataError(err)
+}
+
+// resumeCandidateRequest keeps only the claim holder's check in this package;
+// the rest of the resolution is shared with readers outside it.
+func (c *agentCommand) resumeCandidateRequest(opts processAgentResumeOptions) mutationruntime.ProcessResumeCandidateRequest {
+	return mutationruntime.ProcessResumeCandidateRequest{
+		Agent:         opts.Agent,
+		Project:       opts.Scope.Project,
+		Window:        opts.Scope.Window,
+		AllowHostLost: opts.allowHostLost,
+		RegistryPath:  c.messagePaths.registryPath,
+		ReadIdentity:  c.readProcessIdentity(),
+		CheckClaim:    func(uid string) error { return c.checkDeferredClaim(uid, opts.claim) },
 	}
-	if opts.Scope.Window != (selector.Ref{}) {
-		query.Windows = []selector.Ref{opts.Scope.Window}
-	}
-	resolution, err := selector.New(reg).ResolveAgents(query)
-	if err != nil {
-		return processResumeCandidate{}, MapMetadataError(err)
-	}
-	if err := selector.Enforce(selector.Target{Verb: selector.VerbResume, Kind: coremetadata.KindAgent}, selector.DescribeSelector(query), resolution); err != nil {
-		return processResumeCandidate{}, MapMetadataError(err)
-	}
-	uid := resolution.Matches[0].UID
-	if err := c.checkDeferredClaim(uid, opts.claim); err != nil {
-		return processResumeCandidate{}, err
-	}
-	pane, _ := processResumePane(reg, uid)
-	alive := false
-	if pane != nil && pane.Status.Activation.Process != nil {
-		identity, _, e := c.readProcessIdentity()(pane.Status.Activation.Process.HostProcess.PID)
-		alive = e == nil && identity == pane.Status.Activation.Process.HostProcess
-	}
-	if opts.allowHostLost && !alive && pane != nil && pane.Status.Activation.Process != nil {
-		if candidate, ok := hostLostResumeCandidate(reg, uid, c.readProcessIdentity()); ok {
-			return candidate, nil
-		}
-	}
-	if err = processResumeRefusal(reg, uid, alive); err != nil {
-		return processResumeCandidate{}, err
-	}
-	for _, candidate := range listResumableProcessAgents(reg, processResumeFilter{}) {
-		if candidate.Agent.Metadata.UID == uid {
-			return candidate, nil
-		}
-	}
-	return processResumeCandidate{}, fmt.Errorf("%s: %w: selected durable candidate is unavailable", processResumeRefused, processhost.ErrResumeRefused)
 }
 
 // resumeProcessAgent never creates a new Agent or replacement conversation.

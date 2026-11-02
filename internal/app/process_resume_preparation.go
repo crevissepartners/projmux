@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"errors"
-	"fmt"
 	"reflect"
 
 	m "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -12,12 +11,11 @@ import (
 )
 
 func preparationStale(detail string) error {
-	return fmt.Errorf("%w: %s", mutationruntime.ErrResumePreparationStale, detail)
+	return mutationruntime.ResumePreparationStaleError(detail)
 }
 
 func preparedResumeProjection(candidate processResumeCandidate, record *deferredLaunchRecord) mutationruntime.ProcessResumePreparation {
-	p := processPreparedProjection(record)
-	return mutationruntime.ProcessResumePreparation{AgentUID: p.AgentUID, PaneUID: p.PaneUID, Conversation: p.Conversation, LaunchDigest: p.LaunchDigest, Binding: candidate.Record.Binding, HostLost: candidate.HostLost != nil}
+	return mutationruntime.PreparedResumeProjection(candidate, record)
 }
 
 // readResumePreparation deliberately does not call prepareDeferredLaunch:
@@ -36,34 +34,12 @@ func (c *agentCommand) readResumePreparation(ctx context.Context, opts processAg
 	if err != nil {
 		return zero, nil, err
 	}
-	candidate, err := c.processResumeCandidate(request)
+	reg, err := c.loadRegistry()
 	if err != nil {
-		return zero, nil, err
+		return zero, nil, MapMetadataError(err)
 	}
-	if candidate.Record.Provider != aiModeClaude {
-		return zero, nil, usageError("agent resume: preparation requires process Claude")
-	}
-	record, err := c.readDeferredLaunch(candidate.Agent.Metadata.UID)
-	if err != nil || record == nil {
-		return zero, nil, preparationStale("prepared launch missing or damaged")
-	}
-	if !record.Matches(candidate) {
-		return zero, nil, preparationStale("prepared source changed")
-	}
-	if err = record.ValidatePermissionMode(); err != nil {
-		return zero, nil, preparationStale("prepared permission changed")
-	}
-	if err = record.ValidateFiles(); err != nil {
-		return zero, nil, preparationStale("prepared files changed")
-	}
-	proof := preparedResumeProjection(candidate, record)
-	if expected != nil && proof != *expected {
-		return zero, nil, preparationStale("acknowledged preparation changed")
-	}
-	if err = ctx.Err(); err != nil {
-		return zero, nil, err
-	}
-	return proof, record, nil
+	proof, record, err := mutationruntime.ReadProcessResumePreparation(ctx, reg, c.resumeCandidateRequest(request.options), expected)
+	return proof, record, MapMetadataError(err)
 }
 
 func preparationOptions(p mutationruntime.ProcessResumePreparation) processAgentResumeOptions {

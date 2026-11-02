@@ -56,16 +56,15 @@ func deferredClaimIdentityEqual(a, b deferredClaimRecord) bool {
 }
 
 func (c *agentCommand) checkDeferredClaim(uid string, claim *deferredProcessClaim) error {
+	if claim == nil {
+		return mutationruntime.CheckDeferredClaimUnowned(c.messagePaths.registryPath, uid)
+	}
 	record, err := readDeferredClaim(c.deferredClaimPath(uid))
 	if err != nil {
 		return err
 	}
-	if claim != nil {
-		if claim.command != c || claim.record.Agent != uid || !deferredClaimIdentityEqual(record, claim.record) || record.StopRequested || !deferredClaimLive(record) {
-			return fmt.Errorf("%s: %w: deferred claim changed", processResumeRefused, processhost.ErrResumeRefused)
-		}
-	} else if deferredClaimLive(record) {
-		return deferredClaimOwned()
+	if claim.command != c || claim.record.Agent != uid || !deferredClaimIdentityEqual(record, claim.record) || record.StopRequested || !deferredClaimLive(record) {
+		return fmt.Errorf("%s: %w: deferred claim changed", processResumeRefused, processhost.ErrResumeRefused)
 	}
 	return nil
 }
