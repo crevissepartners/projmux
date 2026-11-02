@@ -130,6 +130,16 @@ func runResumePreparation(ctx context.Context, c *agentCommand, wire processDeta
 	if result.Prepared == nil || result.Owned != nil || result.State != agentProcessPrepared {
 		return zero, nil, errors.New("process-resume-not-prepared")
 	}
-	proof, _, err := c.readResumePreparation(ctx, opts, nil)
-	return proof, result.Result.SettingsApplication, err
+	return c.readPreparedResume(ctx, opts)
+}
+
+// readPreparedResume reads the current frozen plan once and derives the proof
+// and the settings application from that same record, so a recipe replaced
+// between this read and an earlier prepare cannot mix two plans in one reply.
+func (c *agentCommand) readPreparedResume(ctx context.Context, opts processAgentResumeOptions) (mutationruntime.ProcessResumePreparation, *agentSettingsApplication, error) {
+	proof, record, err := c.readResumePreparation(ctx, opts, nil)
+	if err != nil {
+		return proof, nil, err
+	}
+	return proof, frozenAgentSettingsApplication(record, true), nil
 }

@@ -111,6 +111,37 @@ func TestRunResumePreparationReportsSettingsApplication(t *testing.T) {
 	}
 }
 
+// A recipe replaced after the first prepare must not leave the reply with the
+// earlier plan's settings next to the later plan's proof: both come from the
+// record the last read returned.
+func TestPreparedResumeReplySettingsFollowTheProofRecord(t *testing.T) {
+	c, opts, _, a := hostLostPreparedFixture(t)
+	first, err := c.prepareOwnedClaudeResume(context.Background(), opts)
+	if err != nil || first.Result.SettingsApplication == nil {
+		t.Fatalf("prepare: %+v %v", first.Result.SettingsApplication, err)
+	}
+	_, record, err := c.readResumePreparation(context.Background(), opts, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replaced := *record
+	replaced.Model = "replaced-model"
+	if err = writeDeferredState(c.deferredStatePath("deferred-launches", a.Binding.AgentUID), &replaced); err != nil {
+		t.Fatal(err)
+	}
+	proof, settings, err := c.readPreparedResume(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, stored, err := c.readResumePreparation(context.Background(), opts, nil)
+	if err != nil || proof != current || !reflect.DeepEqual(settings, frozenAgentSettingsApplication(stored, true)) {
+		t.Fatalf("settings %+v do not follow the proof record %+v: %v", settings, current, err)
+	}
+	if reflect.DeepEqual(settings, first.Result.SettingsApplication) {
+		t.Fatal("replaced recipe still reports the first plan's settings")
+	}
+}
+
 func TestSDKPreparedResumeRechecksProof(t *testing.T) {
 	c, opts, store, a := hostLostPreparedFixture(t)
 	if _, err := c.prepareOwnedClaudeResume(context.Background(), opts); err != nil {
