@@ -1254,6 +1254,35 @@ empty remain empty. These methods never read transcript contents, discover
 provider accounts or transcript locations, backfill history, or infer new
 Project affiliations. They do not start or contact a provider.
 
+### Session lists from a prepared Registry snapshot
+
+A caller that already holds a `*PreparedRegistrySnapshot` can list sessions
+without reading the Registry again.
+`Client.ListAgentSessionsFromPrepared(ctx, prepared, agent)` returns the
+`core.AgentSessionsList` that `ListAgentSessions` returns for the same Registry
+and history, and `Client.ListProjectSessionsFromPrepared(ctx, prepared,
+project)` returns the `core.ProjectSessionsList` of `ListProjectSessions`. The
+`agent` and `project` strings follow `ListAgentSessionsRequest.Agent` and
+`ListProjectSessionsRequest.Project` (a name, or `uid:<uid>` for an exact
+match; a removed Project is read by its exact Project UID). The Agent read has
+no Project, Window or label scope. Only the history file is read: a Registry
+file that changes after the handle was prepared does not change the result.
+Selection and provider refusals are those of the Registry-reading calls. A nil
+or zero handle, or one prepared by a Client with a different state root, is a
+`CodePreparedSnapshotInvalid` refusal. The handle is never written, concurrent
+calls with one handle are supported, results are caller-owned, and
+cancellation before admission reads nothing.
+
+Two pure functions join rows the caller already holds, for example the rows of
+`ListRecordedSessions`. `CurrentAgentSession(agent core.Agent)` builds the
+current row from the session reference stored in `agent.Status.SessionRef`
+(the Claude session and transcript path, or the Codex thread); it reports false
+when there is no reference, no Agent UID, an empty session id or a provider
+without session history. `MergeAgentSessions(history, current)` joins history
+rows and an optional current row into one row per Agent, provider and session,
+in time order, by the rule the session lists use. Neither reads a file, and
+their results own their pointers.
+
 ## Refusal text shared with the CLI
 
 Creation name validation, Agent launch settings (including profiles,
