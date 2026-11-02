@@ -2,18 +2,13 @@ package app
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"fmt"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-	"io"
 	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
-	"syscall"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/profile"
@@ -21,69 +16,33 @@ import (
 	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
-// The launch outlives a claim. It carries resolved arguments and snapshot
-// proofs, never a first frame or the caller's environment.
-type deferredLaunchRecord struct {
-	Version                        int
-	Agent                          string
-	Retired                        coremetadata.ProcessSessionRecord
-	OldSpec, NewSpec               coremetadata.AgentSpec
-	OldAnnotations, NewAnnotations map[string]string
-	Command                        processhost.Command
-	Files                          map[string]string
-	Model, Effort                  string
-	Attempt                        *deferredLaunchAttempt
-	Previous                       *deferredLaunchRecord
-	HostLost                       *coremetadata.ProcessActivation `json:",omitempty"`
-}
+type deferredLaunchRecord = mutationruntime.DeferredLaunchRecord
+type deferredLaunchAttempt = mutationruntime.DeferredLaunchAttempt
 
-type deferredLaunchAttempt struct {
-	Source coremetadata.ProcessSessionRecord
-	Target coremetadata.ProcessBinding
-}
-
-func deferredRefused(detail string) error {
-	return fmt.Errorf("%s: %w: %s", processResumeRefused, processhost.ErrResumeRefused, detail)
-}
+func deferredRefused(detail string) error { return mutationruntime.DeferredRefused(detail) }
 
 func (c *agentCommand) deferredStatePath(kind, uid string) string {
-	path := c.deferredClaimPath(uid)
-	if path == "" {
-		return ""
-	}
-	return filepath.Join(filepath.Dir(filepath.Dir(path)), kind, filepath.Base(path))
+	return mutationruntime.DeferredStatePath(c.messagePaths.registryPath, kind, uid)
 }
 
-// Sidecars are bounded, private, regular files owned by this OS user. The
-// persistent claim lock is the only writer lock for an Agent's sidecars.
 func readDeferredState(path string, value any) (bool, error) {
-	if path == "" {
-		return false, nil
-	}
-	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || int64(stat.Uid) != int64(os.Geteuid()) || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
-		return false, deferredRefused("unsafe deferred state")
-	}
-	file, err := os.Open(path) // #nosec G304 -- private state path derived from the Agent digest.
-	if err != nil {
-		return false, err
-	}
-	data, err := io.ReadAll(io.LimitReader(file, 65537))
-	err = errors.Join(err, file.Close())
-	if err != nil {
-		return false, err
-	}
-	if len(data) > 65536 || json.Unmarshal(data, value) != nil {
-		return false, deferredRefused("damaged deferred state")
-	}
-	return true, nil
+	return mutationruntime.ReadDeferredState(path, value)
+}
+
+func (c *agentCommand) readDeferredLaunch(uid string) (*deferredLaunchRecord, error) {
+	return mutationruntime.ReadDeferredLaunch(c.messagePaths.registryPath, uid)
+}
+
+func deferredLaunchDigest(record *deferredLaunchRecord) string {
+	return mutationruntime.DeferredLaunchDigest(record)
+}
+
+func deferredLaunchFiles(args []string) (map[string]string, error) {
+	return mutationruntime.DeferredLaunchFiles(args)
+}
+
+func validateDeferredClaudePermissionMode(args []string) error {
+	return mutationruntime.ValidateDeferredClaudePermissionMode(args)
 }
 
 func writeDeferredState(path string, value any) error {
@@ -131,92 +90,6 @@ func removeDeferredState(path string) error {
 		return err
 	}
 	return syncDeferredDirectory(path)
-}
-
-func (c *agentCommand) readDeferredLaunch(uid string) (*deferredLaunchRecord, error) {
-	var record deferredLaunchRecord
-	found, err := readDeferredState(c.deferredStatePath("deferred-launches", uid), &record)
-	if err != nil || !found {
-		return nil, err
-	}
-	if record.Version != 1 || record.Agent != uid || record.Retired.Provider != aiModeClaude || record.Retired.SessionID == "" || record.Retired.Binding.AgentUID != uid || record.Command.Env != nil || record.Command.Path == "" || record.Command.Dir == "" {
-		return nil, deferredRefused("damaged deferred launch")
-	}
-	if record.Previous != nil && (record.Previous.Previous != nil || record.Previous.Agent != uid || record.Previous.Version != 1 || record.Previous.Retired.Provider != aiModeClaude || record.Previous.Retired.Binding.AgentUID != uid || record.Previous.Retired.SessionID == "" || record.Previous.Command.Env != nil || record.Previous.Command.Path == "" || record.Previous.Command.Dir == "" || record.Attempt == nil) {
-		return nil, deferredRefused("damaged relaunch intent")
-	}
-	return &record, nil
-}
-
-func deferredLaunchDigest(record *deferredLaunchRecord) string {
-	if record == nil {
-		return ""
-	}
-	data, _ := json.Marshal(record)
-	digest := sha256.Sum256(data)
-	return fmt.Sprintf("%x", digest)
-}
-
-func deferredSnapshotDigest(path string) (string, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return "", err
-	}
-	if !info.Mode().IsRegular() {
-		return "", deferredRefused("launch snapshot is not a regular file")
-	}
-	file, err := os.Open(path) // #nosec G304 -- resolved launch snapshot, never provider input.
-	if err != nil {
-		return "", err
-	}
-	hash := sha256.New()
-	_, err = io.Copy(hash, file)
-	err = errors.Join(err, file.Close())
-	return fmt.Sprintf("%x", hash.Sum(nil)), err
-}
-
-// Claude's resolved grammar has two file-valued flags. Workspace roots are
-// directories; resume IDs, model/effort and stream arguments are literals.
-func deferredLaunchFiles(args []string) (map[string]string, error) {
-	files := map[string]string{}
-	for i := 0; i < len(args); i++ {
-		arg, path := args[i], ""
-		for _, flag := range []string{"--settings", "--append-system-prompt-file"} {
-			if arg == flag {
-				if i+1 >= len(args) {
-					return nil, deferredRefused("missing snapshot path")
-				}
-				i++
-				path = args[i]
-			}
-			if after, ok := strings.CutPrefix(arg, flag+"="); ok {
-				path = after
-			}
-		}
-		if path != "" {
-			digest, err := deferredSnapshotDigest(path)
-			if err != nil {
-				return nil, err
-			}
-			files[path] = digest
-		}
-	}
-	return files, nil
-}
-
-func (record *deferredLaunchRecord) validateFiles() error {
-	files, err := deferredLaunchFiles(record.Command.Args)
-	if err != nil {
-		return err
-	}
-	if !reflect.DeepEqual(files, record.Files) {
-		return deferredRefused("launch snapshot changed; configuration retained")
-	}
-	return nil
-}
-
-func (record *deferredLaunchRecord) matches(candidate processResumeCandidate) bool {
-	return reflect.DeepEqual(record.HostLost, candidate.HostLost) && record.Agent == candidate.Agent.Metadata.UID && processResumeRecordEqual(&record.Retired, &candidate.Record) && reflect.DeepEqual(candidate.Agent.Spec, record.NewSpec) && reflect.DeepEqual(candidate.Agent.Metadata.Annotations, record.NewAnnotations)
 }
 
 // Called under the existing claim guard. Replay can finish only the exact
@@ -284,7 +157,7 @@ func (c *agentCommand) prepareDeferredAttempt(candidate processResumeCandidate, 
 	if candidate.HostLost != nil {
 		retired = found && !ambiguous && pane != nil && reflect.DeepEqual(pane.Status.Activation.Process, candidate.HostLost)
 	}
-	if !retired || !sourceRecipe.matches(candidate) || !processResumeRecordEqual(pane.Status.ProcessSession, &candidate.Record) || !reflect.DeepEqual(agent.Spec, sourceRecipe.NewSpec) || !reflect.DeepEqual(agent.Metadata.Annotations, sourceRecipe.NewAnnotations) {
+	if !retired || !sourceRecipe.Matches(candidate) || !processResumeRecordEqual(pane.Status.ProcessSession, &candidate.Record) || !reflect.DeepEqual(agent.Spec, sourceRecipe.NewSpec) || !reflect.DeepEqual(agent.Metadata.Annotations, sourceRecipe.NewAnnotations) {
 		return deferredRefused("attempt source changed")
 	}
 	target, source := metadataProcessBinding(binding), candidate.Record.Binding
@@ -381,10 +254,10 @@ func (c *agentCommand) prepareDeferredLaunchMode(ctx context.Context, candidate 
 				}
 			}
 		}
-		if err = record.validatePermissionMode(); err != nil {
+		if err = record.ValidatePermissionMode(); err != nil {
 			return candidate, nil, err
 		}
-		if err = record.validateFiles(); err != nil {
+		if err = record.ValidateFiles(); err != nil {
 			return candidate, nil, err
 		}
 	}
@@ -420,10 +293,10 @@ func (c *agentCommand) prepareDeferredLaunchMode(ctx context.Context, candidate 
 	unlock()
 	unlock = func() {}
 	if !replacement {
-		if err = record.validatePermissionMode(); err != nil {
+		if err = record.ValidatePermissionMode(); err != nil {
 			return candidate, nil, err
 		}
-		if err = record.validateFiles(); err != nil {
+		if err = record.ValidateFiles(); err != nil {
 			return candidate, nil, err
 		}
 	}
@@ -446,52 +319,10 @@ func (c *agentCommand) prepareDeferredLaunchMode(ctx context.Context, candidate 
 		return candidate, nil, deferredRefused("launch changed during snapshot validation")
 	}
 	candidate, err = c.processResumeCandidate(request)
-	if err == nil && !record.matches(candidate) {
+	if err == nil && !record.Matches(candidate) {
 		err = deferredRefused("prepared launch proof changed")
 	}
 	return candidate, record, err
-}
-
-// Ordinary recovery may restore Previous before returning a command. Refuse
-// a legacy current or prior recipe before either recovery can write durable state.
-func (record *deferredLaunchRecord) validatePermissionMode() error {
-	if err := validateDeferredClaudePermissionMode(record.Command.Args); err != nil {
-		return err
-	}
-	if record.Previous != nil {
-		return validateDeferredClaudePermissionMode(record.Previous.Command.Args)
-	}
-	return nil
-}
-
-// Validate the frozen argv without repairing it. Explicit relaunch replacement
-// uses the common planner and retains the existing digest/claim/CAS authority.
-func validateDeferredClaudePermissionMode(args []string) error {
-	count := 0
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if arg == "--" {
-			break
-		}
-		mode, found := strings.CutPrefix(arg, "--permission-mode=")
-		if arg == "--permission-mode" {
-			found = true
-			i++
-			if i < len(args) {
-				mode = args[i]
-			}
-		}
-		if found {
-			count++
-			if mode != processClaudePermissionMode || count > 1 {
-				return deferredRefused("prepared Claude launch requires exactly one --permission-mode auto; use agent relaunch to replace the prepared launch")
-			}
-		}
-	}
-	if count != 1 {
-		return deferredRefused("prepared Claude launch requires exactly one --permission-mode auto; use agent relaunch to replace the prepared launch")
-	}
-	return nil
 }
 
 func (c *agentCommand) frozenDeferredCommand(candidate processResumeCandidate, record *deferredLaunchRecord) (processhost.Command, error) {

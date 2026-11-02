@@ -335,7 +335,7 @@ func TestDeferredClaudeRelaunchWaitsWithoutChildActualCLI(t *testing.T) {
 				t.Fatal("claim proof", err)
 			}
 			launch, err := c.readDeferredLaunch(claim.Agent)
-			if err != nil || launch == nil || launch.Command.Env != nil || !launch.matches(candidate) {
+			if err != nil || launch == nil || launch.Command.Env != nil || !launch.Matches(candidate) {
 				t.Fatal("durable configuration", err)
 			}
 			path := c.deferredStatePath("deferred-launches", claim.Agent)
@@ -370,7 +370,7 @@ func TestDeferredClaudeRelaunchWaitsWithoutChildActualCLI(t *testing.T) {
 				t.Fatal(err)
 			}
 			recovered := startDeferredCLIClaim(t, ctx, f, first.ref)
-			if !launch.matches(deferredCandidate(t, f, first.ref)) || len(deferredArgv(t, f)) != 1 {
+			if !launch.Matches(deferredCandidate(t, f, first.ref)) || len(deferredArgv(t, f)) != 1 {
 				t.Fatal("prepared recipe CAS recovery failed")
 			}
 			recovered.finish(t)
@@ -626,7 +626,7 @@ func TestDeferredClaudeRelaunchFailedInitRetainsRecipeActualCLI(t *testing.T) {
 		deferredCLIStatus(t, ctx, f, ref, "failed")
 		retained, err := c.readDeferredLaunch(uid)
 		candidate := deferredCandidate(t, f, first.ref)
-		if err != nil || retained == nil || retained.Attempt == nil || !retained.matches(candidate) || retained.Retired.SessionID != frozen.Retired.SessionID || !reflect.DeepEqual(retained.Command, frozen.Command) {
+		if err != nil || retained == nil || retained.Attempt == nil || !retained.Matches(candidate) || retained.Retired.SessionID != frozen.Retired.SessionID || !reflect.DeepEqual(retained.Command, frozen.Command) {
 			t.Fatalf("failed startup recipe: %v %s", err, run.stderr.String())
 		}
 		attention := newProcessAttentionStore(filepath.Dir(filepath.Dir(f.store.Path())))
@@ -1017,7 +1017,7 @@ func TestDeferredClaudeExplicitReplacementActualCLI(t *testing.T) {
 			}
 			run = deferredRelaunchCLI(t, ctx, f, first.ref, "--profile", "replacement")
 			next, err := c.readDeferredLaunch(uid)
-			if err != nil || next == nil || next.Model != "next-model" || next.validateFiles() != nil {
+			if err != nil || next == nil || next.Model != "next-model" || next.ValidateFiles() != nil {
 				t.Fatal("replacement", err)
 			}
 			if _, reused := next.Files[oldPath]; reused {
@@ -1146,7 +1146,7 @@ func TestDeferredClaudePromptRelaunchTransitionActualCLI(t *testing.T) {
 					t.Fatalf("wrong init accepted %s", out)
 				}
 				restored, err := c.readDeferredLaunch(uid)
-				if err != nil || restored == nil || restored.Previous != nil || !restored.matches(deferredCandidate(t, f, first.ref)) || !reflect.DeepEqual(restored.Command, prior.Command) {
+				if err != nil || restored == nil || restored.Previous != nil || !restored.Matches(deferredCandidate(t, f, first.ref)) || !reflect.DeepEqual(restored.Command, prior.Command) {
 					t.Fatalf("prior not restored: %v %s", err, out)
 				}
 				// Recreate reserved-target/L-source crash and attention-old after exact failed Wait.
@@ -1169,7 +1169,7 @@ func TestDeferredClaudePromptRelaunchTransitionActualCLI(t *testing.T) {
 					recovery = startDeferredCLIClaim(t, ctx, f, first.ref)
 					recovery.finish(t)
 					again, err := c.readDeferredLaunch(uid)
-					if err != nil || again.Previous != nil || !again.matches(deferredCandidate(t, f, first.ref)) || !reflect.DeepEqual(again.Command, prior.Command) {
+					if err != nil || again.Previous != nil || !again.Matches(deferredCandidate(t, f, first.ref)) || !reflect.DeepEqual(again.Command, prior.Command) {
 						t.Fatal("reserved/attention crash", err)
 					}
 				}

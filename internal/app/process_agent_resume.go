@@ -517,14 +517,7 @@ func processResumeSessionRecord(record coremetadata.ProcessSessionRecord) proces
 }
 
 func processResumeRecordEqual(a, b *coremetadata.ProcessSessionRecord) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	// StopRequested is advisory, not resume or deferred-claim authority.
-	// Keep every other identity, history member and pending control exact.
-	left, right := a.Clone(), b.Clone()
-	left.StopRequested, right.StopRequested = false, false
-	return reflect.DeepEqual(left, right)
+	return mutationruntime.ProcessResumeRecordEqual(a, b)
 }
 
 func (c *agentCommand) planProcessResume(candidate processResumeCandidate, opts processAgentResumeOptions) (processhost.Command, processhost.CodexConfig, agentSettingsLaunch, error) {
