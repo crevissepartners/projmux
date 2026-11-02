@@ -15,8 +15,8 @@ import (
 // The wire form and digest below were computed from origin/main 6470c147,
 // before the record moved out of internal/app. They pin sidecar compatibility.
 const (
-	deferredLaunchGoldenJSON   = ""
-	deferredLaunchGoldenDigest = ""
+	deferredLaunchGoldenJSON   = "{\"Version\":1,\"Agent\":\"agent-g\",\"Retired\":{\"provider\":\"claude\",\"binding\":{\"hostInstanceID\":\"\",\"projectUID\":\"\",\"windowUID\":\"win-g\",\"agentUID\":\"agent-g\",\"paneUID\":\"pane-g\",\"generation\":\"gen-g\",\"operationID\":\"op-0000000000000001\"},\"sessionID\":\"session-g\",\"connectionID\":\"op-0000000000000001\",\"resumeState\":\"resumable\"},\"OldSpec\":{\"provider\":\"claude\",\"workspace\":{\"cwd\":\"/work\"}},\"NewSpec\":{\"provider\":\"claude\",\"workspace\":{\"cwd\":\"/work\"}},\"OldAnnotations\":{\"projmux.io/model\":\"old\"},\"NewAnnotations\":{\"projmux.io/model\":\"new\"},\"Command\":{\"Path\":\"/bin/claude\",\"Args\":[\"--permission-mode\",\"auto\",\"--resume\",\"session-g\"],\"Dir\":\"/work\",\"Env\":null},\"Files\":{},\"Model\":\"model-g\",\"Effort\":\"effort-g\",\"Attempt\":{\"Source\":{\"provider\":\"claude\",\"binding\":{\"hostInstanceID\":\"\",\"projectUID\":\"\",\"windowUID\":\"win-g\",\"agentUID\":\"agent-g\",\"paneUID\":\"pane-g\",\"generation\":\"gen-g\",\"operationID\":\"op-0000000000000001\"},\"sessionID\":\"session-g\",\"resumeState\":\"\"},\"Target\":{\"hostInstanceID\":\"\",\"projectUID\":\"\",\"windowUID\":\"win-g\",\"agentUID\":\"agent-g\",\"paneUID\":\"pane-g\",\"generation\":\"gen-g\",\"operationID\":\"op-0000000000000001\"}},\"Previous\":null}"
+	deferredLaunchGoldenDigest = "63abfb811edd227331fe749a4aa699870f5be5769b5c9527adf2e14139270971"
 )
 
 func deferredLaunchGoldenRecord() *DeferredLaunchRecord {
