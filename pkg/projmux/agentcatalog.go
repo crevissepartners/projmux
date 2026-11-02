@@ -94,3 +94,11 @@ func catalogRefusal(err error) error {
 	}
 	return err
 }
+
+// ListDefaultCodexModels is the reader Client.Models uses for Codex when
+// Options.CodexModelLister is nil. It attaches to the existing endpoint through
+// its official read-only probe/proxy and never starts or configures the daemon.
+// Honor ctx: an expired deadline fails the read.
+func ListDefaultCodexModels(ctx context.Context) ([]string, error) {
+	return agentcatalog.ListDefaultCodexModels(ctx)
+}
