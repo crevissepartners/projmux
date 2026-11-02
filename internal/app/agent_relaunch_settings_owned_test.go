@@ -272,6 +272,14 @@ func TestOwnedProcessSettingsActualCLI(t *testing.T) {
 			if err != nil || frozen == nil || !frozen.matches(deferredCandidate(t, f, first.ref)) || deferredLaunchDigest(frozen) != prepared.Prepared.LaunchDigest {
 				t.Fatal("Prepared lacks durable recipe proof", err)
 			}
+			if mode == "resume-without-plan" {
+				// The ordinary (not host-lost) prepare wire reports the same frozen
+				// settings application the private producer returned.
+				_, reported, e := runResumePreparation(ctx, c, processDetachedResumeRequest{Agent: uid, PreparationAction: "prepare"})
+				if e != nil || reported == nil || len(reported.Entries) == 0 || !reflect.DeepEqual(reported, prepared.Result.SettingsApplication) || !reflect.DeepEqual(reported, frozenAgentSettingsApplication(frozen, true)) {
+					t.Fatalf("prepare wire settings application %+v err=%v, producer %+v", reported, e, prepared.Result.SettingsApplication)
+				}
+			}
 			launchPath := c.deferredStatePath("deferred-launches", uid)
 			launchBefore, _ := os.ReadFile(launchPath)
 			// Consume the adopted validator through the private producer; a legacy

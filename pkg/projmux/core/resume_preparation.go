@@ -18,7 +18,13 @@ type PrepareAgentResumeRequest struct {
 	AllowHostLost        bool
 }
 
-type PrepareAgentResumeResult struct{ Preparation AgentResumePreparation }
+type PrepareAgentResumeResult struct {
+	Preparation AgentResumePreparation
+	// SettingsApplication is the frozen settings application of the prepared
+	// plan, as the CLI-side prepare reports it. It is nil when the independent
+	// owner was built before this field.
+	SettingsApplication *AgentSettingsApplication
+}
 
 // ValidateAgentResumePreparationRequest reads and validates an acknowledged
 // preparation without reconciling or changing its durable plan.

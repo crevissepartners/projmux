@@ -33,6 +33,7 @@ func (c *Client) PrepareAgentResume(ctx context.Context, req core.PrepareAgentRe
 	if err = unregisterCopy(reply.Preparation, &result.Preparation); err != nil {
 		return result, err
 	}
+	result.SettingsApplication = publicSettingsApplication(reply.SettingsApplication)
 	return result, nil
 }
 

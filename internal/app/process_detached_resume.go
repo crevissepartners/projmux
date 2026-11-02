@@ -126,14 +126,14 @@ func runProcessDetachedResumeOwner(conn net.Conn, encoder *json.Encoder, decoder
 			}
 			committed <- e
 		}()
-		proof, prepareErr := runResumePreparation(life, c, wire)
+		proof, settings, prepareErr := runResumePreparation(life, c, wire)
 		if prepareErr != nil {
 			return encodeDetachedResumeError(encoder, identity, processSchemaBinding(wire.Previous), prepareErr)
 		}
 		if err = life.Err(); err != nil {
 			return err
 		}
-		if err = encoder.Encode(processDetachedReply{Owner: identity, Binding: processSchemaBinding(wire.Previous), Phase: "prepared", Preparation: &proof}); err != nil {
+		if err = encoder.Encode(processDetachedReply{Owner: identity, Binding: processSchemaBinding(wire.Previous), Phase: "prepared", Preparation: &proof, SettingsApplication: settings}); err != nil {
 			return err
 		}
 		if err = <-committed; err != nil {

@@ -447,9 +447,9 @@ func TestSDKHostLostResumeParity(t *testing.T) {
 					if !errors.As(err, &refused) || refused.Code != projmux.CodeResumeRequestInvalid {
 						t.Fatal("ordinary empty-prompt admission changed", err)
 					}
-					_, err = client.PrepareAgentResume(ctx, core.PrepareAgentResumeRequest{Ref: ref, Binding: binding})
-					if err == nil {
-						t.Fatal("false AllowHostLost accepted lost host")
+					refusedPrepare, err := client.PrepareAgentResume(ctx, core.PrepareAgentResumeRequest{Ref: ref, Binding: binding})
+					if err == nil || refusedPrepare.SettingsApplication != nil {
+						t.Fatal("false AllowHostLost accepted lost host or reported settings", refusedPrepare.SettingsApplication, err)
 					}
 					prepared, err := client.PrepareAgentResume(ctx, core.PrepareAgentResumeRequest{Ref: ref, Binding: binding, AllowHostLost: true})
 					if err != nil {
@@ -462,6 +462,20 @@ func TestSDKHostLostResumeParity(t *testing.T) {
 					direct, err := command.prepareOwnedClaudeResume(ctx, processAgentResumeOptions{Agent: selector.Ref{Kind: m.KindAgent, UID: old.Binding.AgentUID}, allowHostLost: true})
 					if err != nil || direct.Prepared == nil || direct.Prepared.LaunchDigest != prepared.Preparation.LaunchDigest {
 						t.Fatal("CORE/SDK preparation mismatch", err)
+					}
+					if prepared.SettingsApplication == nil || len(prepared.SettingsApplication.Entries) == 0 {
+						t.Fatalf("SDK prepare reported no settings application: %+v", prepared.SettingsApplication)
+					}
+					rawDirect, err := json.Marshal(direct.Result.SettingsApplication)
+					if err != nil {
+						t.Fatal(err)
+					}
+					var want core.AgentSettingsApplication
+					if err = json.Unmarshal(rawDirect, &want); err != nil {
+						t.Fatal(err)
+					}
+					if diff := settingsApplicationDifference(&want, f.root, prepared.SettingsApplication, f.root); diff != "" {
+						t.Fatalf("SDK prepare settings application differs from the internal prepare: %s", diff)
 					}
 					after := mustRegistry(t, f)
 					if !reflect.DeepEqual(before, after) {
@@ -480,7 +494,7 @@ func TestSDKHostLostResumeParity(t *testing.T) {
 						t.Fatal("Validate changed state")
 					}
 					again, err := client.PrepareAgentResume(ctx, core.PrepareAgentResumeRequest{Ref: ref, Binding: binding, AllowHostLost: true})
-					if err != nil || again != prepared {
+					if err != nil || !reflect.DeepEqual(again, prepared) {
 						t.Fatal("preparation not reused", again, err)
 					}
 					req.Preparation = &prepared.Preparation

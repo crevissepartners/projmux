@@ -52,6 +52,8 @@ type ProcessCreateCommitted struct {
 
 type ProcessDetachedReply struct {
 	Preparation           *ProcessResumePreparation `json:",omitempty"`
+	// SettingsApplication is the prepared plan's frozen settings application.
+	SettingsApplication   *AgentSettingsApplication `json:",omitempty"`
 	Relaunch              json.RawMessage           `json:",omitempty"`
 	ErrorDetail           json.RawMessage           `json:",omitempty"`
 	Owner                 coremetadata.ProcessIdentity
