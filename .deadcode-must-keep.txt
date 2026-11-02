@@ -152,6 +152,7 @@ Client.StopProject	Public v0 Project stop SDK entrypoint; SDK/CLI parity, exact 
 Client.UnregisterProject	Public v0 Project unregister entrypoint; verified by external consumer and CLI parity tests.
 Client.ValidateAgentGuidance	Public v0 global guidance editing SDK entrypoint or adapter; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
 Client.ValidateAgentResumePreparation	Public read-only prepared proof validator; external consumer, zero-effect and independent owner proof-fence tests preserve the caller contract.
+Client.ValidateAgentResumePreparationFromPrepared	Public read-only prepared proof validator over a caller-held PreparedRegistrySnapshot; external consumer, parity and zero-effect tests preserve the caller contract.
 Client.ValidateProjectGuidance	Public v0 Project guidance SDK entrypoint; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
 Client.Version	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 Client.WriteAgentGuidance	Public v0 global guidance editing SDK entrypoint or adapter; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.

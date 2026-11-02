@@ -37,6 +37,15 @@ func TestSDKPrepareAgentResumePublicConsumer(t *testing.T) {
 	if !errors.Is(err, context.Canceled) || proof != (core.AgentResumePreparation{}) {
 		t.Fatal(proof, err)
 	}
+	proof, err = c.ValidateAgentResumePreparationFromPrepared(ctx, nil, core.ValidateAgentResumePreparationRequest{Ref: "uid:agent"})
+	if !errors.Is(err, context.Canceled) || proof != (core.AgentResumePreparation{}) {
+		t.Fatal(proof, err)
+	}
+	_, err = c.ValidateAgentResumePreparationFromPrepared(context.Background(), nil, core.ValidateAgentResumePreparationRequest{Ref: "uid:agent"})
+	var invalid *projmux.Refusal
+	if !errors.As(err, &invalid) || invalid.Code != projmux.CodePreparedSnapshotInvalid {
+		t.Fatal(err)
+	}
 	_, err = c.PrepareAgentResume(context.Background(), core.PrepareAgentResumeRequest{})
 	var refused *projmux.Refusal
 	if !errors.As(err, &refused) || refused.Code != projmux.CodeSelectorInvalid {
