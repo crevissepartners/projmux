@@ -246,6 +246,7 @@ DefaultOpener	The original default stdio-proxy broker opener remains a compatibi
 DefaultProbes	Public v0 Agent catalog SDK entrypoint or its read-only adapter; retained for external modules and exercised by catalog parity and GOWORK=off consumer tests.
 DefaultStatusbarHUDVisibilitySet	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
 DefaultStatusbarRowOneVisibilitySet	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+DefaultStatusbarVisibilityState	Public v0 value and judgement SDK name for external frontends (Backlog 802 Task 1); the binary does not import pkg/projmux, covered by TestStatusbarValuesEqualInternal and TestIsUsageErrorEqualsInternal.
 DesktopNotifyConfigValue	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
 DesktopNotifyModeFromConfig	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
 DirectEndpoint.Close	Test-only installed qualification API retained for bounded direct endpoint cleanup proof.
@@ -333,6 +334,7 @@ IsPickerAdapter	Public v0 tmux Agent creation closure or preserved CLI catalog p
 IsProjectConfigTrusted	Ambient trust-store read retained as the test seam over the live loadTrustedProjects path.
 IsResponseError	Typed server-refusal classifier retained for dedicated processhost control until public activation supplies an importer.
 IsSharedOutputMode	Closed shared -o catalog membership predicate retained as the seam that keeps route-local projections out of the shared enum.
+IsUsageError	Public v0 value and judgement SDK name for external frontends (Backlog 802 Task 1); the binary does not import pkg/projmux, covered by TestStatusbarValuesEqualInternal and TestIsUsageErrorEqualsInternal.
 IsolatedPane.Alive	Test-only installed qualification API retained for exact pane-dead and socket-identity observation.
 IsolatedPane.Close	Test-only installed qualification API retained for contained exact tmux server cleanup.
 IsolatedPane.ID	Test-only installed qualification API retained for content-free exact Pane evidence.
