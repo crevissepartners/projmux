@@ -716,6 +716,7 @@ WriteKeymapMigrationPreflight	Internal keymap/catalog compatibility entrypoint r
 WriteShellAppConfig	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
 WriteTmuxAppConfig	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
 accountRefusal	Public v0 provider account catalog SDK entrypoint or refusal adapter retained for external consumers; covered by CLI/SDK parity, public field coverage, and GOWORK=off consumer fixtures.
+acknowledgedProof	Shared acknowledged-proof copy and source-binding fence for the public Validate APIs; external consumer, parity and refusal tests preserve the stale-proof contract.
 agentCommand.callProcessForegroundAction	Existing typed process foreground caller retained for private WEB64 consumer compatibility and isolated process receipt parity tests; no additional delivery policy.
 agentCommand.callProcessUserDelivery	Planned private web_process_user_input.go:deliverProcessUserInput foreign-owned Codex user-input consumer retains this typed caller to obtain actual Mode/Operation/TurnID once, without replay or fallback; explicit public Turn intent stays unchanged.
 agentCommand.callProcessUserInput	Existing typed process foreground caller retained for private WEB64 consumer compatibility and isolated process receipt parity tests; no additional delivery policy.
@@ -993,6 +994,7 @@ resourceRefusal	Public v0 resource SDK entrypoint or its JSON/selection adapter;
 resumeCandidateCwd	Public v0 resume candidate SDK closure for external frontends: the CLI resume picker's service discovery with its depth, limit, budgets and Codex catalog; covered by TestListResumeCandidatesMatchesPicker.
 resumeCandidateStale	Public v0 Window create intent Resume closure for external frontends: the Codex app-server Resume's commit-time row and route check and the native resume engine; covered by TestSDKNativeCatalogResumeMatchesCLI and TestResumeCandidateSelectionStaleBeforeEffects.
 resumeNativeSelection	Public v0 Window create intent Resume closure for external frontends: the Codex app-server Resume's commit-time row and route check and the native resume engine; covered by TestSDKNativeCatalogResumeMatchesCLI and TestResumeCandidateSelectionStaleBeforeEffects.
+resumePreparationRequestFrom	Registry-in-hand request judgment shared by the public Prepare, Validate and ValidateFromPrepared APIs; consumer, parity and handle-rule tests preserve process Claude admission.
 resumeRefusal	Public v0 tmux Agent resume entrypoint or its external-only closure; SDK/CLI parity, refusal, rollback and boundary tests cover this path.
 rootDefaults	Root teardown defaults are retained inside the pure teardown decision authority.
 routedRunner.Run	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
