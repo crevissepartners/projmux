@@ -37,6 +37,19 @@ func detachedResumeCLI(t *testing.T, ctx context.Context, f processCreateCLI, ar
 	return out
 }
 
+// detachedResumeCLISplit keeps stdout, which JSON output parses from, apart
+// from the stderr notices.
+func detachedResumeCLISplit(t *testing.T, ctx context.Context, f processCreateCLI, args ...string) (string, string) {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, f.binary, args...)
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("%v: %v %s %s", args, err, stdout.String(), stderr.String())
+	}
+	return stdout.String(), stderr.String()
+}
+
 func cleanupDetachedResume(t *testing.T, f processCreateCLI, ref string) {
 	t.Helper()
 	t.Cleanup(func() {

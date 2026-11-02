@@ -115,7 +115,12 @@ func (c *Client) resumeAgent(ctx context.Context, req core.ResumeAgentRequest, r
 // resumeAgentPlan keeps the existing rebind transaction shared with relaunch.
 // Its caller owns selection and admission; it never infers a current Agent.
 func (c *Client) resumeAgentPlan(ctx context.Context, plan mutationruntime.AgentResumePlan, socket string, runner mutationruntime.TmuxCommandRunner) (core.ResumeAgentResult, error) {
-	result, _, err := c.resumeAgentPlanWithApplication(ctx, plan, socket, runner)
+	result, application, err := c.resumeAgentPlanWithApplication(ctx, plan, socket, runner)
+	// Only a fully successful resume reports it; a later projection or receipt
+	// failure leaves the result without one, like every other failure.
+	if err == nil {
+		result.SettingsApplication = publicSettingsApplication(application)
+	}
 	return result, err
 }
 

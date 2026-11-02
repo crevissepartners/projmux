@@ -42,10 +42,12 @@ type ProcessDetachedCreateRequest struct {
 
 type ProcessCreateCommitted struct {
 	MayBeTruncated bool `json:",omitempty"`
-	Agent          coremetadata.Agent
-	Pane           coremetadata.Pane
-	Receipt        receipt.OperationReceipt
-	Notices        []string
+	// SettingsApplication is the resume's settings application; claim waiting leaves it nil.
+	SettingsApplication *AgentSettingsApplication `json:",omitempty"`
+	Agent               coremetadata.Agent
+	Pane                coremetadata.Pane
+	Receipt             receipt.OperationReceipt
+	Notices             []string
 }
 
 type ProcessDetachedReply struct {

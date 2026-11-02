@@ -1844,6 +1844,14 @@ Notices and CLI output are unchanged. Read the prior generation's
 `ProcessSession.History` through `GetResource` on its Pane; the Agent exposes
 the same termination evidence.
 
+A successful `ResumeAgent`, process or tmux, returns `SettingsApplication`: the
+CLI's `settingsApplication` for the same resume, computed by the same shared code
+(`Entries` and `NotAppliedCount`, as in `RelaunchAgentResult`). A process resume
+reports it from the independent owner, from the frozen record when one exists, for
+ordinary and host-lost resumes alike. It is nil for failures and claim waiting,
+and when `Options.ProjmuxExecutable` is an owner built before this field. CLI
+output is unchanged.
+
 ## Stored Registry snapshot without observation
 
 `Client.ReadRegistrySnapshot(ctx)` returns one caller-owned

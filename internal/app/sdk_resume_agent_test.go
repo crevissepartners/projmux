@@ -3,10 +3,12 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -88,7 +90,8 @@ func TestResumeAgentSDKCLIParity(t *testing.T) {
 	} {
 		t.Run(tc.provider+string(tc.phase)+tc.model+strconv.FormatBool(tc.shared), func(t *testing.T) {
 			var snapshots, receipts, runtimes, disclosures []string
-			for _, sdk := range []bool{false, true} {
+			var applications [2]*core.AgentSettingsApplication
+			for i, sdk := range []bool{false, true} {
 				state, config := filepath.Join(t.TempDir(), "projmux"), filepath.Join(t.TempDir(), "projmux")
 				t.Setenv("XDG_STATE_HOME", filepath.Dir(state))
 				t.Setenv("XDG_CONFIG_HOME", filepath.Dir(config))
@@ -133,6 +136,7 @@ func TestResumeAgentSDKCLIParity(t *testing.T) {
 					if result.MayBeTruncated || result.Agent.Metadata.UID != uid || result.Agent.Status.PaneRef == "" || result.PaneID == "" || result.Receipt.Effects.Identity != core.IdentityReused {
 						t.Fatalf("missing rebind result: %+v", result)
 					}
+					applications[i] = result.SettingsApplication
 					receipt = sdkJSON(t, result.Receipt)
 					notices = strings.Join(result.Notices, "\n")
 					if len(result.Notices) > 0 {
@@ -140,6 +144,16 @@ func TestResumeAgentSDKCLIParity(t *testing.T) {
 					}
 				} else {
 					c := sdkResumeCLI(t, state, config, socket, binary, home)
+					c.rebind.settingsApplication = func(a *agentSettingsApplication) {
+						raw, e := json.Marshal(a)
+						if e == nil {
+							applications[i] = &core.AgentSettingsApplication{}
+							e = json.Unmarshal(raw, applications[i])
+						}
+						if e != nil {
+							t.Fatal(e)
+						}
+					}
 					var out, stderr bytes.Buffer
 					args := []string{"uid:" + uid, "--project", "sample", "--window", "extra"}
 					if tc.model != "" {
@@ -170,6 +184,14 @@ func TestResumeAgentSDKCLIParity(t *testing.T) {
 				if pair[0] != pair[1] {
 					t.Fatalf("pair %d mismatch\nCLI %s\nSDK %s", i, pair[0], pair[1])
 				}
+			}
+			if applications[0] == nil || applications[1] == nil || len(applications[1].Entries) == 0 {
+				t.Fatalf("tmux resume settings application CLI %+v SDK %+v", applications[0], applications[1])
+			}
+			if !reflect.DeepEqual(applications[0], applications[1]) {
+				cli, _ := json.Marshal(applications[0])
+				sdk, _ := json.Marshal(applications[1])
+				t.Fatalf("tmux resume settings application differs\nCLI %s\nSDK %s", cli, sdk)
 			}
 		})
 	}

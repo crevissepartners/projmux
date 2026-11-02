@@ -159,6 +159,9 @@ func TestSDKDetachedProcessResumeFrozenDomainsAndClaims(t *testing.T) {
 				if resumed.Binding.AgentUID != created.Binding.AgentUID || resumed.Binding.PaneUID != created.Binding.PaneUID || resumed.Binding.Generation == created.Binding.Generation || resumed.ClaimWaiting || resumed.MayBeTruncated || resumed.PaneID != "" || len(resumed.Projection.Items) != 1 {
 					t.Fatalf("resume result %+v", resumed)
 				}
+				if resumed.SettingsApplication == nil || len(resumed.SettingsApplication.Entries) == 0 {
+					t.Fatalf("successful process resume reported no settings application: %+v", resumed.SettingsApplication)
+				}
 				born := await(func(p core.Pane) bool {
 					return p.Status.Activation.Process != nil && p.Status.ProcessSession.Binding.Generation == resumed.Binding.Generation && p.Status.ProcessSession.ConnectionID != "" && (p.Status.ProcessSession.SessionID != "" || p.Status.ProcessSession.ThreadID != "") && p.Status.ProcessSession.TurnID == ""
 				})
@@ -177,7 +180,7 @@ func TestSDKDetachedProcessResumeFrozenDomainsAndClaims(t *testing.T) {
 					if e != nil {
 						t.Fatal(e)
 					}
-					if !claim.ClaimWaiting || claim.MayBeTruncated || claim.Binding != resumed.Binding {
+					if !claim.ClaimWaiting || claim.MayBeTruncated || claim.SettingsApplication != nil || claim.Binding != resumed.Binding {
 						t.Fatalf("claim %+v", claim)
 					}
 					stop, e := c.StopAgent(ctx, core.StopAgentRequest{Ref: ref, Binding: claim.Binding})
@@ -227,7 +230,7 @@ func TestSDKDetachedProcessResumeFrozenDomainsAndClaims(t *testing.T) {
 					if e != nil {
 						t.Fatal(e)
 					}
-					if !claim.ClaimWaiting || claim.MayBeTruncated {
+					if !claim.ClaimWaiting || claim.MayBeTruncated || claim.SettingsApplication != nil {
 						t.Fatal("missing claim handshake")
 					}
 					receipt, e := c.SendMessage(ctx, projmux.SendMessageRequest{Source: sourceRef, Target: ref, Text: "peer payload"})
@@ -401,6 +404,8 @@ func TestSDKHostLostResumeParity(t *testing.T) {
 		if provider == "claude" {
 			modes = append(modes, "prepared")
 		}
+		var cliApplication *core.AgentSettingsApplication
+		var cliRoot string
 		for _, mode := range modes {
 			t.Run(provider+"/"+mode, func(t *testing.T) {
 				f := hostLostCLIProviderFixture(t, provider)
@@ -481,19 +486,36 @@ func TestSDKHostLostResumeParity(t *testing.T) {
 					req.Preparation = &prepared.Preparation
 				}
 				if mode == "cli" {
-					args := []string{"agent", "resume", ref, "--detach"}
+					args := []string{"agent", "resume", ref, "--detach", "-o", "json"}
 					if req.Prompt != "" {
 						args = append(args, "--", req.Prompt)
 					}
-					output := detachedResumeCLI(t, ctx, f, args...)
-					if !strings.Contains(string(output), "previous generation: reconcile/unknown; last turn may have been truncated") {
-						t.Fatal("CLI previous truncation advisory missing", string(output))
+					stdout, stderr := detachedResumeCLISplit(t, ctx, f, args...)
+					if !strings.Contains(stderr, "previous generation: reconcile/unknown; last turn may have been truncated") {
+						t.Fatal("CLI previous truncation advisory missing", stderr)
 					}
+					var reported struct {
+						SettingsApplication *core.AgentSettingsApplication `json:"settingsApplication"`
+					}
+					if err := json.Unmarshal([]byte(stdout), &reported); err != nil || reported.SettingsApplication == nil || len(reported.SettingsApplication.Entries) == 0 {
+						t.Fatalf("CLI reported no settingsApplication: %v %s", err, stdout)
+					}
+					cliApplication, cliRoot = reported.SettingsApplication, f.root
 					t.Logf("TRUNCATION provider=%s mode=cli advisory=true", provider)
 				} else {
 					result, err := client.ResumeAgent(ctx, req)
 					if err != nil {
 						t.Fatal(err)
+					}
+					if result.SettingsApplication == nil || len(result.SettingsApplication.Entries) == 0 {
+						t.Fatalf("host-lost %s resume reported no settings application: %+v", mode, result.SettingsApplication)
+					}
+					// A prepared resume starts from a frozen launch record, which the
+					// CLI lane does not use, so only the ordinary SDK lane is compared.
+					if mode == "sdk" {
+						if diff := settingsApplicationDifference(cliApplication, cliRoot, result.SettingsApplication, f.root); diff != "" {
+							t.Fatalf("host-lost %s settings application differs from CLI: %s", provider, diff)
+						}
 					}
 					if !result.MayBeTruncated || result.Preparation != nil || result.Binding.AgentUID != binding.AgentUID || result.Binding.PaneUID != binding.PaneUID || result.Binding.Generation == binding.Generation {
 						t.Fatal("SDK identity/consumption", result)
@@ -1319,4 +1341,41 @@ func logSDKResumeRefusalJournal(t *testing.T, path string, beforeInfo os.FileInf
 			closed(e.Kind, "", "runtime", "usage", "exit"),
 			closed(e.Code, "", "process-resume-preparation-stale", "registry.lock.timeout", "registry.lock.acquire-failed", "registry.mutation.failed"), sha256.Sum256([]byte(e.RunID)))
 	}
+}
+
+// settingsApplicationDifference names the first setting that differs, or "".
+// Each lane runs in its own fixture root, so that root is masked in the values.
+func settingsApplicationDifference(cli *core.AgentSettingsApplication, cliRoot string, sdk *core.AgentSettingsApplication, sdkRoot string) string {
+	if cli == nil || sdk == nil {
+		return fmt.Sprintf("CLI %+v SDK %+v", cli, sdk)
+	}
+	if cli.NotAppliedCount != sdk.NotAppliedCount {
+		return fmt.Sprintf("notAppliedCount CLI %d SDK %d", cli.NotAppliedCount, sdk.NotAppliedCount)
+	}
+	masked := func(e core.AgentSettingApplication, root string) core.AgentSettingApplication {
+		mask := func(v *string) *string {
+			if v == nil {
+				return nil
+			}
+			out := strings.ReplaceAll(*v, root, "<fixture-root>")
+			return &out
+		}
+		e.Value, e.RequestedValue = mask(e.Value), mask(e.RequestedValue)
+		return e
+	}
+	for i := 0; i < len(cli.Entries) && i < len(sdk.Entries); i++ {
+		a, b := masked(cli.Entries[i], cliRoot), masked(sdk.Entries[i], sdkRoot)
+		if !reflect.DeepEqual(a, b) {
+			return fmt.Sprintf("setting %q CLI %s SDK %s", cli.Entries[i].Setting, settingJSON(a), settingJSON(b))
+		}
+	}
+	if len(cli.Entries) != len(sdk.Entries) {
+		return fmt.Sprintf("entry count CLI %d SDK %d", len(cli.Entries), len(sdk.Entries))
+	}
+	return ""
+}
+
+func settingJSON(e core.AgentSettingApplication) string {
+	raw, _ := json.Marshal(e)
+	return string(raw)
 }
