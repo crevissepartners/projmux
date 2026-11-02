@@ -19,7 +19,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
-	"github.com/crevissepartners/projmux/internal/services/mutations"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	sdkcore "github.com/crevissepartners/projmux/pkg/projmux/core"
 )
@@ -357,30 +356,8 @@ func awaitDetachedRequestCleanup(command *createCommand, req processDetachedRequ
 }
 
 func processResumeErrorCode(err error) string {
-	if errors.Is(err, mutationruntime.ErrResumePreparationStale) {
-		return mutationruntime.ResumePreparationStale
-	}
-	var failure *mutations.Failure
-	if errors.As(err, &failure) {
-		return string(failure.Code)
-	}
-	var refusal *mutationruntime.AgentCreateRefusal
-	if errors.As(err, &refusal) {
-		return refusal.Reason
-	}
-	var profile *mutationruntime.ProfileResumeError
-	var localProfile *profileResumeError
-	if errors.As(err, &profile) || errors.As(err, &localProfile) {
-		return "profile-resume-unavailable"
-	}
-	if coremetadata.IsUsageError(err) {
-		return "resume-request-invalid"
-	}
-	if errors.Is(err, processhost.ErrStale) {
-		return "process-resume-refused"
-	}
-	if errors.Is(err, processhost.ErrResumeRefused) {
-		return "process-resume-refused"
-	}
-	return "resume-execution-failed"
+	return mutationruntime.ProcessResumeErrorCode(err, func(err error) bool {
+		var localProfile *profileResumeError
+		return errors.As(err, &localProfile)
+	})
 }
