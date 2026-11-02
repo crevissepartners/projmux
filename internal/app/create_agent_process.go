@@ -69,7 +69,7 @@ type processClaudeLaunchOptions struct{ Model, Effort, InstructionsFile, Setting
 
 // Every newly planned headless Claude launch explicitly selects auto. Deferred
 // launches freeze this argument with the rest of their immutable recipe.
-const processClaudePermissionMode = "auto"
+const processClaudePermissionMode = mutationruntime.ProcessClaudePermissionMode
 
 // Process launch uses the same provider grammar and resolved setting files as
 // tmux. The initial task travels over stream input, never the provider argv.

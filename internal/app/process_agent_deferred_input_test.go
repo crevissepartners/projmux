@@ -24,19 +24,19 @@ func TestDeferredLaunchSnapshotProofDetectsChanges(t *testing.T) {
 		t.Fatal(files, err)
 	}
 	record := deferredLaunchRecord{Command: processhost.Command{Args: args}, Files: files}
-	if err = record.validateFiles(); err != nil {
+	if err = record.ValidateFiles(); err != nil {
 		t.Fatal(err)
 	}
 	if err = os.WriteFile(composite, []byte("changed"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err = record.validateFiles(); !errors.Is(err, processhost.ErrResumeRefused) {
+	if err = record.ValidateFiles(); !errors.Is(err, processhost.ErrResumeRefused) {
 		t.Fatal("changed snapshot accepted", err)
 	}
 	if err = os.Remove(settings); err != nil {
 		t.Fatal(err)
 	}
-	if err = record.validateFiles(); err == nil {
+	if err = record.ValidateFiles(); err == nil {
 		t.Fatal("missing snapshot accepted")
 	}
 }

@@ -47,13 +47,13 @@ func (c *agentCommand) readResumePreparation(ctx context.Context, opts processAg
 	if err != nil || record == nil {
 		return zero, nil, preparationStale("prepared launch missing or damaged")
 	}
-	if !record.matches(candidate) {
+	if !record.Matches(candidate) {
 		return zero, nil, preparationStale("prepared source changed")
 	}
-	if err = record.validatePermissionMode(); err != nil {
+	if err = record.ValidatePermissionMode(); err != nil {
 		return zero, nil, preparationStale("prepared permission changed")
 	}
-	if err = record.validateFiles(); err != nil {
+	if err = record.ValidateFiles(); err != nil {
 		return zero, nil, preparationStale("prepared files changed")
 	}
 	proof := preparedResumeProjection(candidate, record)

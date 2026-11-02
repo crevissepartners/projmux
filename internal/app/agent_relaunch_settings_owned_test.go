@@ -269,7 +269,7 @@ func TestOwnedProcessSettingsActualCLI(t *testing.T) {
 				t.Fatal("no-firstinput Resume changed model/effort")
 			}
 			frozen, err := c.readDeferredLaunch(uid)
-			if err != nil || frozen == nil || !frozen.matches(deferredCandidate(t, f, first.ref)) || deferredLaunchDigest(frozen) != prepared.Prepared.LaunchDigest {
+			if err != nil || frozen == nil || !frozen.Matches(deferredCandidate(t, f, first.ref)) || deferredLaunchDigest(frozen) != prepared.Prepared.LaunchDigest {
 				t.Fatal("Prepared lacks durable recipe proof", err)
 			}
 			if mode == "resume-without-plan" {
@@ -284,7 +284,7 @@ func TestOwnedProcessSettingsActualCLI(t *testing.T) {
 			launchBefore, _ := os.ReadFile(launchPath)
 			// Consume the adopted validator through the private producer; a legacy
 			// frozen mode must be refused without recovery, replacement or a child.
-			if err = frozen.validatePermissionMode(); err != nil {
+			if err = frozen.ValidatePermissionMode(); err != nil {
 				t.Fatal("prepared auto recipe", err)
 			}
 			legacy := *frozen
@@ -407,7 +407,7 @@ func TestOwnedProcessSettingsActualCLI(t *testing.T) {
 				}
 				retained, readErr := c.readDeferredLaunch(uid)
 				candidate := deferredCandidate(t, f, first.ref)
-				if readErr != nil || retained == nil || !retained.matches(candidate) || !reflect.DeepEqual(retained.Command, frozen.Command) || candidate.Record.SessionID != oldRecord.SessionID || !coremetadata.MatchesProcessWait(candidate.Record.Binding, candidate.Pane.Status.LastTermination) {
+				if readErr != nil || retained == nil || !retained.Matches(candidate) || !reflect.DeepEqual(retained.Command, frozen.Command) || candidate.Record.SessionID != oldRecord.SessionID || !coremetadata.MatchesProcessWait(candidate.Record.Binding, candidate.Pane.Status.LastTermination) {
 					t.Fatal("failed spawn lost durable recipe or exact retirement", readErr)
 				}
 				return
