@@ -22,11 +22,11 @@ const (
 func deferredLaunchGoldenRecord() *DeferredLaunchRecord {
 	binding := coremetadata.ProcessBinding{AgentUID: "agent-g", PaneUID: "pane-g", WindowUID: "win-g", Generation: "gen-g", OperationID: "op-0000000000000001"}
 	return &DeferredLaunchRecord{
-		Version: 1,
-		Agent:   "agent-g",
-		Retired: coremetadata.ProcessSessionRecord{Provider: "claude", Binding: binding, SessionID: "session-g", ConnectionID: "op-0000000000000001", ResumeState: coremetadata.ProcessResumable},
-		OldSpec: coremetadata.AgentSpec{Provider: "claude", Workspace: coremetadata.AgentWorkspace{CWD: "/work"}},
-		NewSpec: coremetadata.AgentSpec{Provider: "claude", Workspace: coremetadata.AgentWorkspace{CWD: "/work"}},
+		Version:        1,
+		Agent:          "agent-g",
+		Retired:        coremetadata.ProcessSessionRecord{Provider: "claude", Binding: binding, SessionID: "session-g", ConnectionID: "op-0000000000000001", ResumeState: coremetadata.ProcessResumable},
+		OldSpec:        coremetadata.AgentSpec{Provider: "claude", Workspace: coremetadata.AgentWorkspace{CWD: "/work"}},
+		NewSpec:        coremetadata.AgentSpec{Provider: "claude", Workspace: coremetadata.AgentWorkspace{CWD: "/work"}},
 		OldAnnotations: map[string]string{"projmux.io/model": "old"},
 		NewAnnotations: map[string]string{"projmux.io/model": "new"},
 		Command:        processhost.Command{Path: "/bin/claude", Args: []string{"--permission-mode", "auto", "--resume", "session-g"}, Dir: "/work"},
