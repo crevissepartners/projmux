@@ -13,6 +13,11 @@ import (
 // with a different state root.
 const CodePreparedSnapshotInvalid Code = "prepared-snapshot-invalid"
 
+// CodePreparedRegistryInvalid refuses a prepared Registry that fails the
+// Registry's structural validation. The decoded rows are still held; only the
+// verdict is a refusal.
+const CodePreparedRegistryInvalid Code = "prepared-registry-invalid"
+
 // PreparedRegistrySnapshot is one decoded Registry read, prepared once and
 // immutable afterwards. Only PrepareRegistrySnapshot makes a usable one; the
 // zero value is refused. It is safe for concurrent use. It grants no authority
@@ -107,6 +112,80 @@ func (p *PreparedRegistrySnapshot) Snapshot() core.RegistrySnapshot {
 // Window, or a handle that was not prepared, is not virtual.
 func (p *PreparedRegistrySnapshot) IsVirtualWindow(windowUID string) bool {
 	return p.valid() && p.registry.IsVirtualWindow(windowUID)
+}
+
+// Validate applies the Registry's structural validation to the held rows. It
+// returns nil when they are valid. PrepareRegistrySnapshot reads a Registry
+// that fails validation too (a degraded read), so a prepared handle can be
+// invalid; this is where that shows. Failure is a CodePreparedRegistryInvalid
+// refusal whose cause is the validation error, reachable through errors.Is and
+// errors.As. A nil, zero or unprepared handle is a CodePreparedSnapshotInvalid
+// refusal. It reads no file and the handle is never changed.
+func (p *PreparedRegistrySnapshot) Validate() error {
+	if !p.valid() {
+		return &Refusal{Code: CodePreparedSnapshotInvalid, message: "prepared Registry snapshot was not prepared by PrepareRegistrySnapshot"}
+	}
+	if err := p.registry.Validate(); err != nil {
+		return &Refusal{Code: CodePreparedRegistryInvalid, message: "prepared Registry snapshot is not valid: " + err.Error(), cause: err}
+	}
+	return nil
+}
+
+// PaneInWindow returns a copy of the Pane paneUID when it belongs to windowUID
+// through the exact Registry owner chain, as the Registry's own rule decides.
+// It does not require an Agent Pane to be its Agent's current Pane. An unknown
+// Pane or Window, a Pane of another Window, a failed conversion, or a handle
+// that was not prepared returns the zero Pane and false. The caller owns the
+// result.
+func (p *PreparedRegistrySnapshot) PaneInWindow(windowUID, paneUID string) (core.Pane, bool) {
+	if !p.valid() {
+		return core.Pane{}, false
+	}
+	return publicPaneCopy(p.registry.PaneInWindow(windowUID, paneUID))
+}
+
+// WindowAnchor returns a copy of the required anchor Pane of windowUID under
+// the Registry's exact anchor rule, stricter than PaneInWindow. An unknown
+// Window, an ineligible anchor, a failed conversion, or a handle that was not
+// prepared returns the zero Pane and false. The caller owns the result.
+func (p *PreparedRegistrySnapshot) WindowAnchor(windowUID string) (core.Pane, bool) {
+	if !p.valid() {
+		return core.Pane{}, false
+	}
+	return publicPaneCopy(p.registry.WindowAnchor(windowUID))
+}
+
+// CurrentProcessActivation returns a copy of the current immutable process
+// activation of binding and its Agent's provider. It checks ownership and
+// generation only, never host liveness or control authority, and a retired
+// binding is not current. Anything else, or a handle that was not prepared,
+// returns the zero activation, an empty provider and false.
+func (p *PreparedRegistrySnapshot) CurrentProcessActivation(binding core.ProcessBinding) (core.ProcessActivation, string, bool) {
+	if !p.valid() {
+		return core.ProcessActivation{}, "", false
+	}
+	activation, provider, ok := p.registry.CurrentProcessActivation(metadata.ProcessBinding(binding))
+	if !ok {
+		return core.ProcessActivation{}, "", false
+	}
+	return core.ProcessActivation{
+		Binding:     core.ProcessBinding(activation.Binding),
+		HostProcess: core.ProcessIdentity(activation.HostProcess),
+		Child:       core.ProcessIdentity(activation.Child),
+	}, provider, true
+}
+
+// publicPaneCopy converts a found Registry Pane to an independent public Pane
+// by the same JSON round trip as the snapshot rows.
+func publicPaneCopy(pane *metadata.Pane, ok bool) (core.Pane, bool) {
+	if !ok || pane == nil {
+		return core.Pane{}, false
+	}
+	var out core.Pane
+	if err := copyUsage(pane, &out); err != nil {
+		return core.Pane{}, false
+	}
+	return out, true
 }
 
 func (p *PreparedRegistrySnapshot) valid() bool {
