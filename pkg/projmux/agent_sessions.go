@@ -6,6 +6,7 @@ import (
 
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
 	"github.com/crevissepartners/projmux/internal/services/agentsessions"
 	"github.com/crevissepartners/projmux/internal/services/resources"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
@@ -63,15 +64,7 @@ func (c *Client) ListAgentSessions(ctx context.Context, input ListAgentSessionsR
 	if err != nil {
 		return core.AgentSessionsList{}, sessionReadRefusal(err)
 	}
-	result := core.AgentSessionsList{AgentUID: listed.AgentUID, AgentName: listed.AgentName, Sessions: make([]core.AgentSession, len(listed.Sessions)), CorruptLines: listed.CorruptLines}
-	for i, row := range listed.Sessions {
-		result.Sessions[i] = core.AgentSession{AgentUID: row.AgentUID, Provider: row.Provider, SessionID: row.SessionID, TranscriptPath: row.TranscriptPath, ObservedAt: row.ObservedAt, Source: core.SessionSource(row.Source), ProjectUID: row.ProjectUID, WindowUID: row.WindowUID, AgentName: row.AgentName, AffiliationBasis: core.SessionAffiliationBasis(row.AffiliationBasis)}
-		if row.LastRecordAt != nil {
-			last := *row.LastRecordAt
-			result.Sessions[i].LastRecordAt = &last
-		}
-	}
-	return result, nil
+	return publicAgentSessionsList(listed.AgentUID, listed.AgentName, listed.Sessions, listed.CorruptLines), nil
 }
 
 // ListProjectSessions reads recorded affiliations and current Registry rows.
@@ -88,8 +81,45 @@ func (c *Client) ListProjectSessions(ctx context.Context, input ListProjectSessi
 	if err != nil {
 		return core.ProjectSessionsList{}, sessionReadRefusal(err)
 	}
-	result := core.ProjectSessionsList{ProjectUID: listed.ProjectUID, ProjectName: listed.ProjectName, Sessions: make([]core.ProjectSession, len(listed.Sessions)), Unattributed: listed.Unattributed, Ambiguous: listed.Ambiguous, CorruptLines: listed.CorruptLines}
-	for i, row := range listed.Sessions {
+	return publicProjectSessionsList(listed.ProjectUID, listed.ProjectName, listed.Sessions, listed.Unattributed, listed.Ambiguous, listed.CorruptLines), nil
+}
+func sessionReadRefusal(err error) error {
+	var failed *agentsessions.Failure
+	if errors.As(err, &failed) {
+		return &Refusal{Code: Code(failed.Code), message: failed.Error()}
+	}
+	return resourceRefusal(err)
+}
+
+func publicAgentSessionsList(agentUID, agentName string, sessions []sessionhistory.Record, corrupt int) core.AgentSessionsList {
+	result := core.AgentSessionsList{AgentUID: agentUID, AgentName: agentName, Sessions: make([]core.AgentSession, len(sessions)), CorruptLines: corrupt}
+	for i, row := range sessions {
+		result.Sessions[i] = publicAgentSession(row)
+	}
+	return result
+}
+
+func publicAgentSession(row sessionhistory.Record) core.AgentSession {
+	out := core.AgentSession{AgentUID: row.AgentUID, Provider: row.Provider, SessionID: row.SessionID, TranscriptPath: row.TranscriptPath, ObservedAt: row.ObservedAt, Source: core.SessionSource(row.Source), ProjectUID: row.ProjectUID, WindowUID: row.WindowUID, AgentName: row.AgentName, AffiliationBasis: core.SessionAffiliationBasis(row.AffiliationBasis)}
+	if row.LastRecordAt != nil {
+		last := *row.LastRecordAt
+		out.LastRecordAt = &last
+	}
+	return out
+}
+
+func internalSessionRecord(row core.AgentSession) sessionhistory.Record {
+	out := sessionhistory.Record{AgentUID: row.AgentUID, Provider: row.Provider, SessionID: row.SessionID, TranscriptPath: row.TranscriptPath, ObservedAt: row.ObservedAt, Source: sessionhistory.Source(row.Source), ProjectUID: row.ProjectUID, WindowUID: row.WindowUID, AgentName: row.AgentName, AffiliationBasis: sessionhistory.Basis(row.AffiliationBasis)}
+	if row.LastRecordAt != nil {
+		last := *row.LastRecordAt
+		out.LastRecordAt = &last
+	}
+	return out
+}
+
+func publicProjectSessionsList(projectUID, projectName string, sessions []sessionhistory.ProjectSession, unattributed, ambiguous, corrupt int) core.ProjectSessionsList {
+	result := core.ProjectSessionsList{ProjectUID: projectUID, ProjectName: projectName, Sessions: make([]core.ProjectSession, len(sessions)), Unattributed: unattributed, Ambiguous: ambiguous, CorruptLines: corrupt}
+	for i, row := range sessions {
 		out := core.ProjectSession{Provider: row.Provider, SessionID: row.SessionID, TranscriptPath: row.TranscriptPath, ObservedAt: row.ObservedAt, Source: core.SessionSource(row.Source), Agents: make([]core.ProjectSessionAgent, len(row.Agents))}
 		if row.LastRecordAt != nil {
 			last := *row.LastRecordAt
@@ -100,12 +130,5 @@ func (c *Client) ListProjectSessions(ctx context.Context, input ListProjectSessi
 		}
 		result.Sessions[i] = out
 	}
-	return result, nil
-}
-func sessionReadRefusal(err error) error {
-	var failed *agentsessions.Failure
-	if errors.As(err, &failed) {
-		return &Refusal{Code: Code(failed.Code), message: failed.Error()}
-	}
-	return resourceRefusal(err)
+	return result
 }
