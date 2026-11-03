@@ -128,8 +128,18 @@ func runProcessDetachedReserve(conn net.Conn, encoder *json.Encoder, decoder *js
 	if err != nil {
 		return reject(nil, err)
 	}
-	if len(request.options.Payload) != 0 || request.options.OperatorCreatorClient != "" {
+	if len(request.options.Payload) != 0 {
 		return reject(nil, errors.New("process-detached-reserve-request-invalid"))
+	}
+	// Like a create, only the SDK's frozen-context request carries an operator
+	// creator. The reservation records it; StartReservedAgent never decides it.
+	if client := request.options.OperatorCreatorClient; client != "" {
+		if req.Context == nil {
+			return reject(nil, errors.New("process-detached-operator-creator-sdk-only"))
+		}
+		if err = command.recordOperatorCreator(client); err != nil {
+			return reject(nil, err)
+		}
 	}
 	life, cancel := processForegroundLifetime()
 	defer cancel()

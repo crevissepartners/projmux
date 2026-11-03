@@ -733,6 +733,13 @@ reservation is started by `Client.StartReservedAgent`, described below.
   exact refs, sets `Refusal.AgentUID` and the result's `Binding`, and `errors.As`
   reaches a `CreateProcessError`.
 - Another provider is a `reserve-provider-unsupported` refusal.
+- `Creator` and `Operator` mean what they mean for `CreateAgent`: `Operator:
+  core.NewOperatorCreator("<client>")` records the operator client as the
+  creator (`creator-basis=operator`) on the reserved Agent and its Pane, takes
+  precedence over `Creator`, and a declaration it replaced is reported in
+  `Notices` with the same `creator declaration not recorded:` line. A client name
+  outside the operator client rule refuses with `CodeCreateCreatorInvalid` before
+  anything changes. Only the SDK's request carries it, as a typed field.
 - `Delete` of a reserved Agent removes its frozen launch, and with the last
   Agent of a new Window the Window. A launch left behind is reported in `Notice`.
 - An older executable rejects a reservation request before any effect.
@@ -760,7 +767,7 @@ the shape of `CreateAgentResult`.
   own proof rejects: the reservation is not kept then.
   A post-create hook that fails after the provider started is
   `process-post-create-hook-failed`, as for `CreateAgent`.
-- A start uses the creator recorded when the Agent was reserved.
+- A start uses the creator recorded when the Agent was reserved, `Operator` included; it never decides a creator again.
 - The stored command and its environment never appear in an error, `Notice` or
   receipt. A started Agent's frozen launch is removed; a removal that fails is a
   `Notice`.

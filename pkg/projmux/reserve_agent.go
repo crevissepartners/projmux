@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/operatorclient"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
@@ -56,7 +57,13 @@ func (c *Client) ReserveAgent(ctx context.Context, req core.ReserveAgentRequest)
 			return result, &Refusal{Code: CodeCreateCreatorInvalid, message: "ReserveAgentRequest.Creator must be an exact Agent reference uid:<agent>"}
 		}
 	}
-	options := mutationruntime.ProcessAgentCreateOptions{Project: scope.Project, Window: window, NewWindow: newWindow, Provider: req.Provider, Name: req.Name, CWD: req.Cwd, Model: req.Model, Effort: req.Effort, Instructions: req.Instructions, Profile: req.Profile, Creator: creator, AddDirs: req.AddDirs, Labels: labels}
+	operator := req.Operator.Client()
+	if operator != "" {
+		if err := operatorclient.Validate(operator); err != nil {
+			return result, &Refusal{Code: CodeCreateCreatorInvalid, message: "ReserveAgentRequest.Operator: " + err.Error(), cause: err}
+		}
+	}
+	options := mutationruntime.ProcessAgentCreateOptions{Project: scope.Project, Window: window, NewWindow: newWindow, Provider: req.Provider, Name: req.Name, CWD: req.Cwd, Model: req.Model, Effort: req.Effort, Instructions: req.Instructions, Profile: req.Profile, Creator: creator, OperatorCreatorClient: operator, AddDirs: req.AddDirs, Labels: labels}
 	reply, err := mutationruntime.ExecuteDetachedProcessReserve(ctx, c.processCreateContext, options)
 	if reply.Binding.Agent != "" {
 		_ = unregisterCopy(metadata.ProcessBinding{HostInstanceID: reply.Binding.Host, ProjectUID: reply.Binding.Project, WindowUID: reply.Binding.Window, AgentUID: reply.Binding.Agent, PaneUID: reply.Binding.Pane, Generation: reply.Binding.Generation, OperationID: reply.Binding.Operation}, &result.Binding)
