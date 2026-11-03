@@ -1013,6 +1013,7 @@ selectorInputError	SDK selector parser input renderer; public resource, profile 
 sessionReadRefusal	Public v0 Agent/Project session history SDK closure, consumed by TestExternalAgentSessionsConsumer and covered by TestSDKAgentSessionsCLIParityAndReadOnly and direct read admission tests; no transcript or writer API.
 settingsCommand.rootEntries	Fallback-locale entry point of the settings root entry builder retained as the axis metadata seam.
 settingsInputMessage	SDK input-only error prefix renderer; called by the public SetConfig path and covered by SDK settings refusal parity.
+settingsProvider	Public v0 settings provider list SDK name for external frontends (Backlog 802 Task 5); the binary does not import pkg/projmux, covered by TestListSettingsProvidersEqualsInternal.
 settingsRefusal	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 shellCommand.defaultShell	Original shell theme and default-shell projection retained for the existing shell-generation regression assertions.
 shellJoin	Shell argv joiner behind the retained ResumeAdapter.ResumeCommand renderer.
