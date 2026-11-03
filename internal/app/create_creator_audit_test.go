@@ -21,14 +21,18 @@ const coreMetadataImportPath = "github.com/crevissepartners/projmux/internal/cor
 // create_intent.go is the UI, which records the client "ui"; create_agent.go is
 // the SDK's CreateAgentRequest.Operator, which reaches a process create's owner
 // route only as the typed OperatorCreatorClient field that
-// process_detached_create.go hands to the seam. Every entry is in process: no
+// process_detached_create.go hands to the seam; reserve_agent.go is the same for
+// ReserveAgentRequest.Operator, whose owner route process_reserved_launch.go
+// hands to the same seam. Every entry is in process: no
 // argv spelling reaches one.
 var operatorCreatorProducers = map[string]map[string]bool{
 	"internal/services/mutations/runtime/create_operator_creator.go": {"OperatorCreatorAnnotations": true, "OperatorAgentCreator": true},
 	"internal/app/create_creator.go":                                 {"CreatorBasisOperator": true, "newOperatorCreator": true, "OperatorAgentCreator": true, "DecideOperatorCreator": true},
 	"internal/app/create_intent.go":                                  {"newOperatorCreator": true},
 	"internal/app/process_detached_create.go":                        {"recordOperatorCreator": true},
+	"internal/app/process_reserved_launch.go":                        {"recordOperatorCreator": true},
 	"pkg/projmux/create_agent.go":                                    {"DecideOperatorCreator": true, "OperatorCreatorClient": true},
+	"pkg/projmux/reserve_agent.go":                                   {"OperatorCreatorClient": true},
 }
 
 // operatorCreatorSeams are the shared runtime entrypoints that build an
