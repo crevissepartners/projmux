@@ -279,7 +279,7 @@ func runProcessDetachedEntry(route string, command *createCommand, resume *agent
 	}
 	var display, notices bytes.Buffer
 	if err = command.runProcessPostCreate(startup, result, &notices); err != nil {
-		return fail(fmt.Errorf("process-post-create-hook-failed: %w", err))
+		return fail(&mutationruntime.ProcessPostCreateHookFailure{Cause: err})
 	}
 	control, err := command.newProcessCreateControl(result)
 	if err != nil {

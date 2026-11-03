@@ -180,7 +180,7 @@ func TestSDKDetachedProcessCreateHookRollback(t *testing.T) {
 	if !errors.As(err, &detail) || detail.Binding != result.Binding || detail.Owner.PID == 0 {
 		t.Fatalf("public typed recovery cause lost: %v", err)
 	}
-	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeCreateExecutionFailed || !strings.Contains(err.Error(), "process-post-create-hook-failed") || errors.Unwrap(refusal) == nil || result.Binding.AgentUID == "" {
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeProcessPostCreateHookFailed || detail.Code != refusal.Code || !strings.Contains(err.Error(), "process-post-create-hook-failed") || errors.Unwrap(refusal) == nil || result.Binding.AgentUID == "" {
 		t.Fatalf("typed rollback %+v %T %v", result, err, err)
 	}
 	reg, e := f.store.LoadReadOnly()

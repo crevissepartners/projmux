@@ -300,6 +300,9 @@ func TestPublicStartReservedAgentLateFailureRollsBackLikeCreate(t *testing.T) {
 			if !errors.As(err, &refusal) || refusal.AgentUID != reserved.Agent.Metadata.UID {
 				t.Fatalf("the refusal must name the Agent: %v", err)
 			}
+			if refusal.Code != projmux.CodeProcessPostCreateHookFailed || detail.Code != refusal.Code {
+				t.Fatalf("hook failure codes: refusal %q detail %q", refusal.Code, detail.Code)
+			}
 			reg, regErr := r.f.store.LoadReadOnly()
 			if regErr != nil {
 				t.Fatal(regErr)
