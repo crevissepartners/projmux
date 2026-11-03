@@ -16,8 +16,10 @@ import (
 // starts no process; the only observation outside the handle is the kernel
 // identity of the recorded host process and provider child, each read once
 // per call. It reads no Registry file, deferred launch record or claim, so
-// Candidate=true is a necessary condition of a PrepareAgentResume(AllowHostLost)
-// acceptance, not a sufficient one, and it is not limited to Claude. A tmux
+// Candidate=true is evidence for the host-lost recovery branch of
+// PrepareAgentResume(AllowHostLost), not an acceptance, and it is not limited
+// to Claude. A cancellation during the kernel reads returns the context error
+// and a zero verdict. A tmux
 // Agent, a live host or an Agent without a recorded activation is a nil-error
 // verdict with Candidate=false. A nil, zero or foreign-root handle is a
 // CodePreparedSnapshotInvalid refusal, an ambiguous Pane pair is
@@ -66,6 +68,10 @@ func (c *Client) ReadAgentHostLostFromPrepared(ctx context.Context, prepared *Pr
 		if candidate.Record.Provider == "codex" {
 			verdict.Conversation = candidate.Record.ThreadID
 		}
+	}
+	// A cancellation during the kernel reads is not a verdict.
+	if err = ctx.Err(); err != nil {
+		return core.AgentHostLostVerdict{}, err
 	}
 	return verdict, nil
 }

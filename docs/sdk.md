@@ -799,11 +799,14 @@ thread), set only for a candidate. A tmux Agent, an Agent whose host is alive,
 and an Agent without a recorded activation are a verdict with `Candidate=false`
 and no error.
 
-Three limits matter to a caller. `Candidate=true` is a necessary condition of a
-`PrepareAgentResume(AllowHostLost)` acceptance, not a sufficient one: the
+Three limits matter to a caller. `Candidate=true` is evidence for the host-lost
+recovery branch of `PrepareAgentResume(AllowHostLost)`, not an acceptance: the
 prepared launch record, the deferred claim and the provider are judged there,
-and a Codex Agent can be a candidate here although that entry accepts only
-Claude. `Conversation` comes from the Registry session record, not from the
+an ordinary retired or activation-less resume is `Candidate=false`, and a Codex
+Agent can be a candidate here although that entry accepts only Claude. The two
+identity reasons are independent, so `ChildIdentityAbsent` can be true beside a
+live host. A cancellation during the kernel reads returns the context error and
+a zero verdict. `Conversation` comes from the Registry session record, not from the
 prepared launch sidecar. The handle rows and the kernel observation are read
 one after another, not as one atomic snapshot, and a handle older than a
 rewritten Registry judges the rows it holds.

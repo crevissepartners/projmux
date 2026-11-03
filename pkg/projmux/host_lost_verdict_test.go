@@ -264,3 +264,19 @@ func TestReadAgentHostLostVerdictIsReadOnly(t *testing.T) {
 		t.Fatalf("second read %+v %v", again, err)
 	}
 }
+
+// A cancellation during the kernel reads is the caller's error, never a verdict.
+func TestReadAgentHostLostVerdictCancelDuringKernelRead(t *testing.T) {
+	c, _ := graphFixtureClient(t, hostLostRegistry(t, nil))
+	prepared, _ := mustPrepare(t, c, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c.processIdentity = func(int) (metadata.ProcessIdentity, int, error) {
+		cancel()
+		return metadata.ProcessIdentity{}, 0, localipc.ErrProcessAbsent
+	}
+	got, err := c.ReadAgentHostLostFromPrepared(ctx, prepared, core.ReadAgentHostLostRequest{Ref: "uid:agent-01"})
+	if !errors.Is(err, context.Canceled) || got != (core.AgentHostLostVerdict{}) {
+		t.Fatalf("%+v %v", got, err)
+	}
+}
