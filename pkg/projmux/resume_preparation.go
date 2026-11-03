@@ -6,6 +6,7 @@ import (
 
 	m "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"github.com/crevissepartners/projmux/internal/services/resources"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
@@ -47,12 +48,9 @@ func (c *Client) ValidateAgentResumePreparation(ctx context.Context, req core.Va
 		return result, err
 	}
 	wire.PreparationAction = "validate"
-	var proof mutationruntime.ProcessResumePreparation
-	if err = unregisterCopy(req.Preparation, &proof); err != nil {
+	proof, err := acknowledgedProof(req.Preparation, wire)
+	if err != nil {
 		return result, err
-	}
-	if proof.AgentUID != wire.Agent || proof.Binding != wire.Previous {
-		return result, &Refusal{Code: CodeResumePreparationStale, AgentUID: wire.Agent, message: "process-resume-preparation-stale: source binding changed"}
 	}
 	wire.Preparation = &proof
 	reply, err := mutationruntime.ExecuteProcessResumePreparation(ctx, c.processCreateContext, wire)
@@ -63,6 +61,93 @@ func (c *Client) ValidateAgentResumePreparation(ctx context.Context, req core.Va
 		return result, err
 	}
 	return result, nil
+}
+
+// ValidateAgentResumePreparationFromPrepared judges the same read as
+// ValidateAgentResumePreparation against a Registry snapshot the caller
+// already holds. It starts no process and re-reads no Registry file; the
+// deferred launch record, its files and the kernel liveness of the recorded
+// host are still read. A nil, zero or foreign-root handle is a
+// CodePreparedSnapshotInvalid refusal. Refusal codes match the other entry,
+// except that a cancellation after the entry check returns the context error
+// as it is, and ResumeProcessError.Owner is empty because no owner process
+// exists. Registry, sidecar and kernel observations are not one atomic
+// snapshot, and no operations.jsonl outcome is appended.
+func (c *Client) ValidateAgentResumePreparationFromPrepared(ctx context.Context, prepared *PreparedRegistrySnapshot, req core.ValidateAgentResumePreparationRequest) (core.AgentResumePreparation, error) {
+	var result core.AgentResumePreparation
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	if c.pathsErr != nil {
+		return result, resourceRefusal(c.pathsErr)
+	}
+	if !prepared.valid() {
+		return result, &Refusal{Code: CodePreparedSnapshotInvalid, message: "prepared Registry snapshot was not prepared by PrepareRegistrySnapshot"}
+	}
+	if prepared.root != c.preparedRoot() {
+		return result, &Refusal{Code: CodePreparedSnapshotInvalid, message: "prepared Registry snapshot belongs to a different state root"}
+	}
+	if req.Ref == "" {
+		return result, &Refusal{Code: CodeSelectorInvalid, message: "preparation requires one Agent reference"}
+	}
+	query, err := mutationQuery(core.KindAgent, req.Ref, req.Project, req.Window, "PrepareAgentResumeRequest")
+	if err != nil {
+		return result, resourceRefusal(err)
+	}
+	wire, err := resumePreparationRequestFrom(prepared.registry, query, core.ProcessBinding{})
+	if err != nil {
+		return result, err
+	}
+	proof, err := acknowledgedProof(req.Preparation, wire)
+	if err != nil {
+		return result, err
+	}
+	read := mutationruntime.ProcessResumeCandidateRequest{
+		Agent:         selector.Ref{Kind: m.KindAgent, UID: wire.Agent},
+		AllowHostLost: true,
+		RegistryPath:  c.preparedRoot(),
+	}
+	fail := func(err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
+			return err
+		}
+		detail := &ResumeProcessError{Code: Code(mutationruntime.ProcessResumeErrorCode(err, nil)), cause: err}
+		_ = unregisterCopy(wire.Previous, &detail.Binding)
+		return &Refusal{Code: detail.Code, AgentUID: wire.Agent, message: err.Error(), cause: detail}
+	}
+	if wire.Previous.PaneUID == "" || wire.Previous.Generation == "" {
+		return result, fail(errors.New("process-detached-resume-binding-invalid"))
+	}
+	candidate, err := mutationruntime.ResolveProcessResumeCandidate(prepared.registry, read)
+	if err != nil {
+		return result, fail(err)
+	}
+	if candidate.Record.Binding != wire.Previous {
+		return result, fail(processhost.ErrStale)
+	}
+	// A supplied HostLost bit is evidence to compare, so host-lost candidates
+	// are admitted whenever a proof is supplied.
+	got, _, err := mutationruntime.ReadProcessResumePreparation(ctx, prepared.registry, read, &proof)
+	if err != nil {
+		return result, fail(err)
+	}
+	if err = unregisterCopy(got, &result); err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+// acknowledgedProof copies the caller's proof and refuses one whose Agent or
+// source binding is not the observed one.
+func acknowledgedProof(preparation core.AgentResumePreparation, wire mutationruntime.ProcessDetachedResumeRequest) (mutationruntime.ProcessResumePreparation, error) {
+	var proof mutationruntime.ProcessResumePreparation
+	if err := unregisterCopy(preparation, &proof); err != nil {
+		return proof, err
+	}
+	if proof.AgentUID != wire.Agent || proof.Binding != wire.Previous {
+		return proof, &Refusal{Code: CodeResumePreparationStale, AgentUID: wire.Agent, message: "process-resume-preparation-stale: source binding changed"}
+	}
+	return proof, nil
 }
 
 func (c *Client) resumePreparationRequest(ctx context.Context, ref, project, window string, binding core.ProcessBinding) (mutationruntime.ProcessDetachedResumeRequest, error) {
@@ -84,6 +169,13 @@ func (c *Client) resumePreparationRequest(ctx context.Context, ref, project, win
 	if err != nil {
 		return wire, resourceRefusal(err)
 	}
+	return resumePreparationRequestFrom(reg, query, binding)
+}
+
+// resumePreparationRequestFrom judges the request against a Registry the
+// caller already holds; it reads no file.
+func resumePreparationRequestFrom(reg m.Registry, query selector.Query, binding core.ProcessBinding) (mutationruntime.ProcessDetachedResumeRequest, error) {
+	var wire mutationruntime.ProcessDetachedResumeRequest
 	resolution, err := resources.Resolve(reg, m.RuntimeObservation{}, nil, m.KindAgent, query)
 	if err != nil {
 		return wire, resourceRefusal(err)

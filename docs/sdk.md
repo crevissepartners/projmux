@@ -1890,6 +1890,35 @@ reports the same value. It is nil for refusals, and when
 `ValidateAgentResumePreparation` is unchanged. `Preparation` and CLI output are
 unchanged.
 
+`ValidateAgentResumePreparationFromPrepared(ctx, prepared, req)` makes the same
+read-only judgment against a `*PreparedRegistrySnapshot` the caller already
+holds (see `PrepareRegistrySnapshot`), without starting a process or reading the
+Registry file again. `req` is the `ValidateAgentResumePreparationRequest` of the
+other entry. The deferred launch record, its snapshot files and the kernel
+liveness of the recorded host are still read, and the proof's `HostLost` bit is
+compared as evidence, never as admission, exactly as there. A nil, unprepared or
+foreign-state-root handle is a `Refusal` with `CodePreparedSnapshotInvalid`;
+cancellation is checked on entry before the handle. Every other refusal carries
+the code the other entry gives for the same seed, with two differences: a
+cancellation after the entry check returns the context error unchanged (the
+other entry reports `CodeResumeExecutionFailed` from its owner), and
+`ResumeProcessError.Owner` is empty because no owner process exists (`Code` and
+`Binding` are filled). The registry rows, the sidecar and the kernel
+observation are read one after another, not as one atomic snapshot, and no
+`operations.jsonl` outcome is appended. A fresh handle is the caller's choice:
+a handle older than a rewritten Registry judges the rows it holds.
+
+```go
+handle, _, err := client.PrepareRegistrySnapshot(ctx, nil)
+if err != nil {
+    return err
+}
+proof, err := client.ValidateAgentResumePreparationFromPrepared(ctx, handle,
+    core.ValidateAgentResumePreparationRequest{
+        Ref: agentRef, Preparation: prepared.Preparation,
+    })
+```
+
 Early stale-proof refusals preserve the Registry, sidecars, claims and provider
 state. They can still append an ordinary CLI error outcome to
 `logs/operations.jsonl`: a spawned validation or resume owner can each record

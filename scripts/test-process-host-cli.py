@@ -21,6 +21,7 @@ FILES = (
     "process_detached_create_cli_test.go",
     "process_detached_resume_cli_test.go",
     "sdk_resume_process_cli_test.go",
+    "sdk_validate_from_prepared_cli_test.go",
     "sdk_relaunch_process_cli_test.go",
     "sdk_relaunch_host_lost_cli_test.go",
     "sdk_relaunch_host_lost_pin_cli_test.go",
