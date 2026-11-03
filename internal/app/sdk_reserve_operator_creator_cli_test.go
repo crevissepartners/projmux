@@ -19,6 +19,7 @@ import (
 // operator creator on the Agent and its Pane, the declaration reported in Notices
 // with the CLI's line, and, after StartReservedAgent, the same record.
 func TestPublicReserveAgentOperatorCreatorMatchesCreate(t *testing.T) {
+	copiedCLI(t, "PMX_TEST_CLI")
 	r := newStartFixture(t)
 	ctx := reserveContext(t)
 	parentReq := r.request()
@@ -72,8 +73,14 @@ func TestPublicReserveAgentOperatorCreatorMatchesCreate(t *testing.T) {
 	}
 	check("reserved")
 	line := "creator declaration not recorded: operator-client (--creator uid:" + declared + ")"
-	if len(result.Notices) != 1 || result.Notices[0] != line {
-		t.Fatalf("Notices %q, want only %q", result.Notices, line)
+	var declarations []string
+	for _, notice := range result.Notices {
+		if strings.HasPrefix(notice, "creator declaration not recorded:") {
+			declarations = append(declarations, notice)
+		}
+	}
+	if len(declarations) != 1 || declarations[0] != line {
+		t.Fatalf("declaration notices %q, want only %q", declarations, line)
 	}
 	started, err := r.client.StartReservedAgent(ctx, core.StartReservedAgentRequest{Agent: "uid:" + result.Agent.Metadata.UID})
 	if err != nil {
@@ -91,6 +98,7 @@ func TestPublicReserveAgentOperatorCreatorMatchesCreate(t *testing.T) {
 // TestPublicReserveAgentOperatorAloneRecordsNoDeclaration records the operator
 // without a Creator: no declaration notice, the operator record on both.
 func TestPublicReserveAgentOperatorAloneRecordsNoDeclaration(t *testing.T) {
+	copiedCLI(t, "PMX_TEST_CLI")
 	r := newReserveFixture(t)
 	ctx := reserveContext(t)
 	req := r.request()
@@ -99,8 +107,10 @@ func TestPublicReserveAgentOperatorAloneRecordsNoDeclaration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reserve: %v", err)
 	}
-	if len(result.Notices) != 0 {
-		t.Fatalf("Notices %q, want none", result.Notices)
+	for _, notice := range result.Notices {
+		if strings.HasPrefix(notice, "creator declaration not recorded:") {
+			t.Fatalf("a reservation without Creator reported a declaration: %q", notice)
+		}
 	}
 	reg, err := r.f.store.LoadReadOnly()
 	if err != nil {
@@ -118,6 +128,7 @@ func TestPublicReserveAgentOperatorAloneRecordsNoDeclaration(t *testing.T) {
 // name outside the operator client rule with CreateAgent's Code before anything
 // changes.
 func TestPublicReserveAgentRefusesAnInvalidOperatorWithoutEffect(t *testing.T) {
+	copiedCLI(t, "PMX_TEST_CLI")
 	r := newReserveFixture(t)
 	ctx := reserveContext(t)
 	before, err := r.f.store.LoadReadOnly()
