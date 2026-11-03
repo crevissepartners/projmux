@@ -738,6 +738,8 @@ the shape of `CreateAgentResult`.
   `CreateAgent`, including a Window the reservation created, and names what it
   could not remove as `ReserveAgent` does. That includes a start the caller's
   own proof rejects: the reservation is not kept then.
+  A post-create hook that fails after the provider started is
+  `process-post-create-hook-failed`, as for `CreateAgent`.
 - A start uses the creator recorded when the Agent was reserved.
 - The stored command and its environment never appear in an error, `Notice` or
   receipt. A started Agent's frozen launch is removed; a removal that fails is a
@@ -1161,6 +1163,15 @@ and failure settle through the owned rollback path. Failures retain typed codes
 and `CreateProcessError` causes with exact owner and binding references; a nonzero Binding identifies exact recovery resources when cleanup
 cannot be confirmed. Inspect that generation before using `StopAgent` or `Delete`;
 an uncertain startup must not be automatically retried.
+
+A failed process post-create hook is `CodeProcessPostCreateHookFailed`
+(`process-post-create-hook-failed`) in both `Refusal.Code` and
+`CreateProcessError.Code`, for `CreateAgent` and `StartReservedAgent`. Earlier
+builds returned `create-execution-failed` for it; callers that matched that code
+for a hook failure should match the new one. The Agent is rolled back, the
+Binding and owner references and the message are unchanged, and any other
+execution failure keeps `create-execution-failed`. Match the `Code`, not the
+message.
 
 ### Relaunch an Agent
 

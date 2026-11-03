@@ -33,6 +33,10 @@ const (
 	CodeProcessSplitUnsupported  Code = "process-split-unsupported"
 )
 
+// CodeProcessPostCreateHookFailed identifies a process post-create hook that
+// failed after its provider started; the Agent is rolled back as usual.
+const CodeProcessPostCreateHookFailed Code = "process-post-create-hook-failed"
+
 // CreateWindow creates one shell Window through the CLI's shared transaction.
 // Cancellation is effective before admission; admitted execution and rollback
 // finish independently. No provider is started by this method.

@@ -468,12 +468,30 @@ func AwaitDetachedProcessCreateCleanup(load func() (coremetadata.Registry, error
 	}
 }
 
+// ProcessPostCreateHookFailedCode is the code of a process post-create hook
+// that failed after its provider had started.
+const ProcessPostCreateHookFailedCode = "process-post-create-hook-failed"
+
+// ProcessPostCreateHookFailure marks a failed process post-create hook so the
+// startup handshake can name it without parsing diagnostic text. Its message
+// is the CLI's stable `process-post-create-hook-failed: <cause>` sentence.
+type ProcessPostCreateHookFailure struct{ Cause error }
+
+func (e *ProcessPostCreateHookFailure) Error() string {
+	return ProcessPostCreateHookFailedCode + ": " + e.Cause.Error()
+}
+func (e *ProcessPostCreateHookFailure) Unwrap() error { return e.Cause }
+
 // ProcessCreateErrorCode transports the existing typed refusal reason across
 // the owned startup handshake without parsing free-form diagnostic text.
 func ProcessCreateErrorCode(err error) string {
 	var refusal *AgentCreateRefusal
 	if errors.As(err, &refusal) {
 		return refusal.Reason
+	}
+	var hook *ProcessPostCreateHookFailure
+	if errors.As(err, &hook) {
+		return ProcessPostCreateHookFailedCode
 	}
 	if coremetadata.IsUsageError(err) {
 		return "create-request-invalid"

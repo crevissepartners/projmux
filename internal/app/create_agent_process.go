@@ -863,7 +863,7 @@ func (c *createCommand) runProcessAgentCLI(flags resourceCreateFlags, stdout, st
 		return c.failProcessCreate(&result, err)
 	}
 	if err = c.runProcessPostCreate(ctx, result, stderr); err != nil {
-		return c.failProcessCreate(&result, fmt.Errorf("process-post-create-hook-failed: %w", err))
+		return c.failProcessCreate(&result, &mutationruntime.ProcessPostCreateHookFailure{Cause: err})
 	}
 	control, err := c.newProcessCreateControl(result)
 	if err != nil {
