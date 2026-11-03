@@ -46,6 +46,15 @@ func TestSDKPrepareAgentResumePublicConsumer(t *testing.T) {
 	if !errors.As(err, &invalid) || invalid.Code != projmux.CodePreparedSnapshotInvalid {
 		t.Fatal(err)
 	}
+	var verdict core.AgentHostLostVerdict
+	verdict, err = c.ReadAgentHostLostFromPrepared(ctx, nil, core.ReadAgentHostLostRequest{Ref: "uid:agent"})
+	if !errors.Is(err, context.Canceled) || verdict != (core.AgentHostLostVerdict{}) {
+		t.Fatal(verdict, err)
+	}
+	_, err = c.ReadAgentHostLostFromPrepared(context.Background(), nil, core.ReadAgentHostLostRequest{Ref: "uid:agent"})
+	if !errors.As(err, &invalid) || invalid.Code != projmux.CodePreparedSnapshotInvalid {
+		t.Fatal(err)
+	}
 	_, err = c.PrepareAgentResume(context.Background(), core.PrepareAgentResumeRequest{})
 	var refused *projmux.Refusal
 	if !errors.As(err, &refused) || refused.Code != projmux.CodeSelectorInvalid {

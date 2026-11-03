@@ -93,6 +93,8 @@ type Client struct {
 	activationAwait func(context.Context, mutationruntime.TmuxCommandRunner, string, time.Duration, time.Duration) (bool, string, error)
 	// resumeSources replaces the provider reads of a resume discovery; tests only.
 	resumeSources func(*mutationruntime.ResumeDiscoveryOptions)
+	// processIdentity replaces the kernel identity read of a host-lost verdict; tests only.
+	processIdentity mutationruntime.ProcessIdentityReader
 }
 
 // NewClient captures paths without creating directories or changing the process
