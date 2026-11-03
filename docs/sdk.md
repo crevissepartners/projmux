@@ -545,6 +545,26 @@ public name, CLI output or screen changes.
 | `projmux.MaxPersonaBytes` | The byte limit of one persona file, defined by the persona validator rather than copied |
 | `projmux.AINewWindowModes()` | The modes a new AI window can open with, in the order refusals name them; the caller owns the returned slice |
 
+### Settings provider list
+
+`projmux.ListSettingsProviders()` returns the agent providers a settings screen
+offers as `[]core.SettingsProvider`, in the order the CLI and picker settings
+list them (Claude, Codex, Antigravity today). Each entry carries `ID`,
+`DisplayName`, `SettingsVisible` (true for every returned entry) and
+`IntegrationCommand`, the CLI command that installs the provider's hook
+integration (empty when there is none). It does not expose the provider's
+capability flags. Pinned equal to the internal registry by
+`TestListSettingsProvidersEqualsInternal`.
+
+`projmux.FindSettingsProvider(id)` returns the entry an id names and `true`,
+ignoring case and surrounding space the way the enabled-agents file is read;
+an empty or unknown id reports `false`. `core.ProviderClaude`, `ProviderCodex`
+and `ProviderAntigravity` are the three ids. `ConfigProviders` keeps its
+meaning: it reports which of these providers are enabled, not their names.
+
+Both functions read nothing and need no Client. The caller owns every returned
+value; changing it affects no later call.
+
 ## Legacy AI split mode
 
 `Client.GetAISplitMode() core.AISplitModeState` reads the first valid TUI
