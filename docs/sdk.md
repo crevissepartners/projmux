@@ -2260,6 +2260,38 @@ once per handle and share it read-only. `IsVirtualWindow(windowUID)` applies
 the Registry's exact eligible-anchor rule: the Window is virtual when that
 anchor Pane is process-hosted, whatever the Agent phase or host liveness.
 
+`PrepareRegistrySnapshot` reads the Registry as a degraded read-only load: a
+Registry that fails structural validation still prepares, and the handle holds
+its rows. It has no separate loader for that case. Whether the rows are valid is
+a verdict the caller asks for on the handle:
+
+```go
+if err := handle.Validate(); err != nil { // *Refusal, CodePreparedRegistryInvalid
+	// errors.Is / errors.As reach the Registry's own validation error.
+}
+pane, ok := handle.PaneInWindow(windowUID, paneUID)       // core.Pane copy
+anchor, ok := handle.WindowAnchor(windowUID)              // core.Pane copy
+activation, provider, ok := handle.CurrentProcessActivation(binding) // binding is a core.ProcessBinding
+```
+
+`Validate()` is the Registry's own structural check. Failure is a
+`Refusal` with `CodePreparedRegistryInvalid` whose cause is that validation
+error, reachable through `errors.Is` and `errors.As`; a nil, zero or
+unprepared handle is a `CodePreparedSnapshotInvalid` refusal. `PaneInWindow`
+reports a Pane that belongs to the Window through the exact owner chain; it does
+not require an Agent Pane to be its Agent's current Pane. `WindowAnchor` is
+stricter: the Window's required anchor under the same rule `IsVirtualWindow`
+uses. `CurrentProcessActivation` returns the current process activation of the
+binding and its Agent's provider; it checks ownership and generation, never
+host liveness or control authority, and a retired binding is not current. Each
+lookup returns the zero value and false for an unknown, mismatched or
+ineligible request, for a handle that was not prepared, and, for the Pane
+lookups, when the copy cannot be made. The returned values are copies the
+caller owns, so changing one changes neither the handle nor the next call. The
+methods take no Client, so a handle from another state root is not detected
+here; use it with the Client that prepared it. They read no file and are safe
+for concurrent use.
+
 `Client.ObserveGraphInventory(ctx, projmux.GraphObservationRequest{...})`
 observes the selected tmux server once and returns a
 `core.GraphRuntimeInventory`: the transport, host mode, sessions, windows,
