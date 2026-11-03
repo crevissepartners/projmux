@@ -775,6 +775,39 @@ its absence cannot be proven; use `StopAgent`), `agent-mark-offline-not-host-los
 (no recorded process host), `agent-mark-offline-conversation-unavailable`, and
 `agent-mark-offline-stale`. Every refusal leaves the Registry unchanged.
 
+## Read a host-lost verdict from a prepared snapshot
+
+`Client.ReadAgentHostLostFromPrepared(ctx, prepared, core.ReadAgentHostLostRequest{Ref: "uid:..."})`
+judges, without writing anything, whether one process Agent lost its host. It
+takes a `*PreparedRegistrySnapshot` the caller already holds (see
+`PrepareRegistrySnapshot`) and starts no process. `Project` and `Window`
+optionally scope `Ref`. The only observation outside the handle is the kernel
+identity of the recorded host process and provider child, each read once per
+call. A nil, unprepared or foreign-state-root handle is a `Refusal` with
+`CodePreparedSnapshotInvalid`; cancellation is checked on entry before the
+handle. An empty `Ref` is `CodeSelectorInvalid`, an Agent with two process
+Panes is `CodeResumePlanInvalid`, and selector failures match the other
+resource reads.
+
+`AgentHostLostVerdict` reports `HostIdentityAbsent` and `ChildIdentityAbsent`
+(the kernel proved that identity gone or replaced), `ActivationAbsent` (both),
+and `Candidate`, the same judgement that `MarkAgentOffline` and
+`PrepareAgentResume(AllowHostLost)` start from. `Binding` is the recorded
+activation's generation, `PaneUID` its Pane, and `Conversation` the provider
+conversation of the process session record (the Claude session or the Codex
+thread), set only for a candidate. A tmux Agent, an Agent whose host is alive,
+and an Agent without a recorded activation are a verdict with `Candidate=false`
+and no error.
+
+Three limits matter to a caller. `Candidate=true` is a necessary condition of a
+`PrepareAgentResume(AllowHostLost)` acceptance, not a sufficient one: the
+prepared launch record, the deferred claim and the provider are judged there,
+and a Codex Agent can be a candidate here although that entry accepts only
+Claude. `Conversation` comes from the Registry session record, not from the
+prepared launch sidecar. The handle rows and the kernel observation are read
+one after another, not as one atomic snapshot, and a handle older than a
+rewritten Registry judges the rows it holds.
+
 ## Delete a headless Agent
 
 `Client.Delete(ctx, core.DeleteRequest{Kind: core.KindAgent, Ref: "uid:...",
