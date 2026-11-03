@@ -56,6 +56,10 @@ func TestPreparedRegistryLookupParity(t *testing.T) {
 			r.Agents[0].Metadata.OwnerRef = &metadata.OwnerRef{Kind: metadata.KindWindow, UID: "window-elsewhere"}
 		}},
 		{"generation-moved", func(r *metadata.Registry) { r.Panes[1].Status.Activation.Generation = "gen-two" }},
+		{"retired", func(r *metadata.Registry) {
+			r.Panes[1].Status.Activation = metadata.PaneActivation{}
+			r.Agents[0].Status.Phase = metadata.PhaseOffline
+		}},
 		{"not-current-pane", func(r *metadata.Registry) { r.Agents[0].Status.PaneRef = "pane-01" }},
 	}
 	bindings := []struct {
