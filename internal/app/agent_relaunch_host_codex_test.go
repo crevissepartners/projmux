@@ -1383,12 +1383,14 @@ type fixtureProcess struct {
 // orderFixtureProcessesOldestFirst orders processes by kernel birth, so a
 // parent (such as the tmux server) is stopped before the children that only
 // end when it ends. The /proc listing is ordered by the pid as text, so
-// 10023 comes before 9980 although it may be younger.
+// 10023 comes before 9980 although it may be younger. Processes with the same
+// birth tick are one group: inside it a parent comes before its child and
+// unrelated processes go by pid. No single comparison can say that for three
+// or more processes, so each group is ordered on its own.
 func orderFixtureProcessesOldestFirst(procs []fixtureProcess) {
 	sort.SliceStable(procs, func(i, j int) bool {
-		a, b := procs[i], procs[j]
-		ta, okA := fixtureBirthTicks(a.process.Start)
-		tb, okB := fixtureBirthTicks(b.process.Start)
+		ta, okA := fixtureBirthTicks(procs[i].process.Start)
+		tb, okB := fixtureBirthTicks(procs[j].process.Start)
 		if okA != okB {
 			return okA
 		}
@@ -1396,16 +1398,45 @@ func orderFixtureProcessesOldestFirst(procs []fixtureProcess) {
 			if c := slices.Compare(ta, tb); c != 0 {
 				return c < 0
 			}
-			// The same clock tick: a parent was born before its child.
-			if a.process.PID == b.parent {
-				return true
+		}
+		return procs[i].process.PID < procs[j].process.PID
+	})
+	for start := 0; start < len(procs); {
+		end := start + 1
+		ticks, ok := fixtureBirthTicks(procs[start].process.Start)
+		for ok && end < len(procs) {
+			next, nextOK := fixtureBirthTicks(procs[end].process.Start)
+			if !nextOK || slices.Compare(ticks, next) != 0 {
+				break
 			}
-			if b.process.PID == a.parent {
-				return false
+			end++
+		}
+		if ok {
+			orderFixtureParentsFirst(procs[start:end])
+		}
+		start = end
+	}
+}
+
+// orderFixtureParentsFirst reorders processes of one birth tick, given in pid
+// order: it repeatedly takes the first process whose parent is not still
+// waiting in the group.
+func orderFixtureParentsFirst(group []fixtureProcess) {
+	remaining := slices.Clone(group)
+	for n := 0; len(remaining) > 0; n++ {
+		pick := 0
+		for i, item := range remaining {
+			waiting := slices.ContainsFunc(remaining, func(other fixtureProcess) bool {
+				return other.process.PID == item.parent
+			})
+			if !waiting {
+				pick = i
+				break
 			}
 		}
-		return a.process.PID < b.process.PID
-	})
+		group[n] = remaining[pick]
+		remaining = slices.Delete(remaining, pick, pick+1)
+	}
 }
 
 // fixtureBirthTicks reads the numeric fields that end a process Start value
@@ -1537,6 +1568,23 @@ func TestFixtureProcessOrderIsOldestFirstAcrossPidDigitBoundary(t *testing.T) {
 				t.Fatalf("order = %v, want %v", pids(got), test.want)
 			}
 		})
+	}
+}
+
+func TestFixtureProcessOrderSameTickGroupIsIndependentOfInputOrder(t *testing.T) {
+	proc := func(pid, parent int) fixtureProcess {
+		return fixtureProcess{process: coremetadata.ProcessIdentity{PID: pid, OwnerUID: 1, Start: "linux:boot-1:5100"}, parent: parent}
+	}
+	// B is a child of A although its pid is lower; C is unrelated to both.
+	items := []fixtureProcess{proc(300, 1), proc(100, 300), proc(200, 1)}
+	want := []int{200, 300, 100}
+	for _, perm := range [][]int{{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}} {
+		input := []fixtureProcess{items[perm[0]], items[perm[1]], items[perm[2]]}
+		orderFixtureProcessesOldestFirst(input)
+		got := []int{input[0].process.PID, input[1].process.PID, input[2].process.PID}
+		if !slices.Equal(got, want) {
+			t.Fatalf("input order %v gave %v, want %v", perm, got, want)
+		}
 	}
 }
 
