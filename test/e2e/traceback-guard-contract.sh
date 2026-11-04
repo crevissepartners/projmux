@@ -36,6 +36,11 @@ if [[ -n "${PROJMUX_TRACEBACK_GUARD_CASE:-}" ]]; then
     cd "$PROJMUX_SMOKE_WORKDIR"
   fi
   smoke_contract_begin L20 heterogeneous-dialogue provider-neutral-broker
+  if [[ -n "${PROJMUX_TRACEBACK_GUARD_PIPE_BYTES:-}" ]]; then
+    # Fixture: shrink the tee's input pipe (the parent shrinks the job-log
+    # pipe), as on a runner whose pipes are smaller than 64 KiB.
+    python3 -c 'import fcntl, sys; fcntl.fcntl(2, 1031, int(sys.argv[1]))' "$PROJMUX_TRACEBACK_GUARD_PIPE_BYTES"
+  fi
   echo "guard-case-stdout $PROJMUX_TRACEBACK_GUARD_CASE"
   echo "guard-case-stderr $PROJMUX_TRACEBACK_GUARD_CASE" >&2
   case "$PROJMUX_TRACEBACK_GUARD_CASE" in
@@ -62,17 +67,49 @@ except KeyError:
       grep -Fq "KeyError: 'routeIncarnation'" "$PROJMUX_SMOKE_WORKDIR/redirected.log"
       ;;
     flush-boundary)
-      # The job-log reader sleeps before draining. 96 KiB overfills its 64 KiB
-      # pipe, so the stderr tee blocks mid-filler, while the rest of the filler
-      # and the traceback still fit in the tee's own input pipe without
-      # blocking this shell. The traceback is therefore written, and pass is
-      # called, while the capture file does not hold it yet.
-      head -c 98304 /dev/zero | tr '\0' 'f' >&2
+      # The job-log reader sleeps before draining, so the stderr tee blocks once
+      # the job-log pipe (capacity A) is full and its capture file holds at most
+      # A bytes. A filler of A + B/2 bytes (B: the tee's input pipe) therefore
+      # puts the traceback past anything the capture can hold, while the
+      # filler, the traceback, and the tee's one in-flight chunk still fit in
+      # B and A together, so this shell never blocks. Both capacities are
+      # measured here rather than assumed: a runner's pipes are not always 64 KiB.
+      measured="$(python3 -c '
+import fcntl
+import sys
+
+sizes = []
+for fd in sys.argv[1:3]:
+    try:
+        sizes.append(fcntl.fcntl(int(fd), 1032))  # F_GETPIPE_SZ
+    except OSError:
+        sizes.append(0)
+print(*sizes)
+' "$SMOKE_CONTRACT_SAVED_STDERR_FD" 2)" || true
+      read -r job_log_capacity tee_capacity <<<"$measured"
+      job_log_capacity="${job_log_capacity:-0}"
+      tee_capacity="${tee_capacity:-0}"
+      filler=$((job_log_capacity + tee_capacity / 2))
+      unavailable=""
+      if ((job_log_capacity <= 0 || tee_capacity <= 0)); then
+        unavailable="pipe capacity not measurable"
+      elif ((tee_capacity < 4096)); then
+        unavailable="tee input pipe too small to hold the traceback"
+      elif ((filler > 16777216)); then
+        unavailable="filler beyond 16 MiB"
+      fi
+      measure="job-log=$job_log_capacity tee-input=$tee_capacity filler=$filler"
+      if [[ -n "$unavailable" ]]; then
+        echo "flush-boundary: precondition unavailable: $unavailable $measure" >&2
+        exit 97
+      fi
+      echo "flush-boundary-capacity $measure" >&2
+      head -c "$filler" /dev/zero | tr '\0' 'f' >&2
       printf '\n' >&2
       raise_key_error || true
       # Prove the lag is real at the decision point, or the case means nothing.
       if grep -aqF "KeyError: 'routeIncarnation'" "$SMOKE_CONTRACT_OUTPUT_STDERR"; then
-        echo "flush-boundary: the capture already holds the traceback; no lag to test" >&2
+        echo "flush-boundary: precondition unavailable: the capture already holds the traceback; capture $(stat -c %s "$SMOKE_CONTRACT_OUTPUT_STDERR") bytes $measure" >&2
         exit 97
       fi
       ;;
@@ -127,9 +164,10 @@ cases=0
 failed=0
 
 run_child() {
-  local name="$1" lag="$2" status=0
+  local name="$1" lag="$2" pipe_bytes="${3:-}" status=0
   # The child's EXIT-trap cleanup needs three quiet /proc samples inside a 1s
   # budget; a loaded machine misses that, so widen the default scale.
+  rm -rf "$tmp/$name"
   local -a child_env=(
     PROJMUX_TRACEBACK_GUARD_CASE="$name"
     PROJMUX_E2E_ARTIFACTS="$tmp/$name"
@@ -137,9 +175,15 @@ run_child() {
     GITHUB_RUN_ATTEMPT="$decoy_attempt"
     E2E_WAIT_SCALE="${E2E_WAIT_SCALE:-10}"
   )
+  if [[ -n "$pipe_bytes" ]]; then
+    child_env+=(PROJMUX_TRACEBACK_GUARD_PIPE_BYTES="$pipe_bytes")
+  fi
   if [[ "$lag" == "lag" ]]; then
     # The job-log reader starts draining stderr only after three seconds.
     {
+      if [[ -n "$pipe_bytes" ]]; then
+        python3 -c 'import fcntl, sys; fcntl.fcntl(1, 1031, int(sys.argv[1]))' "$pipe_bytes"
+      fi
       env "${child_env[@]}" "$self" 2>&1 >"$tmp/$name.out" || status=$?
       printf '%s\n' "$status" >"$tmp/$name.rc"
     } | {
@@ -152,11 +196,11 @@ run_child() {
   fi
 }
 
-# check_case NAME WANT [EXCEPTION] [lag]: WANT is "fail" (the guard fired with
+# check_case NAME WANT [EXCEPTION] [lag] [PIPE_BYTES]: WANT is "fail" (the guard fired with
 # EXCEPTION) or "pass" (the scenario recorded pass and no guard line exists).
 check_case() {
-  local name="$1" want="$2" exception="${3:-}" lag="${4:-}" status verdict
-  run_child "$name" "$lag"
+  local name="$1" want="$2" exception="${3:-}" lag="${4:-}" pipe_bytes="${5:-}" status verdict capacity=""
+  run_child "$name" "$lag" "$pipe_bytes"
   read -r status <"$tmp/$name.rc"
   verdict="$(python3 - "$tmp/$name.out" "$tmp/$name.err" "$tmp/$name/L20-attempt-$contract_attempt.json" \
     "$name" "$want" "$exception" "$status" "$pass_line" <<'PY'
@@ -206,18 +250,28 @@ else:
         problems.append(f"want one python-traceback guard line with exception={exception}, got {guards}")
     elif err_lines.index(guards[0]) > min(i for i, line in enumerate(err_lines) if line.startswith("E2E_TERMINAL ")):
         problems.append("the guard line must precede the terminal record")
-if name == "flush-boundary" and "f" * 98304 not in err:
-    problems.append("the filler block did not reach the job log intact")
-print("; ".join(problems))
+measured = []
+if name == "flush-boundary":
+    measured = [line for line in err_lines if line.startswith("flush-boundary-capacity ")]
+    fields = dict(part.split("=", 1) for part in measured[0].split()[1:]) if len(measured) == 1 else {}
+    if not fields:
+        problems.append(f"want one flush-boundary-capacity line, got {measured}")
+    elif "f" * int(fields["filler"]) not in err:
+        problems.append("the filler block did not reach the job log intact")
+    elif int(fields["filler"]) <= int(fields["job-log"]):
+        problems.append(f"filler does not exceed the job-log pipe: {measured[0]}")
+print(" ".join(measured) + "|" + "; ".join(problems))
 PY
 )"
+  capacity="${verdict%%|*}"
+  verdict="${verdict#*|}"
   if [[ -n "$verdict" ]]; then
-    echo "FAIL traceback-guard-contract case $name: $verdict" >&2
+    echo "FAIL traceback-guard-contract case $name${pipe_bytes:+ pipe=$pipe_bytes}: $verdict" >&2
     echo "--- child stderr ($name, first 4000 bytes) ---" >&2
     head -c 4000 "$tmp/$name.err" >&2
     failed=$((failed + 1))
   else
-    echo "ok $name rc=$status $(grep -m1 '^E2E_CONTRACT id=L20 guard=' "$tmp/$name.err" || echo 'no guard line')"
+    echo "ok $name${pipe_bytes:+ pipe=$pipe_bytes} rc=$status $(grep -m1 '^E2E_CONTRACT id=L20 guard=' "$tmp/$name.err" || echo 'no guard line')${capacity:+ $capacity}"
   fi
   cases=$((cases + 1))
 }
@@ -227,10 +281,26 @@ check_case cmdsub fail "KeyError: 'routeIncarnation'"
 check_case chained fail "ValueError: second"
 check_case stdout fail "KeyError: 'routeIncarnation'"
 check_case flush-boundary fail "KeyError: 'routeIncarnation'" lag
+# The same case on runners whose pipes are smaller than 64 KiB.
+check_case flush-boundary fail "KeyError: 'routeIncarnation'" lag 8192
+check_case flush-boundary fail "KeyError: 'routeIncarnation'" lag 4096
 check_case clean pass
 check_case redirected pass
 check_case before-begin pass
 check_case after-pass pass
+
+# Without a job-log pipe nothing can be measured or held back: the case must
+# say so by name and fail with 97, never pass or skip.
+run_child flush-boundary "" ""
+read -r status <"$tmp/flush-boundary.rc"
+if [[ "$status" != "97" ]] || ! grep -qF "flush-boundary: precondition unavailable: pipe capacity not measurable job-log=0 " "$tmp/flush-boundary.err"; then
+  echo "FAIL traceback-guard-contract case flush-boundary without a job-log pipe: want rc 97 and a named precondition, got rc $status" >&2
+  head -c 4000 "$tmp/flush-boundary.err" >&2
+  failed=$((failed + 1))
+else
+  echo "ok flush-boundary without a job-log pipe rc=$status $(grep -m1 'precondition unavailable' "$tmp/flush-boundary.err")"
+fi
+cases=$((cases + 1))
 
 if [[ "$failed" != "0" ]]; then
   echo "FAIL traceback-guard-contract ($failed of $cases cases)" >&2
