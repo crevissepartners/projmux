@@ -1342,19 +1342,35 @@ func codexHostMoveArchiveFailureCLI(t *testing.T, persistFailure, archiveConflic
 // converted into a supervisor Wait or usable launch authority.
 func waitCodexFixturePeerExit(t *testing.T, process coremetadata.ProcessIdentity) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
+	waited, state, exited := waitFixturePeerExitFor(process, 2*time.Second)
+	if !exited {
+		t.Error(fixturePeerStillRunningMessage(process, waited, state))
+	}
+}
+
+// waitFixturePeerExitFor polls until the process of this birth is gone or a
+// zombie, or the limit passes. It returns how long it waited, the last `ps`
+// stat it read, and whether the process left.
+func waitFixturePeerExitFor(process coremetadata.ProcessIdentity, limit time.Duration) (time.Duration, string, bool) {
+	started := time.Now()
+	state := ""
+	for time.Since(started) < limit {
 		current, _, err := localipc.Process(process.PID)
 		if err != nil || current != process {
-			return
+			return time.Since(started), state, true
 		}
-		state, _ := exec.Command("ps", "-p", strconv.Itoa(process.PID), "-o", "stat=").Output()
-		if strings.HasPrefix(strings.TrimSpace(string(state)), "Z") {
-			return
+		out, _ := exec.Command("ps", "-p", strconv.Itoa(process.PID), "-o", "stat=").Output()
+		state = strings.TrimSpace(string(out))
+		if strings.HasPrefix(state, "Z") {
+			return time.Since(started), state, true
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Errorf("owned fixture peer cleanup still running: pid=%d birth=%v", process.PID, process)
+	return time.Since(started), state, false
+}
+
+func fixturePeerStillRunningMessage(process coremetadata.ProcessIdentity, waited time.Duration, state string) string {
+	return fmt.Sprintf("owned fixture peer cleanup still running: pid=%d birth=%v waited=%s stat=%q", process.PID, process, waited.Round(time.Millisecond), state)
 }
 
 // fixtureProcess is one process selected for a fixture cleanup.
@@ -1370,8 +1386,42 @@ type fixtureProcess struct {
 // 10023 comes before 9980 although it may be younger.
 func orderFixtureProcessesOldestFirst(procs []fixtureProcess) {
 	sort.SliceStable(procs, func(i, j int) bool {
-		return strconv.Itoa(procs[i].process.PID) < strconv.Itoa(procs[j].process.PID)
+		a, b := procs[i], procs[j]
+		ta, okA := fixtureBirthTicks(a.process.Start)
+		tb, okB := fixtureBirthTicks(b.process.Start)
+		if okA != okB {
+			return okA
+		}
+		if okA {
+			if c := slices.Compare(ta, tb); c != 0 {
+				return c < 0
+			}
+			// The same clock tick: a parent was born before its child.
+			if a.process.PID == b.parent {
+				return true
+			}
+			if b.process.PID == a.parent {
+				return false
+			}
+		}
+		return a.process.PID < b.process.PID
 	})
+}
+
+// fixtureBirthTicks reads the numeric fields that end a process Start value
+// (linux:<boot id>:<ticks>, darwin:<sec>:<usec>). A value without any is not
+// comparable, and the caller orders it after every comparable one.
+func fixtureBirthTicks(start string) ([]uint64, bool) {
+	fields := strings.Split(start, ":")
+	var ticks []uint64
+	for i := len(fields) - 1; i >= 0; i-- {
+		n, err := strconv.ParseUint(fields[i], 10, 64)
+		if err != nil {
+			break
+		}
+		ticks = append([]uint64{n}, ticks...)
+	}
+	return ticks, len(ticks) > 0
 }
 
 // stopFixtureProcesses stops every process of this uid, other than the test
@@ -1473,6 +1523,11 @@ func TestFixtureProcessOrderIsOldestFirstAcrossPidDigitBoundary(t *testing.T) {
 			input: []fixtureProcess{{process: coremetadata.ProcessIdentity{PID: 50, Start: "darwin:100:900"}}, {process: coremetadata.ProcessIdentity{PID: 60, Start: "darwin:100:20"}}},
 			want:  []int{60, 50},
 		},
+		{
+			name:  "unreadable Start values sort after readable ones, by pid",
+			input: []fixtureProcess{{process: coremetadata.ProcessIdentity{PID: 5, Start: ""}}, {process: coremetadata.ProcessIdentity{PID: 4, Start: "garbage"}}, proc(9980, 1, "5100")},
+			want:  []int{9980, 4, 5},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -1482,6 +1537,34 @@ func TestFixtureProcessOrderIsOldestFirstAcrossPidDigitBoundary(t *testing.T) {
 				t.Fatalf("order = %v, want %v", pids(got), test.want)
 			}
 		})
+	}
+}
+
+func TestFixturePeerExitTimeoutReportsWaitAndState(t *testing.T) {
+	cmd := exec.Command("sleep", "60")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	process, _, err := localipc.Process(cmd.Process.Pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waited, state, exited := waitFixturePeerExitFor(process, 150*time.Millisecond)
+	if exited {
+		t.Fatalf("a running process was reported as exited: stat=%q", state)
+	}
+	if waited < 150*time.Millisecond {
+		t.Fatalf("waited %s, want at least the limit", waited)
+	}
+	message := fixturePeerStillRunningMessage(process, waited, state)
+	for _, want := range []string{"owned fixture peer cleanup still running", "pid=" + strconv.Itoa(process.PID), "waited=", `stat="S`} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("message %q lacks %q", message, want)
+		}
 	}
 }
 
