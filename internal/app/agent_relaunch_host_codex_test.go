@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -1356,15 +1357,33 @@ func waitCodexFixturePeerExit(t *testing.T, process coremetadata.ProcessIdentity
 	t.Errorf("owned fixture peer cleanup still running: pid=%d birth=%v", process.PID, process)
 }
 
+// fixtureProcess is one process selected for a fixture cleanup.
+type fixtureProcess struct {
+	process coremetadata.ProcessIdentity
+	parent  int
+	argv    []string
+}
+
+// orderFixtureProcessesOldestFirst orders processes by kernel birth, so a
+// parent (such as the tmux server) is stopped before the children that only
+// end when it ends. The /proc listing is ordered by the pid as text, so
+// 10023 comes before 9980 although it may be younger.
+func orderFixtureProcessesOldestFirst(procs []fixtureProcess) {
+	sort.SliceStable(procs, func(i, j int) bool {
+		return strconv.Itoa(procs[i].process.PID) < strconv.Itoa(procs[j].process.PID)
+	})
+}
+
 // stopFixtureProcesses stops every process of this uid, other than the test
 // itself, that was started for one fixture: its environment carries the
 // fixture root as PMX_TEST_PROCESS_ROOT, or its argv names the fixture state
 // directory (a detached observer such as `internal agent-hook ingest
 // codex-broker-watch` gets that directory as an argument and owns no socket the
-// broker cleanup could find). Each process is logged, its birth is read again
-// right before SIGTERM, and it must exit. Without /proc it does nothing. An
-// empty root never matches the environment and an empty stateDir never matches
-// argv, so a caller that has only one of them cannot select a foreign process.
+// broker cleanup could find). The processes are stopped oldest first. Each
+// process is logged, its birth is read again right before SIGTERM, and it must
+// exit. Without /proc it does nothing. An empty root never matches the
+// environment and an empty stateDir never matches argv, so a caller that has
+// only one of them cannot select a foreign process.
 func stopFixtureProcesses(t *testing.T, root, stateDir string) {
 	t.Helper()
 	if root == "" && stateDir == "" {
@@ -1374,6 +1393,7 @@ func stopFixtureProcesses(t *testing.T, root, stateDir string) {
 	if err != nil {
 		return
 	}
+	var selected []fixtureProcess
 	for _, entry := range entries {
 		pid, err := strconv.Atoi(entry.Name())
 		if err != nil || pid == os.Getpid() {
@@ -1381,7 +1401,7 @@ func stopFixtureProcesses(t *testing.T, root, stateDir string) {
 		}
 		// The birth is read before the environment and argv, so a pid that a
 		// new process reuses after they were read fails the check below.
-		process, _, err := localipc.Process(pid)
+		process, parent, err := localipc.Process(pid)
 		if err != nil || process.OwnerUID != uint32(os.Getuid()) {
 			continue
 		}
@@ -1396,10 +1416,15 @@ func stopFixtureProcesses(t *testing.T, root, stateDir string) {
 		if !byRoot && !byState {
 			continue
 		}
-		t.Logf("fixture process left after the test: pid=%d argv=%q", pid, argv)
+		selected = append(selected, fixtureProcess{process: process, parent: parent, argv: argv})
+	}
+	orderFixtureProcessesOldestFirst(selected)
+	for _, item := range selected {
+		pid, process := item.process.PID, item.process
 		if current, _, err := localipc.Process(pid); err != nil || current != process {
 			continue
 		}
+		t.Logf("fixture process left after the test: pid=%d argv=%q", pid, item.argv)
 		if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
 			// ESRCH: the process left on its own after the birth check.
 			if !errors.Is(err, syscall.ESRCH) {
@@ -1408,6 +1433,55 @@ func stopFixtureProcesses(t *testing.T, root, stateDir string) {
 			continue
 		}
 		waitCodexFixturePeerExit(t, process)
+	}
+}
+
+func TestFixtureProcessOrderIsOldestFirstAcrossPidDigitBoundary(t *testing.T) {
+	proc := func(pid, parent int, ticks string) fixtureProcess {
+		return fixtureProcess{process: coremetadata.ProcessIdentity{PID: pid, OwnerUID: 1, Start: "linux:boot-1:" + ticks}, parent: parent}
+	}
+	pids := func(procs []fixtureProcess) []int {
+		out := make([]int, 0, len(procs))
+		for _, p := range procs {
+			out = append(out, p.process.PID)
+		}
+		return out
+	}
+	tests := []struct {
+		name  string
+		input []fixtureProcess
+		want  []int
+	}{
+		{
+			// /proc lists 10023 (the supervise child) before 9980 (the tmux server).
+			name:  "older four digit pid comes before younger five digit pid",
+			input: []fixtureProcess{proc(10023, 9980, "5200"), proc(9980, 1, "5100"), proc(10100, 10023, "5300")},
+			want:  []int{9980, 10023, 10100},
+		},
+		{
+			name:  "tick counts compare as numbers not text",
+			input: []fixtureProcess{proc(300, 1, "999"), proc(200, 1, "1000")},
+			want:  []int{300, 200},
+		},
+		{
+			name:  "same tick starts the parent before its child",
+			input: []fixtureProcess{proc(9980, 10023, "5100"), proc(10023, 1, "5100")},
+			want:  []int{10023, 9980},
+		},
+		{
+			name:  "darwin seconds and microseconds compare in order",
+			input: []fixtureProcess{{process: coremetadata.ProcessIdentity{PID: 50, Start: "darwin:100:900"}}, {process: coremetadata.ProcessIdentity{PID: 60, Start: "darwin:100:20"}}},
+			want:  []int{60, 50},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := slices.Clone(test.input)
+			orderFixtureProcessesOldestFirst(got)
+			if !slices.Equal(pids(got), test.want) {
+				t.Fatalf("order = %v, want %v", pids(got), test.want)
+			}
+		})
 	}
 }
 
