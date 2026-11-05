@@ -27,7 +27,7 @@ func TestSnapshotPendingOrderIsStableAcrossSnapshots(t *testing.T) {
 	if len(want) != len(ids) {
 		t.Fatalf("pending = %v, want %d entries", want, len(ids))
 	}
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		if got := order(); !reflect.DeepEqual(got, want) {
 			t.Fatalf("snapshot %d pending order = %v, first snapshot = %v", i, got, want)
 		}
