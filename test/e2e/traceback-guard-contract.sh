@@ -101,14 +101,17 @@ print(rows[0][0], rows[0][1], rows[1][0], rows[1][1], cause)
       unavailable="$cause"
       if [[ -z "$unavailable" ]] && ((job_log_capacity <= 0 || tee_capacity <= 0)); then
         unavailable="pipe capacity not measurable"
-      elif [[ -z "$unavailable" ]] && ((tee_capacity < 4096)); then
-        unavailable="tee input pipe too small to hold the traceback"
+      elif [[ -z "$unavailable" ]] && ((tee_capacity < 8192)); then
+        # The kernel gives a new pipe at least two pages. A one-page pipe holds
+        # a single slot, which the tee fills with a few small writes.
+        unavailable="tee input pipe below two pages $tee_capacity"
       fi
       measure="job-log=$job_log_capacity tee-input=$tee_capacity filler=$filler job-log-start=${job_log_start:-0} tee-input-start=${tee_start:-0}"
       if [[ -n "$unavailable" ]]; then
         echo "flush-boundary: precondition unavailable: $unavailable $measure" >&2
         exit 97
       fi
+      echo "flush-boundary-tee $(tee --version 2>&1 | head -n 1)" >&2
       echo "flush-boundary-capacity $measure" >&2
       head -c "$filler" /dev/zero | tr '\0' 'f' >&2
       printf '\n' >&2
@@ -307,7 +310,8 @@ PY
     head -c 4000 "$tmp/$name.err" >&2
     failed=$((failed + 1))
   else
-    echo "ok $label rc=$status $(grep -m1 '^E2E_CONTRACT id=L20 guard=' "$tmp/$name.err" || echo 'no guard line')${capacity:+ $capacity}"
+    tee_line="$(grep -a -m1 '^flush-boundary-tee ' "$tmp/$name.err" || true)"
+    echo "ok $label rc=$status $(grep -m1 '^E2E_CONTRACT id=L20 guard=' "$tmp/$name.err" || echo 'no guard line')${capacity:+ $capacity}${tee_line:+ $tee_line}"
   fi
   cases=$((cases + 1))
 }
@@ -320,25 +324,39 @@ check_case flush-boundary fail "KeyError: 'routeIncarnation'" lag
 # The same case on pipes smaller than 64 KiB, and on the GitHub runner's mix of
 # a 1 MiB job-log pipe with a small tee input pipe.
 check_case flush-boundary fail "KeyError: 'routeIncarnation'" lag 8192 8192
-check_case flush-boundary fail "KeyError: 'routeIncarnation'" lag 4096 4096
-check_case flush-boundary fail "KeyError: 'routeIncarnation'" lag 1048576 4096
+check_case flush-boundary fail "KeyError: 'routeIncarnation'" lag 1048576 8192
 check_case clean pass
 check_case redirected pass
 check_case before-begin pass
 check_case after-pass pass
 
-# Without a job-log pipe nothing can be measured or held back: the case must
-# say so by name and fail with 97, never pass or skip.
-run_child flush-boundary ""
-read -r status <"$tmp/flush-boundary.rc"
-if [[ "$status" != "97" ]] || ! grep -qF "flush-boundary: precondition unavailable: cannot measure or resize the pipe on fd " "$tmp/flush-boundary.err"; then
-  echo "FAIL traceback-guard-contract case flush-boundary without a job-log pipe: want rc 97 and a named precondition, got rc $status" >&2
-  head -c 4000 "$tmp/flush-boundary.err" >&2
-  failed=$((failed + 1))
-else
-  echo "ok flush-boundary without a job-log pipe rc=$status $(grep -m1 'precondition unavailable' "$tmp/flush-boundary.err")"
-fi
-cases=$((cases + 1))
+# check_unavailable LABEL LAG JOBLOG_BYTES TEE_BYTES WANT: the case cannot make
+# its lag here, so it must fail with 97 and a precondition line naming WANT,
+# never pass or skip.
+check_unavailable() {
+  local label="$1" lag="$2" joblog_bytes="$3" tee_bytes="$4" want="$5" status
+  run_child flush-boundary "$lag" "$joblog_bytes" "$tee_bytes"
+  if [[ -s "$tmp/flush-boundary.enlarge" ]]; then
+    echo "skip $label: cannot enlarge the job-log pipe ($(<"$tmp/flush-boundary.enlarge"))"
+    return 0
+  fi
+  read -r status <"$tmp/flush-boundary.rc"
+  if [[ "$status" != "97" ]] || ! grep -qF "flush-boundary: precondition unavailable: $want" "$tmp/flush-boundary.err"; then
+    echo "FAIL traceback-guard-contract case $label: want rc 97 and a precondition naming '$want', got rc $status" >&2
+    grep -a '^flush-boundary' "$tmp/flush-boundary.err" | cut -c1-400 >&2 || true
+    head -c 4000 "$tmp/flush-boundary.err" >&2
+    failed=$((failed + 1))
+  else
+    echo "ok $label rc=$status $(grep -m1 'precondition unavailable' "$tmp/flush-boundary.err")"
+  fi
+  cases=$((cases + 1))
+}
+
+# Without a job-log pipe nothing can be measured or held back, and a tee input
+# pipe of one page cannot be held back reliably.
+check_unavailable "flush-boundary without a job-log pipe" "" "" "" "cannot measure or resize the pipe on fd "
+check_unavailable "flush-boundary job-log=4096 tee-input=4096" lag 4096 4096 "tee input pipe below two pages 4096"
+check_unavailable "flush-boundary job-log=1048576 tee-input=4096" lag 1048576 4096 "tee input pipe below two pages 4096"
 
 if [[ "$failed" != "0" ]]; then
   echo "FAIL traceback-guard-contract ($failed of $cases cases)" >&2
