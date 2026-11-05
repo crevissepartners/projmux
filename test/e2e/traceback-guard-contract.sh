@@ -70,8 +70,31 @@ except KeyError:
       # in B and A together, so this shell never blocks. A runner's pipes are
       # not always 64 KiB (the GitHub ubuntu-26.04 job-log pipe is 1 MiB), so the
       # case first shrinks both pipes to at most 64 KiB (shrinking is always
-      # allowed) and then measures what it really has. The fixtures start it
-      # from other sizes through the PROJMUX_TRACEBACK_GUARD_*_BYTES targets.
+      # allowed) and then measures what it really has. uutils tee 0.10.0 grows
+      # its stdout pipe to 1 MiB before it starts copying, so the case first
+      # waits until the tee has copied a marker line into the capture. The
+      # fixtures start it from other sizes through the
+      # PROJMUX_TRACEBACK_GUARD_*_BYTES targets, and from a tee that grows its
+      # stdout pipe through PROJMUX_TRACEBACK_GUARD_SHIM.
+      # The marker keeps a few bytes in the job-log pipe until the reader drains
+      # it: shrinking below that fails with EBUSY and is named below, and a
+      # smaller effective capacity only blocks the tee earlier, never later.
+      sync_line="flush-boundary-sync $$"
+      sync_started="${EPOCHREALTIME/./}"
+      echo "$sync_line" >&2
+      synced=0
+      for _ in $(seq 1 100); do
+        if grep -aqF -- "$sync_line" "$SMOKE_CONTRACT_OUTPUT_STDERR"; then
+          synced=1
+          break
+        fi
+        sleep 0.05
+      done
+      sync_waited_ms=$(((${EPOCHREALTIME/./} - sync_started) / 1000))
+      if [[ "$synced" != "1" ]]; then
+        echo "flush-boundary: precondition unavailable: the tee did not start copying within 5s (waited ${sync_waited_ms}ms) job-log=0 tee-input=0 filler=0" >&2
+        exit 97
+      fi
       measured="$(python3 -c '
 import errno
 import fcntl
@@ -106,7 +129,7 @@ print(rows[0][0], rows[0][1], rows[1][0], rows[1][1], cause)
         # a single slot, which the tee fills with a few small writes.
         unavailable="tee input pipe below two pages $tee_capacity"
       fi
-      measure="job-log=$job_log_capacity tee-input=$tee_capacity filler=$filler job-log-start=${job_log_start:-0} tee-input-start=${tee_start:-0}"
+      measure="job-log=$job_log_capacity tee-input=$tee_capacity filler=$filler job-log-start=${job_log_start:-0} tee-input-start=${tee_start:-0} sync-wait-ms=$sync_waited_ms"
       if [[ -n "$unavailable" ]]; then
         echo "flush-boundary: precondition unavailable: $unavailable $measure" >&2
         exit 97
@@ -116,6 +139,12 @@ print(rows[0][0], rows[0][1], rows[1][0], rows[1][1], cause)
       head -c "$filler" /dev/zero | tr '\0' 'f' >&2
       printf '\n' >&2
       raise_key_error || true
+      # A tee that resizes the job-log pipe later would void the filler sum.
+      job_log_now="$(python3 -c 'import fcntl, sys; print(fcntl.fcntl(int(sys.argv[1]), 1032))' "$SMOKE_CONTRACT_SAVED_STDERR_FD")"
+      if [[ "$job_log_now" != "$job_log_capacity" ]]; then
+        echo "flush-boundary: precondition unavailable: the tee resized the job-log pipe $job_log_now $measure" >&2
+        exit 97
+      fi
       # Prove the lag is real at the decision point, or the case means nothing.
       if grep -aqF "KeyError: 'routeIncarnation'" "$SMOKE_CONTRACT_OUTPUT_STDERR"; then
         echo "flush-boundary: precondition unavailable: the capture already holds the traceback; capture $(stat -c %s "$SMOKE_CONTRACT_OUTPUT_STDERR") bytes $measure" >&2
@@ -172,8 +201,31 @@ fi
 cases=0
 failed=0
 
+# A tee that grows its stdout pipe to 1 MiB before copying, as uutils tee 0.10.0
+# does on the GitHub runner. A refused growth leaves its errno in the note file,
+# and the outer check then skips that fixture by name.
+real_tee="$(command -v tee)"
+mkdir "$tmp/shim"
+cat >"$tmp/shim/tee" <<SHIM
+#!/usr/bin/env bash
+python3 -c '
+import errno
+import fcntl
+import sys
+
+try:
+    fcntl.fcntl(1, 1031, 1048576)
+except OSError as exc:
+    # The stdout tee writes to a file: not a pipe, nothing to grow.
+    if exc.errno not in (errno.EBADF, errno.EINVAL):
+        open(sys.argv[1], "w").write(errno.errorcode.get(exc.errno, str(exc.errno)))
+' "\$PROJMUX_TRACEBACK_GUARD_SHIM" || true
+exec "$real_tee" "\$@"
+SHIM
+chmod +x "$tmp/shim/tee"
+
 run_child() {
-  local name="$1" lag="$2" joblog_bytes="${3:-}" tee_bytes="${4:-}" status=0
+  local name="$1" lag="$2" joblog_bytes="${3:-}" tee_bytes="${4:-}" shim="${5:-}" status=0
   # The child's EXIT-trap cleanup needs three quiet /proc samples inside a 1s
   # budget; a loaded machine misses that, so widen the default scale.
   local -a child_env=(
@@ -184,6 +236,10 @@ run_child() {
     E2E_WAIT_SCALE="${E2E_WAIT_SCALE:-10}"
   )
   rm -rf "${tmp:?}/$name"
+  rm -f "${tmp:?}/$name.enlarge" "${tmp:?}/$name.rc" "${tmp:?}/$name.out" "${tmp:?}/$name.err"
+  if [[ -n "$shim" ]]; then
+    child_env+=(PATH="$tmp/shim:$PATH" PROJMUX_TRACEBACK_GUARD_SHIM="$tmp/$name.enlarge")
+  fi
   if [[ -n "$joblog_bytes" ]]; then
     child_env+=(PROJMUX_TRACEBACK_GUARD_JOBLOG_BYTES="$joblog_bytes")
   fi
@@ -220,24 +276,24 @@ except OSError as exc:
   fi
 }
 
-# check_case NAME WANT [EXCEPTION] [lag] [JOBLOG_BYTES] [TEE_BYTES]: WANT is "fail" (the guard fired with
+# check_case NAME WANT [EXCEPTION] [lag] [JOBLOG_BYTES] [TEE_BYTES] [shim]: WANT is "fail" (the guard fired with
 # EXCEPTION) or "pass" (the scenario recorded pass and no guard line exists).
 check_case() {
-  local name="$1" want="$2" exception="${3:-}" lag="${4:-}" joblog_bytes="${5:-}" tee_bytes="${6:-}" status verdict capacity=""
-  local label="$name${joblog_bytes:+ job-log=$joblog_bytes}${tee_bytes:+ tee-input=$tee_bytes}"
-  run_child "$name" "$lag" "$joblog_bytes" "$tee_bytes"
+  local name="$1" want="$2" exception="${3:-}" lag="${4:-}" joblog_bytes="${5:-}" tee_bytes="${6:-}" shim="${7:-}" status verdict capacity=""
+  local label="$name${joblog_bytes:+ job-log=$joblog_bytes}${tee_bytes:+ tee-input=$tee_bytes}${shim:+ tee=$shim}"
+  run_child "$name" "$lag" "$joblog_bytes" "$tee_bytes" "$shim"
   if [[ -s "$tmp/$name.enlarge" ]]; then
     echo "skip $label: cannot enlarge the job-log pipe ($(<"$tmp/$name.enlarge"))"
     return 0
   fi
   read -r status <"$tmp/$name.rc"
   verdict="$(python3 - "$tmp/$name.out" "$tmp/$name.err" "$tmp/$name/L20-attempt-$contract_attempt.json" \
-    "$name" "$want" "$exception" "$status" "$pass_line" "$joblog_bytes" "$tee_bytes" <<'PY'
+    "$name" "$want" "$exception" "$status" "$pass_line" "$joblog_bytes" "$tee_bytes" "$shim" <<'PY'
 import json
 import pathlib
 import sys
 
-out_path, err_path, artifact_path, name, want, exception, status, pass_line, joblog_bytes, tee_bytes = sys.argv[1:11]
+out_path, err_path, artifact_path, name, want, exception, status, pass_line, joblog_bytes, tee_bytes, shim = sys.argv[1:12]
 status, pass_line = int(status), int(pass_line)
 out = pathlib.Path(out_path).read_text(errors="replace")
 err = pathlib.Path(err_path).read_text(errors="replace")
@@ -293,6 +349,8 @@ if name == "flush-boundary":
             problems.append(f"the pipes were not normalized to {want_job_log}/{want_tee}: {measured[0]}")
         elif joblog_bytes and int(joblog_bytes) > 65536 and int(fields["job-log-start"]) != int(joblog_bytes):
             problems.append(f"the job-log pipe did not start at {joblog_bytes}: {measured[0]}")
+        elif shim and int(fields["job-log-start"]) != 1048576:
+            problems.append(f"the shim tee did not leave the job-log pipe at 1 MiB: {measured[0]}")
         elif "f" * int(fields["filler"]) not in err:
             problems.append("the filler block did not reach the job log intact")
         elif int(fields["filler"]) <= int(fields["job-log"]):
@@ -325,6 +383,9 @@ check_case flush-boundary fail "KeyError: 'routeIncarnation'" lag
 # a 1 MiB job-log pipe with a small tee input pipe.
 check_case flush-boundary fail "KeyError: 'routeIncarnation'" lag 8192 8192
 check_case flush-boundary fail "KeyError: 'routeIncarnation'" lag 1048576 8192
+# A tee that grows its stdout pipe to 1 MiB before copying (uutils tee 0.10.0).
+check_case flush-boundary fail "KeyError: 'routeIncarnation'" lag "" "" shim
+check_case flush-boundary fail "KeyError: 'routeIncarnation'" lag "" 8192 shim
 check_case clean pass
 check_case redirected pass
 check_case before-begin pass
@@ -334,8 +395,8 @@ check_case after-pass pass
 # its lag here, so it must fail with 97 and a precondition line naming WANT,
 # never pass or skip.
 check_unavailable() {
-  local label="$1" lag="$2" joblog_bytes="$3" tee_bytes="$4" want="$5" status
-  run_child flush-boundary "$lag" "$joblog_bytes" "$tee_bytes"
+  local label="$1" lag="$2" joblog_bytes="$3" tee_bytes="$4" want="$5" shim="${6:-}" status
+  run_child flush-boundary "$lag" "$joblog_bytes" "$tee_bytes" "$shim"
   if [[ -s "$tmp/flush-boundary.enlarge" ]]; then
     echo "skip $label: cannot enlarge the job-log pipe ($(<"$tmp/flush-boundary.enlarge"))"
     return 0
@@ -357,6 +418,7 @@ check_unavailable() {
 check_unavailable "flush-boundary without a job-log pipe" "" "" "" "cannot measure or resize the pipe on fd "
 check_unavailable "flush-boundary job-log=4096 tee-input=4096" lag 4096 4096 "tee input pipe below two pages 4096"
 check_unavailable "flush-boundary job-log=1048576 tee-input=4096" lag 1048576 4096 "tee input pipe below two pages 4096"
+check_unavailable "flush-boundary tee-input=4096 tee=shim" lag "" 4096 "tee input pipe below two pages 4096" shim
 
 if [[ "$failed" != "0" ]]; then
   echo "FAIL traceback-guard-contract ($failed of $cases cases)" >&2
