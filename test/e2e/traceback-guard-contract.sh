@@ -111,7 +111,7 @@ print(rows[0][0], rows[0][1], rows[1][0], rows[1][1], cause)
         echo "flush-boundary: precondition unavailable: $unavailable $measure" >&2
         exit 97
       fi
-      echo "flush-boundary-tee $(tee --version 2>&1 | head -n 1)" >&2
+      echo "flush-boundary-tee $(tee --version 2>&1 | sed -n 1p)" >&2
       echo "flush-boundary-capacity $measure" >&2
       head -c "$filler" /dev/zero | tr '\0' 'f' >&2
       printf '\n' >&2
