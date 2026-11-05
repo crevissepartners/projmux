@@ -777,8 +777,8 @@ func (p *Handle) Interrupt(ctx context.Context, a Authority, turn string) error 
 }
 
 func (p *Handle) expireLocked() {
-	for id, request := range p.requests {
-		req := cloneRequest(request)
+	for _, id := range p.requestIDsLocked() {
+		req := cloneRequest(p.requests[id])
 		p.emitLocked("control-expired", nil, &req)
 		delete(p.requests, id)
 	}

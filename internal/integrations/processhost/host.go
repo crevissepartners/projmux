@@ -764,6 +764,20 @@ func (p *Handle) Observe(binding Binding) (Snapshot, error) {
 	return p.snapshotLocked(), nil
 }
 
+// requestIDsLocked returns the pending control IDs in ID order. Snapshot.Pending
+// is persisted and compared by order, so listing the requests map by Go's random
+// iteration order would make an unchanged set look changed on every rewrite.
+// ID order depends only on the set, so it cannot drift from the map on insert or
+// delete.
+func (p *Handle) requestIDsLocked() []string {
+	ids := make([]string, 0, len(p.requests))
+	for id := range p.requests {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
 func (p *Handle) snapshotLocked() Snapshot {
 	s := Snapshot{ownerStopped: p.ownerStopped, Provider: p.launch.provider, Binding: p.launch.Binding, State: p.state, Session: p.session, Connection: p.connection, Turn: p.turn, MessageReservation: p.messageReservation, PID: p.pid, SupervisorPID: p.supervisorPID, Sequence: p.seq, Failure: p.failure, Diagnostic: string(p.diagnostics)}
 	if p.exit != nil {
@@ -773,8 +787,8 @@ func (p *Handle) snapshotLocked() Snapshot {
 	if p.launch.resume != nil {
 		s.Resume = p.launch.resume.history()
 	}
-	for _, req := range p.requests {
-		s.Pending = append(s.Pending, cloneRequest(req))
+	for _, id := range p.requestIDsLocked() {
+		s.Pending = append(s.Pending, cloneRequest(p.requests[id]))
 	}
 	s.AsyncQuestions = p.asyncSnapshotLocked()
 	return s
