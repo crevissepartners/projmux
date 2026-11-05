@@ -124,10 +124,11 @@ print(rows[0][0], rows[0][1], rows[1][0], rows[1][1], cause)
       unavailable="$cause"
       if [[ -z "$unavailable" ]] && ((job_log_capacity <= 0 || tee_capacity <= 0)); then
         unavailable="pipe capacity not measurable"
-      elif [[ -z "$unavailable" ]] && ((tee_capacity < 8192)); then
-        # The kernel gives a new pipe at least two pages. A one-page pipe holds
-        # a single slot, which the tee fills with a few small writes.
-        unavailable="tee input pipe below two pages $tee_capacity"
+      elif [[ -z "$unavailable" ]] && ((tee_capacity < 16384)); then
+        # Measured, not understood: uutils tee 0.10.0 (splice path) lets the
+        # capture run ahead of a blocked job-log pipe when its input pipe is
+        # 8192 bytes or less, and holds the lag from 16384 up.
+        unavailable="tee input pipe below four pages $tee_capacity"
       fi
       measure="job-log=$job_log_capacity tee-input=$tee_capacity filler=$filler job-log-start=${job_log_start:-0} tee-input-start=${tee_start:-0} sync-wait-ms=$sync_waited_ms"
       if [[ -n "$unavailable" ]]; then
@@ -140,7 +141,22 @@ print(rows[0][0], rows[0][1], rows[1][0], rows[1][1], cause)
       printf '\n' >&2
       raise_key_error || true
       # A tee that resizes the job-log pipe later would void the filler sum.
-      job_log_now="$(python3 -c 'import fcntl, sys; print(fcntl.fcntl(int(sys.argv[1]), 1032))' "$SMOKE_CONTRACT_SAVED_STDERR_FD")"
+      # job-log-unread: bytes the job-log pipe holds that nobody has read yet
+      # (FIONREAD), n/a where the ioctl is unavailable.
+      read -r job_log_now job_log_unread < <(python3 -c '
+import fcntl
+import struct
+import sys
+
+fd = int(sys.argv[1])
+try:
+    unread = struct.unpack("i", fcntl.ioctl(fd, 0x541B, b"\0\0\0\0"))[0]
+except OSError:
+    unread = "n/a"
+print(fcntl.fcntl(fd, 1032), unread)
+' "$SMOKE_CONTRACT_SAVED_STDERR_FD")
+      measure="$measure job-log-unread=$job_log_unread"
+      echo "flush-boundary-decision $measure" >&2
       if [[ "$job_log_now" != "$job_log_capacity" ]]; then
         echo "flush-boundary: precondition unavailable: the tee resized the job-log pipe $job_log_now $measure" >&2
         exit 97
@@ -369,7 +385,8 @@ PY
     failed=$((failed + 1))
   else
     tee_line="$(grep -a -m1 '^flush-boundary-tee ' "$tmp/$name.err" || true)"
-    echo "ok $label rc=$status $(grep -m1 '^E2E_CONTRACT id=L20 guard=' "$tmp/$name.err" || echo 'no guard line')${capacity:+ $capacity}${tee_line:+ $tee_line}"
+    unread="$(grep -a -m1 -o 'job-log-unread=[0-9a-z/]*' "$tmp/$name.err" || true)"
+    echo "ok $label rc=$status $(grep -m1 '^E2E_CONTRACT id=L20 guard=' "$tmp/$name.err" || echo 'no guard line')${capacity:+ $capacity}${unread:+ $unread}${tee_line:+ $tee_line}"
   fi
   cases=$((cases + 1))
 }
@@ -381,11 +398,11 @@ check_case stdout fail "KeyError: 'routeIncarnation'"
 check_case flush-boundary fail "KeyError: 'routeIncarnation'" lag
 # The same case on pipes smaller than 64 KiB, and on the GitHub runner's mix of
 # a 1 MiB job-log pipe with a small tee input pipe.
-check_case flush-boundary fail "KeyError: 'routeIncarnation'" lag 8192 8192
-check_case flush-boundary fail "KeyError: 'routeIncarnation'" lag 1048576 8192
+check_case flush-boundary fail "KeyError: 'routeIncarnation'" lag 16384 16384
+check_case flush-boundary fail "KeyError: 'routeIncarnation'" lag 1048576 16384
 # A tee that grows its stdout pipe to 1 MiB before copying (uutils tee 0.10.0).
 check_case flush-boundary fail "KeyError: 'routeIncarnation'" lag "" "" shim
-check_case flush-boundary fail "KeyError: 'routeIncarnation'" lag "" 8192 shim
+check_case flush-boundary fail "KeyError: 'routeIncarnation'" lag "" 16384 shim
 check_case clean pass
 check_case redirected pass
 check_case before-begin pass
@@ -416,9 +433,12 @@ check_unavailable() {
 # Without a job-log pipe nothing can be measured or held back, and a tee input
 # pipe of one page cannot be held back reliably.
 check_unavailable "flush-boundary without a job-log pipe" "" "" "" "cannot measure or resize the pipe on fd "
-check_unavailable "flush-boundary job-log=4096 tee-input=4096" lag 4096 4096 "tee input pipe below two pages 4096"
-check_unavailable "flush-boundary job-log=1048576 tee-input=4096" lag 1048576 4096 "tee input pipe below two pages 4096"
-check_unavailable "flush-boundary tee-input=4096 tee=shim" lag "" 4096 "tee input pipe below two pages 4096" shim
+check_unavailable "flush-boundary job-log=8192 tee-input=8192" lag 8192 8192 "tee input pipe below four pages 8192"
+check_unavailable "flush-boundary job-log=1048576 tee-input=8192" lag 1048576 8192 "tee input pipe below four pages 8192"
+check_unavailable "flush-boundary tee-input=8192 tee=shim" lag "" 8192 "tee input pipe below four pages 8192" shim
+check_unavailable "flush-boundary job-log=4096 tee-input=4096" lag 4096 4096 "tee input pipe below four pages 4096"
+check_unavailable "flush-boundary job-log=1048576 tee-input=4096" lag 1048576 4096 "tee input pipe below four pages 4096"
+check_unavailable "flush-boundary tee-input=4096 tee=shim" lag "" 4096 "tee input pipe below four pages 4096" shim
 
 if [[ "$failed" != "0" ]]; then
   echo "FAIL traceback-guard-contract ($failed of $cases cases)" >&2
