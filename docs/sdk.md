@@ -1541,8 +1541,12 @@ existing `process-resume-refused` code, with the token in the message. An
 unknown value, `require` with `WaitForPeer`, or any value on a tmux Agent is
 refused with `resume-request-invalid` before effects. A request that sets a
 policy fails closed when it reaches an executable that predates the field. The
-decision is made in the same owner process that reserves the resume, so nothing
-can change between the check and the resume. Claude still needs its first input.
+decision is made in the owner process, and the reservation then compares the
+recorded generation and the resume recipe again and, for a host-lost Agent,
+re-proves that the owner and provider are absent. If the record or recipe
+changed in between, the resume is refused with `process-resume-refused`; if
+the absence can no longer be proven, with `process-resume-not-resumable`. Claude
+still needs its first input.
 
 Process requests require Detach and reject SocketPath and DialogueReplyOnly.
 The zero values preserve the tmux resume API; process-specific inputs on tmux
