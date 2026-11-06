@@ -99,4 +99,3 @@ func TestPublicResumeAgentHostLostPolicyCLI(t *testing.T) {
 		})
 	}
 }
-

@@ -27,6 +27,18 @@ func (e *ResumeProcessError) Unwrap() error { return e.cause }
 
 func (c *Client) resumeProcessAgent(ctx context.Context, req core.ResumeAgentRequest, agent m.Agent, reg m.Registry) (core.ResumeAgentResult, error) {
 	var result core.ResumeAgentResult
+	// Refuse a policy the owner process cannot honor before any effect: an unknown
+	// value, or a host-lost requirement on a claim that waits for a peer, which
+	// never admits a host-lost Agent.
+	switch req.HostLost {
+	case "", core.ResumeHostLostRefuse:
+	case core.ResumeHostLostRequire:
+		if req.WaitForPeer {
+			return result, &Refusal{Code: CodeResumeRequestInvalid, message: "ResumeAgentRequest.HostLost require cannot be combined with WaitForPeer"}
+		}
+	default:
+		return result, &Refusal{Code: CodeResumeRequestInvalid, message: "ResumeAgentRequest.HostLost must be empty, require or refuse"}
+	}
 	if !req.Detach || req.DialogueReplyOnly || req.SocketPath != "" || (req.WaitForPeer && req.Prompt != "") {
 		return result, &Refusal{Code: CodeResumeRequestInvalid, message: "ResumeAgentRequest process requires Detach and does not support SocketPath, DialogueReplyOnly, or a prompt with WaitForPeer"}
 	}
@@ -72,6 +84,7 @@ func (c *Client) resumeProcessAgent(ctx context.Context, req core.ResumeAgentReq
 			return result, err
 		}
 	}
+	wire.HostLostPolicy = string(req.HostLost)
 	if req.Prompt != "" {
 		wire.Prompt = mutationruntime.ProcessResumeFirstFrame{Kind: "user", Text: req.Prompt}
 	}

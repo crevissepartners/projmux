@@ -28,7 +28,15 @@ import (
 type processDetachedResumeRequest mutationruntime.ProcessDetachedResumeRequest
 
 func (r processDetachedResumeRequest) options() processAgentResumeOptions {
-	return processAgentResumeOptions{Agent: selector.Ref{Kind: coremetadata.KindAgent, UID: r.Agent}, Model: r.Model, Effort: r.Effort, Prompt: r.Prompt, allowHostLost: !r.WaitForPeer, preparation: r.Preparation}
+	opts := processAgentResumeOptions{Agent: selector.Ref{Kind: coremetadata.KindAgent, UID: r.Agent}, Model: r.Model, Effort: r.Effort, Prompt: r.Prompt, allowHostLost: !r.WaitForPeer, preparation: r.Preparation}
+	// An SDK host-lost policy replaces the default admission; empty keeps it.
+	switch r.HostLostPolicy {
+	case mutationruntime.ProcessResumeHostLostRefuse:
+		opts.allowHostLost = false
+	case mutationruntime.ProcessResumeHostLostRequire:
+		opts.allowHostLost, opts.requireHostLost = true, true
+	}
+	return opts
 }
 
 func (c *agentCommand) runDetachedProcessResume(agent coremetadata.Agent, flags resourceQueryFlags, model, effort string, dialogueOnly, peer bool, prompt []string, stdout, stderr io.Writer) error {
@@ -94,7 +102,7 @@ func claimRegistryPath(command *createCommand) string {
 
 func runProcessDetachedResumeOwner(conn net.Conn, encoder *json.Encoder, decoder *json.Decoder, req processDetachedRequest, identity coremetadata.ProcessIdentity, c *agentCommand) error {
 	wire := *req.Resume
-	if wire.PreparationAction != "" || wire.Preparation != nil {
+	if wire.PreparationAction != "" || wire.Preparation != nil || wire.HostLostPolicy != "" {
 		if err := validateSDKProcessResumeWire(wire); err != nil {
 			return encodeDetachedResumeError(encoder, identity, processSchemaBinding(wire.Previous), err)
 		}
