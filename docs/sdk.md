@@ -1149,7 +1149,8 @@ Running process Agents no longer cause a batch preflight refusal.
 
 CLI and private process resume consumers can use `errors.As` to read
 `*projmux.ResumeRecipeChangedError` (also `*core.ResumeRecipeChangedError`)
-through usage and host-lost wrappers. SDK process resume preserves this detail through its detached startup error.
+through usage and host-lost wrappers. SDK process resume preserves this detail through its detached startup error,
+and a refused `PrepareAgentResume` or `ValidateAgentResumePreparation` keeps it the same way.
 
 The JSON fields are `Code` (`process-resume-refused`), `Reason`
 (`relaunch-no-conversation`), `agentUID`, `changes`, `relaunchCommand`, and
