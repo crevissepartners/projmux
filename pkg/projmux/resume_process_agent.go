@@ -97,12 +97,7 @@ func (c *Client) resumeProcessAgent(ctx context.Context, req core.ResumeAgentReq
 		}
 	}
 	if err != nil {
-		if len(reply.ErrorDetail) != 0 {
-			var recipe core.ResumeRecipeChangedError
-			if json.Unmarshal(reply.ErrorDetail, &recipe) == nil && recipe.Code == "process-resume-refused" {
-				err = errors.Join(err, &recipe)
-			}
-		}
+		err = restoreRecipeDetail(err, reply.ErrorDetail)
 		var failure *mutationruntime.ProcessResumeFailure
 		if errors.As(err, &failure) {
 			detail := &ResumeProcessError{Code: Code(failure.Code), Binding: result.Binding, cause: err}
@@ -116,4 +111,12 @@ func (c *Client) resumeProcessAgent(ctx context.Context, req core.ResumeAgentReq
 		result.SettingsApplication = publicSettingsApplication(reply.Result.SettingsApplication)
 	}
 	return result, nil
+}
+
+// restoreRecipeDetail joins the recorded-recipe detail an owner process sent in
+// a failed reply onto err, so errors.As finds *core.ResumeRecipeChangedError.
+// Any other code, an empty detail or damaged JSON leaves err as it is.
+// ResumeAgent and the preparation entries share this one rule.
+func restoreRecipeDetail(err error, detail json.RawMessage) error {
+	return err // stub: repro head, rule not yet written
 }

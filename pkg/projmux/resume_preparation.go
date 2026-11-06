@@ -2,6 +2,7 @@ package projmux
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	m "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -29,7 +30,7 @@ func (c *Client) PrepareAgentResume(ctx context.Context, req core.PrepareAgentRe
 	wire.AllowHostLost = req.AllowHostLost
 	reply, err := mutationruntime.ExecuteProcessResumePreparation(ctx, c.processCreateContext, wire)
 	if err != nil {
-		return result, preparationRefusal(err, wire.Agent)
+		return result, preparationRefusal(err, wire.Agent, reply.ErrorDetail)
 	}
 	if err = unregisterCopy(reply.Preparation, &result.Preparation); err != nil {
 		return result, err
@@ -55,7 +56,7 @@ func (c *Client) ValidateAgentResumePreparation(ctx context.Context, req core.Va
 	wire.Preparation = &proof
 	reply, err := mutationruntime.ExecuteProcessResumePreparation(ctx, c.processCreateContext, wire)
 	if err != nil {
-		return result, preparationRefusal(err, wire.Agent)
+		return result, preparationRefusal(err, wire.Agent, reply.ErrorDetail)
 	}
 	if err = unregisterCopy(reply.Preparation, &result); err != nil {
 		return result, err
@@ -203,7 +204,8 @@ func resumePreparationRequestFrom(reg m.Registry, query selector.Query, binding 
 	return wire, nil
 }
 
-func preparationRefusal(err error, agent string) error {
+func preparationRefusal(err error, agent string, replyDetail json.RawMessage) error {
+	err = restoreRecipeDetail(err, replyDetail)
 	var failure *mutationruntime.ProcessResumeFailure
 	if errors.As(err, &failure) {
 		detail := &ResumeProcessError{Code: Code(failure.Code), cause: err}
