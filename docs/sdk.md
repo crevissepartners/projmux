@@ -2332,6 +2332,27 @@ methods take no Client, so a handle from another state root is not detected
 here; use it with the Client that prepared it. They read no file and are safe
 for concurrent use.
 
+`projmux.ParseLabelCondition(raw)` parses one `key=value` label condition the way
+the CLI parses one `--selector`: key and value lose surrounding space, the value
+may be empty (it matches a label set to the empty string) and the key may not.
+It returns a `core.LabelCondition` with `Key`, `Value` and `String()`
+(`key=value`). A bad input is a `*Refusal` with `CodeSelectorInvalid` whose
+`Error()` text is the CLI's own message, `--selector` wording included, and whose
+cause is reachable through `errors.As`. Pinned equal to the CLI parser by
+`TestParseLabelConditionEqualsInternal`.
+
+`handle.AgentsMatchingLabels(projectUID, conditions)` returns the uids of the
+Agents of one Project whose labels satisfy every condition, in the order
+`get agents --project uid:<projectUID> --selector ...` lists them. `projectUID`
+is an exact uid, never a name. No condition returns every Agent of the Project;
+no match returns an empty slice. A missing Project is `CodeResourceNotFound`,
+an empty `projectUID` is `CodeSelectorInvalid`, and a handle that was not
+prepared is `CodePreparedSnapshotInvalid`. It reads only the held rows, never
+the Registry file or tmux, takes no Client and the caller owns the returned
+slice (`TestAgentsMatchingLabelsEqualsInternal`,
+`TestAgentsMatchingLabelsMatchesListedAgents`, `TestAgentsMatchingLabelsRefusals`
+and `TestAgentsMatchingLabelsResultIsCopied`).
+
 `Client.ObserveGraphInventory(ctx, projmux.GraphObservationRequest{...})`
 observes the selected tmux server once and returns a
 `core.GraphRuntimeInventory`: the transport, host mode, sessions, windows,
