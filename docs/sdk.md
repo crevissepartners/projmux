@@ -545,6 +545,26 @@ public name, CLI output or screen changes.
 | `projmux.MaxPersonaBytes` | The byte limit of one persona file, defined by the persona validator rather than copied |
 | `projmux.AINewWindowModes()` | The modes a new AI window can open with, in the order refusals name them; the caller owns the returned slice |
 
+### Usage HUD providers and model labels
+
+`projmux.UsageHUDProviders()` returns the providers the usage HUD can show as
+`[]core.UsageHUDProvider`, in the order the CLI and Settings list them (Claude,
+then Codex today). Each entry carries `ID`, the `Model` name its usage
+snapshots carry, `DisplayName`, and `Windows` as `[]core.UsageHUDWindow`. A
+window carries `Window` (`core.UsageWindow`), the stable `Key`, the display
+`Label` and `DefaultVisibility` (`core.StatusbarVisibility`), the built-in value
+used when nothing is saved. Pinned equal to the internal capability table by
+`TestUsageHUDProvidersEqualInternal`.
+
+`projmux.UsageModelLabel(model)` returns the label the HUD shows for a model
+name: `Claude` or `Codex` ignoring case, `?` for an empty name, and otherwise
+the name with its first rune upper case and the rest lower case. Pinned equal
+to the CLI label by `TestUsageModelLabelEqualsInternal`.
+
+Both functions read nothing, need no Client and never fail. The caller owns
+every returned value; changing it affects no later call
+(`TestUsageHUDProvidersAreCopiedPerCall`).
+
 ### Settings provider list
 
 `projmux.ListSettingsProviders()` returns the agent providers a settings screen

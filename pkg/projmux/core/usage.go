@@ -78,6 +78,27 @@ type UsageHistoryFilter struct {
 	Provider, Window, Metric string
 	Now                      time.Time
 }
+
+// UsageHUDWindow is one account window the usage HUD can show for a provider.
+// Key is the stable window key and Label its display text. DefaultVisibility
+// is the built-in value used when nothing is saved.
+type UsageHUDWindow struct {
+	Window            UsageWindow
+	Key               string
+	Label             string
+	DefaultVisibility StatusbarVisibility
+}
+
+// UsageHUDProvider is the HUD capability of one usage-supported provider: its
+// ID, the usage Model name its snapshots carry, its display name and the
+// windows it can show.
+type UsageHUDProvider struct {
+	ID          string
+	Model       string
+	DisplayName string
+	Windows     []UsageHUDWindow
+}
+
 type UnsupportedUsageProvider struct{ Model, Label, Reason string }
 
 // UsageCache is the stored state visible to the statusbar, scoped to enabled

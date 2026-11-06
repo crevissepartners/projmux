@@ -705,6 +705,8 @@ TmuxWindowStatusFormats	Internal configuration-generation compatibility entrypoi
 TmuxWindowUnlinkedHookBody	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
 UIDKind	UID prefix reader retained as the test seam that pins the live uidPrefixes mint-and-read contract.
 UniqueNonEmptyStrings	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+UsageHUDProviders	Public v0 value and judgement SDK name for external frontends (Backlog 820 Task 1); the binary does not import pkg/projmux, covered by TestUsageHUDProvidersEqualInternal and TestUsageHUDProvidersAreCopiedPerCall.
+UsageModelLabel	Public v0 value and judgement SDK name for external frontends (Backlog 820 Task 1); the binary does not import pkg/projmux, covered by TestUsageModelLabelEqualsInternal.
 ValidateKeymapAuthoringChord	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 ValidateKeymapAuthoringSequence	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 ValidateKeymapChord	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
