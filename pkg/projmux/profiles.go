@@ -26,6 +26,7 @@ const (
 	CodeProfileRoleClaimed          Code = "profile-role-claimed"
 	CodeProfileProviderUnknown      Code = "profile-provider-unknown"
 	CodeProfileScopeChanged         Code = "profile-scope-changed"
+	CodeProfileOutOfScope           Code = "profile-out-of-scope"
 	CodeProfileConfirmationRequired Code = "profile-confirmation-required"
 )
 

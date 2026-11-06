@@ -543,6 +543,8 @@ public name, CLI output or screen changes.
 | `core.AgentQuestionAnswering`, `AgentQuestionAnsweringClaude` (`claude`), `AgentQuestionAnsweringProjmux` (`projmux`); `core.AgentApprovalAnswering`, `AgentApprovalAnsweringClaude`, `AgentApprovalAnsweringProjmux` | The way a Claude question or permission request is answered, as in `ConfigValue.Answering` |
 | `core.DefaultAgentQuestionWindowSeconds`, `DefaultAgentApprovalWindowSeconds` (`900`) | The window used when nothing valid is saved |
 | `projmux.MaxPersonaBytes` | The byte limit of one persona file, defined by the persona validator rather than copied |
+| `projmux.MaxProfileBytes` (`65536`) | The byte limit of one profile file, defined by the profile validator rather than copied. A larger candidate is `CodeProfileTooLarge`. Pinned equal by `TestPublicConstantsEqualInternal` |
+| `projmux.CodeProfileOutOfScope` (`profile-out-of-scope`) | The refusal Code of a profile scoped to one Project that is used in another. Pinned equal to the internal reason by `TestPublicClassificationParity` |
 | `projmux.AINewWindowModes()` | The modes a new AI window can open with, in the order refusals name them; the caller owns the returned slice |
 
 ### Usage HUD providers and model labels
@@ -564,6 +566,35 @@ to the CLI label by `TestUsageModelLabelEqualsInternal`.
 Both functions read nothing, need no Client and never fail. The caller owns
 every returned value; changing it affects no later call
 (`TestUsageHUDProvidersAreCopiedPerCall`).
+
+### Message origin, payload digest and process Wait judgements
+
+`projmux.IsOperatorMessageOrigin(origin)` reports whether a `core.MessageOrigin`
+is the operator origin: kind `operator` with a valid client name (lowercase ASCII
+letters, digits and `-`, starting with a letter, at most 32 bytes). An Agent
+origin, an empty origin and an operator origin with an empty or invalid client
+are false; kind and client are not trimmed or case-folded. It is the judgement
+behind `Operator` on archive entries (`TestIsOperatorMessageOriginEqualsInternal`).
+
+`projmux.MessagePayloadSHA256(payload)` returns the SHA-256 of the payload's
+exact bytes as 64 lowercase hex characters, the value a message history entry
+carries in `PayloadSHA256`
+(`TestMessagePayloadSHA256EqualsInternal`,
+`TestMessagePayloadSHA256EqualsArchiveEntry`).
+
+`projmux.MatchesProcessWait(binding, receipt)` reports whether a
+`*core.TerminationEvidence` is the exact supervisor Wait of the process
+generation a `core.ProcessBinding` names: source `supervisor`, an observation
+time, the binding's Pane, Agent, generation and operation, one exit code from 0
+to 255 or one signal (not both), and a classification that agrees with that
+status (`normal` is also accepted for any status, as the Registry accepts it).
+Host, Project and Window of the binding are not compared. A nil receipt is
+false. `ReadAgentHostLostFromPrepared` covers only an Agent whose host and child
+are gone while its activation remains; this check is for a Pane already Offline
+whose `LastTermination` must match its binding
+(`TestMatchesProcessWaitEqualsInternal`).
+
+All three read nothing, need no Client and never fail.
 
 ### Settings provider list
 

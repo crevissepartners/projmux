@@ -24,12 +24,13 @@ func TestPublicClassificationParity(t *testing.T) {
 		{"persona unavailable", string(projmux.CodePersonaUnavailable), persona.ReasonUnavailable},
 		{"operator origin target not claude", string(projmux.CodeOperatorOriginTargetNotClaude), message.ReasonOperatorOriginTargetNotClaude},
 		{"reserved profile name", projmux.ReservedProfileName, profile.ReservedName},
+		{"profile out of scope", string(projmux.CodeProfileOutOfScope), profile.ReasonOutOfScope},
 	} {
 		if tc.public != tc.core || tc.public == "" {
 			t.Fatalf("%s: public %q, internal %q", tc.name, tc.public, tc.core)
 		}
 	}
-	if projmux.CodeOperatorOriginTargetNotClaude != "operator-origin-target-not-claude" || projmux.ReservedProfileName != "none" {
+	if projmux.CodeOperatorOriginTargetNotClaude != "operator-origin-target-not-claude" || projmux.ReservedProfileName != "none" || projmux.CodeProfileOutOfScope != "profile-out-of-scope" {
 		t.Fatal("stable values changed")
 	}
 	if projmux.CodePersonaProviderUnsupported == projmux.CodePersonaUnavailable {

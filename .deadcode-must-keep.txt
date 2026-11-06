@@ -340,6 +340,7 @@ Host.StartCodex	Owned processhost Codex preparation retained for dedicated stdio
 InheritedEnv	Test-only guard API retained: every test package that links the Registry store, a tmux runner, or provider exec code runs behind it.
 InstalledTestEnvReads	Test-only guard API retained: it keeps each package's provider opt-in gates closed over the variables its installed tests read.
 IsAgentProvider	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
+IsOperatorMessageOrigin	Public v0 value and judgement SDK name for external frontends (Backlog 820 Task 3); the binary does not import pkg/projmux, covered by TestIsOperatorMessageOriginEqualsInternal.
 IsPickerAdapter	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
 IsProjectConfigTrusted	Ambient trust-store read retained as the test seam over the live loadTrustedProjects path.
 IsResponseError	Typed server-refusal classifier retained for dedicated processhost control until public activation supplies an importer.
@@ -398,11 +399,13 @@ Localizer.Styled	Styled-fragment lookup retained as the test seam that pins the 
 LookupCanonicalRoute	Canonical spelling lookup is retained for route coverage and generated-reference consumers.
 MarkProcessOwner	Public MarkProcessOwner SDK closure: decides and writes the activation-fenced process-owner label in one Registry update; the binary does not import pkg/projmux, covered by TestMarkProcessOwnerDecidesAndWritesInOneUpdate.
 MarkTest	Test-only CLI attribution proof: liveguard.MarkTest names the calling test in the provider stand-in guard log so a PATH codex/claude invocation is attributed to its parent test; called only from process-host CLI tests and covered by TestMarkTestNamesTheCallerInTheGuardLog, TestMarkTestRefusesAParallelTest and TestMarkedWrapperSurvivesAnAllowlistedEnvironment.
+MatchesProcessWait	Public v0 value and judgement SDK name for external frontends (Backlog 820 Task 3); the binary does not import pkg/projmux, covered by TestMatchesProcessWaitEqualsInternal.
 Matrix	Whole cardinality table copy retained as the test seam that pins the declared verb-kind cells and their canonical route adoption.
 MeasureSameTickReplacement	Test-only host probe retained: socket-replacement tests skip only where a same-path replacement shares the original socket identity.
 MergeAgentSessions	Public v0 prepared-snapshot Agent/Project session list SDK name for external frontends (Backlog 802 Task 4); the binary does not import pkg/projmux, covered by TestListSessionsFromPreparedEqualsRegistryRead, TestMergeAgentSessionsEqualsInternalMerge and TestCurrentAgentSessionEqualsInternalRecordFor.
 MergeKeymapOverrides	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 MessageOperator.Client	Public v0 operator message SDK closure for external frontends (Client.SendOperatorMessage); the binary does not import pkg/projmux; covered by TestPublicOperatorCoordinationParity, TestOperatorOriginCannotBeDecodedFromPeerInput and TestPublicOperatorMessageRefusals.
+MessagePayloadSHA256	Public v0 value and judgement SDK name for external frontends (Backlog 820 Task 3); the binary does not import pkg/projmux, covered by TestMessagePayloadSHA256EqualsInternal and TestMessagePayloadSHA256EqualsArchiveEntry.
 MigrateGlobalLegacyScripts	Global legacy hook migration must remain available while old installations can still be upgraded.
 MigrateKeymapForWrite	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 MigrateProjectLegacyScripts	Project legacy hook migration must remain available while old repositories can still be upgraded.
