@@ -370,6 +370,7 @@ KeymapMigrationConflict.String	Internal keymap/catalog compatibility entrypoint 
 KeymapMigrationPlan.Blocked	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 KeymapPath	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 Kinds	Closed Registry kind set retained as the test seam that pins kind-set closure and cardinality matrix coverage.
+LabelCondition.String	Public v0 value and judgement SDK name for external frontends (Backlog 820 Task 2); the binary does not import pkg/projmux, covered by TestParseLabelConditionEqualsInternal.
 Ledger.AmbientMutations	Test-only installed qualification API retained for typed ambient mutation counting proof.
 Ledger.AssertNoAmbientMutation	Test-only installed qualification API retained for zero ambient mutation proof.
 Ledger.AssertNoLifecycleMutation	Test-only installed qualification API retained for broker-smoke lifecycle non-mutation proof.
@@ -448,6 +449,7 @@ PaneActivation.IsZero	Public v0 resource SDK entrypoint or its JSON/selection ad
 PaneRuntimeSpec.EffectiveKind	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 ParseBinding	Native binding parser compatibility entrypoint retained after pure parser extraction; exercised by TestCaptureBindingsIncludeCustomOptionAndControlChords.
 ParseKeymapFile	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+ParseLabelCondition	Public v0 value and judgement SDK name for external frontends (Backlog 820 Task 2); the binary does not import pkg/projmux, covered by TestParseLabelConditionEqualsInternal.
 Paths.AIEnabledAgentsFile	Public v0 config file path getter SDK name for external frontends (Backlog 802 Task 3); the binary does not import pkg/projmux, covered by TestPathsFileGettersEqualInternal.
 Paths.AgentApprovalAnsweringFile	Public v0 config file path getter SDK name for external frontends (Backlog 802 Task 3); the binary does not import pkg/projmux, covered by TestPathsFileGettersEqualInternal.
 Paths.AgentApprovalWindowSecondsFile	Public v0 config file path getter SDK name for external frontends (Backlog 802 Task 3); the binary does not import pkg/projmux, covered by TestPathsFileGettersEqualInternal.
@@ -470,6 +472,7 @@ Placeholders	Project link rule API of internal/core/projectlinks, retained for t
 PlanKeymapMigration	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 PlanProjectCascadeDelete	Project cascade-delete planner retained as the decision proof for external-asset preservation and new-UID reopen.
 PopupToggleActionIDForMode	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+PreparedRegistrySnapshot.AgentsMatchingLabels	Public v0 value and judgement SDK name for external frontends (Backlog 820 Task 2); the binary does not import pkg/projmux, covered by TestAgentsMatchingLabelsEqualsInternal, TestAgentsMatchingLabelsMatchesListedAgents, TestAgentsMatchingLabelsRefusals and TestAgentsMatchingLabelsResultIsCopied.
 PreparedRegistrySnapshot.CurrentProcessActivation	Public v0 prepared Registry snapshot check and lookup SDK entrypoint over a caller-held PreparedRegistrySnapshot (Backlog 802 Task 6); the binary does not import pkg/projmux; covered by TestPreparedRegistryLookupParity, TestPreparedRegistryValidateVerdict, TestPreparedRegistryLookupUnprepared, TestPreparedRegistryLookupResultsAreCopies and TestPreparedRegistryLookupConcurrent.
 PreparedRegistrySnapshot.IsVirtualWindow	Public v0 prepared Registry snapshot SDK entrypoint or its adapter (PrepareRegistrySnapshot/PreparedRegistrySnapshot.Snapshot/IsVirtualWindow); reachable from external consumers rather than the CLI binary; covered by zero-decode reuse, failed-refresh preservation, state-root, clone ownership, virtual Window parity and GOWORK=off consumer tests.
 PreparedRegistrySnapshot.PaneInWindow	Public v0 prepared Registry snapshot check and lookup SDK entrypoint over a caller-held PreparedRegistrySnapshot (Backlog 802 Task 6); the binary does not import pkg/projmux; covered by TestPreparedRegistryLookupParity, TestPreparedRegistryValidateVerdict, TestPreparedRegistryLookupUnprepared, TestPreparedRegistryLookupResultsAreCopies and TestPreparedRegistryLookupConcurrent.
