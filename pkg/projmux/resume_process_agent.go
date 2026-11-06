@@ -118,5 +118,12 @@ func (c *Client) resumeProcessAgent(ctx context.Context, req core.ResumeAgentReq
 // Any other code, an empty detail or damaged JSON leaves err as it is.
 // ResumeAgent and the preparation entries share this one rule.
 func restoreRecipeDetail(err error, detail json.RawMessage) error {
-	return err // stub: repro head, rule not yet written
+	if len(detail) == 0 {
+		return err
+	}
+	var recipe core.ResumeRecipeChangedError
+	if json.Unmarshal(detail, &recipe) != nil || recipe.Code != "process-resume-refused" {
+		return err
+	}
+	return errors.Join(err, &recipe)
 }
