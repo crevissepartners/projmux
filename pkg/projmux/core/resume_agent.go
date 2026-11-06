@@ -1,5 +1,21 @@
 package core
 
+// ResumeHostLostPolicy states whether a process Agent resume must or must not
+// recover an Agent whose host process and child are both gone. The empty value
+// keeps the existing behavior: a host-lost Agent is accepted unless the request
+// is WaitForPeer.
+type ResumeHostLostPolicy string
+
+const (
+	// ResumeHostLostRequire resumes only a host-lost Agent. An Agent that is not
+	// host-lost is refused with process-resume-not-resumable (or
+	// process-resume-owned while an owner is alive) and nothing changes.
+	ResumeHostLostRequire ResumeHostLostPolicy = "require"
+	// ResumeHostLostRefuse refuses a host-lost Agent with the token an ordinary
+	// resume uses when host-lost recovery is not admitted, and changes nothing.
+	ResumeHostLostRefuse ResumeHostLostPolicy = "refuse"
+)
+
 // ResumeAgentRequest resumes one Agent. Process Agents require Detach. Project and
 // Window optionally scope Ref. No caller, active Pane, or prompt is inferred.
 type ResumeAgentRequest struct {
@@ -13,6 +29,10 @@ type ResumeAgentRequest struct {
 	Binding             ProcessBinding
 	// Preparation fences a prepared Claude first input. Nil preserves ordinary Resume.
 	Preparation *AgentResumePreparation
+	// HostLost is a process-only policy for a host-lost Agent. Empty preserves
+	// ordinary Resume. Unknown values, require with WaitForPeer, and any value on a
+	// tmux Agent are refused with resume-request-invalid before effects.
+	HostLost ResumeHostLostPolicy
 }
 
 // ResumeAgentResult identifies the committed rebind. Resume returns immediately

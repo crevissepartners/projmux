@@ -29,6 +29,7 @@ FILES = (
     "sdk_relaunch_prepared_cli_test.go",
     "sdk_relaunch_prepared_pin_cli_test.go",
     "sdk_labels_kept_test.go",
+    "sdk_resume_host_lost_policy_cli_test.go",
     "sdk_reserve_agent_cli_test.go",
     "sdk_start_reserved_agent_cli_test.go",
     "process_codex_host_upgrade_cli_test.go",

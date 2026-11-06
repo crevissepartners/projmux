@@ -27,7 +27,17 @@ type ProcessDetachedResumeRequest struct {
 	PreparationAction string
 	AllowHostLost     bool
 	Preparation       *ProcessResumePreparation
+	// HostLostPolicy is the SDK ResumeAgentRequest.HostLost value. It is distinct
+	// from the preparation-only AllowHostLost, and an empty value is omitted so an
+	// ordinary request keeps its wire bytes.
+	HostLostPolicy string `json:",omitempty"`
 }
+
+// The wire values of the SDK host-lost policy.
+const (
+	ProcessResumeHostLostRequire = "require"
+	ProcessResumeHostLostRefuse  = "refuse"
+)
 
 type ProcessDetachedResumeEnvelope struct {
 	Resume       *ProcessDetachedResumeRequest

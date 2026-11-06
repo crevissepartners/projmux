@@ -1529,6 +1529,25 @@ peer input starts the preserved conversation under a new generation. Stopping
 that claim before birth releases it without inventing a provider Wait record.
 Use the born binding from a fresh resource read after peer delivery.
 
+`HostLost` chooses what a resume does with an Agent whose host process and child
+are both gone (a same-host, kernel-proven absence, re-proved on every request).
+Empty keeps today's behavior: a host-lost Agent is accepted, except with
+`WaitForPeer`. `core.ResumeHostLostRequire` resumes only a host-lost Agent; an
+Agent that is merely Offline is refused with `process-resume-not-resumable`, and
+one whose owner is alive with `process-resume-owned`, before anything changes.
+`core.ResumeHostLostRefuse` refuses a host-lost Agent with
+`process-resume-not-resumable` and changes nothing. Both refusals carry the
+existing `process-resume-refused` code, with the token in the message. An
+unknown value, `require` with `WaitForPeer`, or any value on a tmux Agent is
+refused with `resume-request-invalid` before effects. A request that sets a
+policy fails closed when it reaches an executable that predates the field. The
+decision is made in the owner process, and the reservation then compares the
+recorded generation and the resume recipe again and, for a host-lost Agent,
+re-proves that the owner and provider are absent. If the record or recipe
+changed in between, the resume is refused with `process-resume-refused`; if
+the absence can no longer be proven, with `process-resume-not-resumable`. Claude
+still needs its first input.
+
 Process requests require Detach and reject SocketPath and DialogueReplyOnly.
 The zero values preserve the tmux resume API; process-specific inputs on tmux
 Agents refuse before effects. Use `RelaunchAgent` for process relaunch and host moves.

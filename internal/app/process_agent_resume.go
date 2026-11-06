@@ -32,6 +32,7 @@ type processAgentResumeOptions struct {
 	Model, Effort       string
 	promptPartsPrepared bool // relaunch already froze its prompt-part recipe.
 	allowHostLost       bool // Explicit CLI resume and private consumers opt in.
+	requireHostLost     bool // Only a detached SDK resume with HostLost=require sets this.
 	claim               *deferredProcessClaim
 	preparation         *mutationruntime.ProcessResumePreparation
 }
@@ -116,6 +117,9 @@ func (c *agentCommand) resumeProcessAgent(ctx context.Context, request processAg
 	candidate, err := c.processResumeCandidate(request)
 	if err != nil {
 		return result, err
+	}
+	if request.options.requireHostLost && candidate.HostLost == nil {
+		return result, fmt.Errorf("%s: %w: no lost owner", processResumeNotResumable, processhost.ErrResumeRefused)
 	}
 	if candidate.Record.Provider == aiModeClaude && request.options.Prompt.Kind == "" {
 		return result, fmt.Errorf("%s: %w: Claude stream resume requires an explicit first frame", processResumeRefused, processhost.ErrResumeRefused)

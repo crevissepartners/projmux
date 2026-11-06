@@ -41,6 +41,19 @@ func validateSDKProcessResumeWire(wire processDetachedResumeRequest) error {
 			return preparationStale("request binding differs")
 		}
 	}
+	switch wire.HostLostPolicy {
+	case "":
+	case mutationruntime.ProcessResumeHostLostRefuse:
+	case mutationruntime.ProcessResumeHostLostRequire:
+		if wire.WaitForPeer {
+			return usageError("agent resume: a host-lost requirement cannot be combined with --wait-for-peer")
+		}
+	default:
+		return usageError("agent resume: unknown host-lost policy")
+	}
+	if wire.HostLostPolicy != "" && wire.PreparationAction != "" {
+		return usageError("agent resume: a host-lost policy does not apply to a preparation request")
+	}
 	_, err := newProcessAgentResumeRequest(wire.options())
 	if err != nil {
 		return err
