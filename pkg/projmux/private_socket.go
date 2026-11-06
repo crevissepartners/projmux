@@ -14,12 +14,14 @@ type PrivateSocketListener struct {
 }
 
 // ListenPrivateSocket listens on the absolute, clean Unix socket path, at most
-// 100 bytes long. It creates the parent directory as 0700 and the socket as
-// 0600. A socket nobody listens on that the current user owns is replaced. A
-// path with a live socket, or with anything else on it (a regular file, a
-// symlink, another user's socket), is refused and left as it was. The error is
-// the one the projmux commands report for the same path. It takes no Client and
-// reads no Registry.
+// 100 bytes long. Pass a directory used for this socket alone: a parent
+// directory that does not exist is created as 0700, and one that already exists
+// and belongs to the current user is changed to 0700. That change stays even
+// when the listen is then refused. The socket is 0600. A socket nobody listens
+// on that the current user owns is replaced. A path with a live socket, or with
+// anything else on it (a regular file, a symlink, another user's socket), is
+// refused and left as it was. The error is the one the projmux commands report
+// for the same path. It takes no Client and reads no Registry.
 func ListenPrivateSocket(path string) (*PrivateSocketListener, error) {
 	inner, err := localipc.Listen(path)
 	if err != nil {
@@ -36,10 +38,13 @@ func (l *PrivateSocketListener) Accept() (net.Conn, error) {
 	return l.inner.Unix.Accept()
 }
 
-// Close stops listening and removes the socket file this listener created. A
-// socket that another listener has since put on the same path is not removed.
-// A second Close returns the network error of closing a closed listener and
-// does nothing else.
+// Close stops listening and removes the socket path only while it still names
+// the socket this listener created; a path that holds a different socket, or
+// nothing, is left alone. That check and the removal are two steps, not one
+// atomic step, so a replacement that arrives at the same path while Close runs
+// can be removed: do not run another listener on the same path at the same
+// time. A second Close returns the error of closing a closed listener and
+// repeats the same identity-checked cleanup.
 func (l *PrivateSocketListener) Close() error {
 	if l == nil || l.inner == nil {
 		return nil
