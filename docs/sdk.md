@@ -596,6 +596,33 @@ whose `LastTermination` must match its binding
 
 All three read nothing, need no Client and never fail.
 
+### Owner-private socket listener
+
+`projmux.ListenPrivateSocket(path)` listens on a Unix socket only its owner can
+reach and returns a `*projmux.PrivateSocketListener`. The listener is a
+`net.Listener` (`Accept`, `Close`, `Addr`), so `http.Serve` takes it as it is,
+and `Path()` returns the path it was created with. It takes no Client and
+reads no Registry.
+
+The path must be absolute, clean and at most 100 bytes; anything else is
+refused. Pass a directory used for this socket alone: a parent directory that
+does not exist is created as `0700`, and one that already exists and belongs to
+the current user is changed to `0700`, and that change stays even when the
+listen is then refused. The socket is `0600`. A dead socket the current user
+owns is replaced. A path with a live socket, or with a regular file, a symlink
+or another user's socket, is refused and left as it was. The error text is the
+one the projmux commands report for the same path
+(`TestListenPrivateSocketEqualsInternal`).
+
+`Close` removes the socket path only while it still names the socket this
+listener created; a different socket, or nothing, at the path is left alone
+(`TestListenPrivateSocketCloseKeepsReplacementAndIsRepeatable`). The check and
+the removal are two steps, not one atomic step, so a replacement that arrives at
+the same path while `Close` runs can be removed: do not run another listener on
+the same path at the same time. A second `Close` returns the error of closing a
+closed listener and repeats the same identity-checked cleanup. Linux and macOS
+only.
+
 ### Settings provider list
 
 `projmux.ListSettingsProviders()` returns the agent providers a settings screen
