@@ -1,6 +1,8 @@
 package usage
 
 import (
+	"strings"
+
 	"github.com/crevissepartners/projmux/internal/aiprovider"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/usage"
@@ -54,4 +56,22 @@ func HUDProviderCapabilities() []HUDProviderCapability {
 		out = append(out, capability)
 	}
 	return out
+}
+
+// ModelDisplayLabel maps a model name to its capitalized HUD label.
+func ModelDisplayLabel(model string) string {
+	switch strings.ToLower(model) {
+	case "claude":
+		return "Claude"
+	case "codex":
+		return "Codex"
+	default:
+		if model == "" {
+			return "?"
+		}
+		// Title-case the first rune; rest stays lowercase.
+		rs := []rune(strings.ToLower(model))
+		rs[0] = []rune(strings.ToUpper(string(rs[0])))[0]
+		return string(rs)
+	}
 }

@@ -1793,22 +1793,10 @@ func buildModelDisplays(snaps []usage.Snapshot) []modelDisplay {
 	return out
 }
 
-// ModelDisplayLabel maps a model name to its capitalized HUD label.
+// ModelDisplayLabel maps a model name to its capitalized HUD label. The
+// implementation lives in internal/services/usage so the public SDK shares it.
 func ModelDisplayLabel(model string) string {
-	switch strings.ToLower(model) {
-	case "claude":
-		return "Claude"
-	case "codex":
-		return "Codex"
-	default:
-		if model == "" {
-			return "?"
-		}
-		// Title-case the first rune; rest stays lowercase.
-		rs := []rune(strings.ToLower(model))
-		rs[0] = []rune(strings.ToUpper(string(rs[0])))[0]
-		return string(rs)
-	}
+	return usageService.ModelDisplayLabel(model)
 }
 
 // modelShortLabel returns the one-letter legacy fallback used by the
