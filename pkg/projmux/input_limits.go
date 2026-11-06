@@ -3,6 +3,7 @@ package projmux
 import (
 	"github.com/crevissepartners/projmux/internal/core/agentguidance"
 	"github.com/crevissepartners/projmux/internal/core/persona"
+	"github.com/crevissepartners/projmux/internal/core/profile"
 	"github.com/crevissepartners/projmux/internal/core/projectlinks"
 )
 
@@ -19,4 +20,7 @@ const (
 	MaxAgentGuidanceBytes = agentguidance.MaxSize
 	// MaxPersonaBytes bounds one persona file.
 	MaxPersonaBytes = persona.MaxSize
+	// MaxProfileBytes bounds one profile file: a larger candidate is a
+	// CodeProfileTooLarge refusal.
+	MaxProfileBytes = profile.MaxSize
 )

@@ -8,6 +8,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/core/persona"
+	"github.com/crevissepartners/projmux/internal/core/profile"
 	"github.com/crevissepartners/projmux/pkg/projmux"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
 )
@@ -36,6 +37,9 @@ func TestPublicConstantsEqualInternal(t *testing.T) {
 	}
 	if projmux.MaxPersonaBytes != persona.MaxSize {
 		t.Fatalf("persona limit %d != %d", projmux.MaxPersonaBytes, persona.MaxSize)
+	}
+	if projmux.MaxProfileBytes != profile.MaxSize {
+		t.Fatalf("profile limit %d != %d", projmux.MaxProfileBytes, profile.MaxSize)
 	}
 }
 
