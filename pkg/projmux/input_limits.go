@@ -2,6 +2,7 @@ package projmux
 
 import (
 	"github.com/crevissepartners/projmux/internal/core/agentguidance"
+	"github.com/crevissepartners/projmux/internal/core/agentmessage"
 	"github.com/crevissepartners/projmux/internal/core/persona"
 	"github.com/crevissepartners/projmux/internal/core/profile"
 	"github.com/crevissepartners/projmux/internal/core/projectlinks"
@@ -23,4 +24,8 @@ const (
 	// MaxProfileBytes bounds one profile file: a larger candidate is a
 	// CodeProfileTooLarge refusal.
 	MaxProfileBytes = profile.MaxSize
+	// MaxMessagePayloadBytes bounds the payload of one agent message: a larger
+	// payload is a CodeMessageInvalidInput refusal whose message carries the
+	// reason envelope-payload-too-large, the payload size and this limit.
+	MaxMessagePayloadBytes = agentmessage.MaxPayloadBytes
 )
