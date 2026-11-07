@@ -544,6 +544,7 @@ public name, CLI output or screen changes.
 | `core.DefaultAgentQuestionWindowSeconds`, `DefaultAgentApprovalWindowSeconds` (`900`) | The window used when nothing valid is saved |
 | `projmux.MaxPersonaBytes` | The byte limit of one persona file, defined by the persona validator rather than copied |
 | `projmux.MaxProfileBytes` (`65536`) | The byte limit of one profile file, defined by the profile validator rather than copied. A larger candidate is `CodeProfileTooLarge`. Pinned equal by `TestPublicConstantsEqualInternal` |
+| `projmux.MaxMessagePayloadBytes` (`4096`) | The byte limit of one agent message payload, derived from the core message constant rather than copied; `4096` is the current value. A larger payload is a `CodeMessageInvalidInput` refusal whose message carries the reason `envelope-payload-too-large`. Pinned equal by `TestPublicConstantsEqualInternal` |
 | `projmux.CodeProfileOutOfScope` (`profile-out-of-scope`) | The refusal Code of a profile scoped to one Project that is used in another. Pinned equal to the internal reason by `TestPublicClassificationParity` |
 | `projmux.AINewWindowModes()` | The modes a new AI window can open with, in the order refusals name them; the caller owns the returned slice |
 

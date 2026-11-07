@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/agentmessage"
 	"github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/core/persona"
@@ -40,6 +41,11 @@ func TestPublicConstantsEqualInternal(t *testing.T) {
 	}
 	if projmux.MaxProfileBytes != profile.MaxSize {
 		t.Fatalf("profile limit %d != %d", projmux.MaxProfileBytes, profile.MaxSize)
+	}
+	// The public limit is derived from the core constant, so a change of the
+	// core value changes this one in the same build.
+	if projmux.MaxMessagePayloadBytes != agentmessage.MaxPayloadBytes {
+		t.Fatalf("message payload limit %d != %d", projmux.MaxMessagePayloadBytes, agentmessage.MaxPayloadBytes)
 	}
 }
 
