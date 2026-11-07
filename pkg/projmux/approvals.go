@@ -169,8 +169,13 @@ func (c *Client) AnswerApproval(ctx context.Context, input AnswerApprovalRequest
 	if err != nil {
 		return core.ApprovalReceipt{}, err
 	}
-	service := c.approvalService()
 	r := approvals.Request{Spelling: "agent approval answer", RequestID: strings.TrimSpace(input.RequestID), Allow: input.Allow, Via: via}
+	// A Claude request id is minted by projmux, so a malformed one names nothing.
+	// Refuse it before the answering policy, the store lock and the audit log.
+	if metadata.NormalizeProvider(agent.Spec.Provider) == "claude" && !agentapproval.ValidID(r.RequestID) {
+		return core.ApprovalReceipt{}, approvalRefusal(approvals.Refuse(r.Spelling, agent, approvals.ReasonNotFound, fmt.Sprintf("permission request %q does not exist", r.RequestID)))
+	}
+	service := c.approvalService()
 	var result approvals.AnswerResult
 	if metadata.NormalizeProvider(agent.Spec.Provider) == "codex" && !processApproval(reg, agent) {
 		result, err = service.AnswerCodex(ctx, r, reg, agent)
