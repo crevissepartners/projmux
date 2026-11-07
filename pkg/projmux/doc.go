@@ -181,6 +181,9 @@
 // shares allow/deny mapping, answering policy, channel validation (default cli),
 // audit-before-send, first-answer-wins and uncertain-delivery handling. Process
 // Agents retain the CLI store path; native Codex uses existing exact control.
+// A Claude Agent's request id that is not a projmux-minted id is refused with
+// permission-not-found before any effect: no store lock, audit line or answering
+// policy check. The CLI still writes its audit line there.
 // ReviewApproval takes one offered decision instead of a picker. Like CLI review,
 // it bypasses answering policy and adds no answer audit lines. It does not focus
 // a window, start a provider or add permission choices. Options.ApprovalControl
