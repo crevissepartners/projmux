@@ -5,9 +5,12 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 )
@@ -42,6 +45,11 @@ func TestUpdateConvergentContextHeldLockDeadlineAndObserver(t *testing.T) {
 				t.Fatalf("deadline observation: %+v", *observations)
 			}
 			releaseRegistryFlock(t, store)
+			// The expired call leaves its kernel wait behind on purpose; it
+			// may be granted the lock late and then releases and closes it.
+			// Wait for that to finish before any other transaction or
+			// observer probe, so none of them races the late grant.
+			waitForRegistryFlockDescriptorsClosed(t, store)
 			// Fence through the same ordinary transaction after release. The
 			// expired call must never run a deferred writer or lose the lock.
 			if _, changed, err = store.UpdateConvergent(func(*coremetadata.Registry) error { return nil }); err != nil || changed {
@@ -55,6 +63,47 @@ func TestUpdateConvergentContextHeldLockDeadlineAndObserver(t *testing.T) {
 				t.Fatal("ordinary Registry lock policy changed")
 			}
 		})
+	}
+}
+
+// waitForRegistryFlockDescriptorsClosed blocks until this process holds no
+// descriptor on the Registry flock file, which is the observable end of an
+// abandoned lock waiter: it was granted, unlocked and closed its descriptor.
+func waitForRegistryFlockDescriptorsClosed(t *testing.T, store *Store) {
+	t.Helper()
+	var want unix.Stat_t
+	if err := unix.Stat(store.flockPath, &want); err != nil {
+		t.Fatalf("stat registry flock: %v", err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		open := 0
+		entries, err := os.ReadDir("/dev/fd")
+		if err != nil {
+			t.Fatalf("list descriptors: %v", err)
+		}
+		for _, entry := range entries {
+			fd, err := strconv.Atoi(entry.Name())
+			if err != nil {
+				continue
+			}
+			var got unix.Stat_t
+			// The listing's own descriptor and ones closed meanwhile fail
+			// here; neither can be the lock file.
+			if unix.Fstat(fd, &got) != nil {
+				continue
+			}
+			if uint64(got.Dev) == uint64(want.Dev) && got.Ino == want.Ino {
+				open++
+			}
+		}
+		if open == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("abandoned waiter never closed its descriptor: %d open on the registry flock", open)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
