@@ -2,6 +2,8 @@ package projmux
 
 import (
 	"context"
+	"errors"
+	"strings"
 
 	store "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmux"
@@ -21,13 +23,22 @@ type TmuxMirror struct {
 }
 
 // ReadTmuxMirror reads the mirror of the pane the caller runs in, from the
-// $TMUX_PANE and $TMUX that lookupEnv returns; the SDK never reads the process
-// environment itself, so a caller passes its own environment lookup, such as os.Getenv. Both values must
-// be non-blank for Inside to be true. A nil lookupEnv is outside tmux: no
-// environment is read and tmux is not contacted. Unlike the CLI, which reads only the uid its route needs, this reads
-// both the Pane and the Window uid when inside.
+// $TMUX_PANE and $TMUX that lookupEnv returns. The SDK never reads the process
+// environment itself, so a caller passes its own environment lookup, such as
+// os.Getenv. Both values must be non-blank for Inside to be true. A nil
+// lookupEnv is outside tmux: no environment is read and tmux is not contacted.
+//
+// Every tmux call is pinned to the server $TMUX names: the socket path is the
+// part of $TMUX before the first comma and each call runs as `tmux -S <path>`,
+// so the server asked is the one the decision was made on, not the one the
+// process environment happens to name. A $TMUX that names no socket (it starts
+// with a comma) still gives Inside and PaneID, but PaneUID and WindowUID are
+// empty and tmux is not run.
+//
+// Unlike the CLI, which reads only the uid its route needs, this reads both the
+// Pane and the Window uid when inside.
 func ReadTmuxMirror(ctx context.Context, lookupEnv func(string) string) TmuxMirror {
-	return readTmuxMirror(ctx, tmux.ExecRunner{}, func() (string, bool) {
+	return readTmuxMirror(ctx, tmuxServerRunner(tmux.ExecRunner{}, lookupEnv), func() (string, bool) {
 		return store.InheritedTmuxPane(lookupEnv)
 	})
 }
@@ -36,9 +47,10 @@ func ReadTmuxMirror(ctx context.Context, lookupEnv func(string) string) TmuxMirr
 // caller that runs inside a tmux client but not inside that pane. $TMUX must
 // still be non-blank in lookupEnv and paneID must be non-blank after trimming;
 // otherwise (including a nil lookupEnv) the result is the empty not-inside value
-// and tmux is not contacted.
+// and tmux is not contacted. The server is chosen from lookupEnv's $TMUX exactly
+// as ReadTmuxMirror describes.
 func ReadTmuxMirrorAt(ctx context.Context, paneID string, lookupEnv func(string) string) TmuxMirror {
-	return readTmuxMirror(ctx, tmux.ExecRunner{}, func() (string, bool) {
+	return readTmuxMirror(ctx, tmuxServerRunner(tmux.ExecRunner{}, lookupEnv), func() (string, bool) {
 		return store.AnchoredTmuxPane(paneID, lookupEnv)
 	})
 }
@@ -57,4 +69,35 @@ func readTmuxMirror(ctx context.Context, runner store.Runner, pane func() (strin
 		WindowUID: mirror.MirroredWindowUID(ctx, paneID),
 		Inside:    true,
 	}
+}
+
+// errNoTmuxSocket is the read failure of a $TMUX value that names no socket.
+var errNoTmuxSocket = errors.New("projmux: $TMUX names no tmux socket")
+
+// tmuxServerRunner pins every tmux call to the server that lookupEnv's $TMUX
+// names, so the server a read asks is the one the inside-tmux decision was made
+// on rather than whichever server the process environment happens to name. The
+// socket path is the part of $TMUX before the first comma, the rule a tmux
+// client applies to $TMUX, and each call is prefixed with `-S <path>`. A $TMUX
+// that names no socket (empty before the first comma) fails every call without
+// running tmux, which reads as an empty uid and never falls back to the process
+// environment's server.
+func tmuxServerRunner(inner store.Runner, lookupEnv func(string) string) store.Runner {
+	socket := ""
+	if lookupEnv != nil {
+		socket, _, _ = strings.Cut(strings.TrimSpace(lookupEnv("TMUX")), ",")
+	}
+	return socketRunner{inner: inner, socket: socket}
+}
+
+type socketRunner struct {
+	inner  store.Runner
+	socket string
+}
+
+func (r socketRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if r.socket == "" {
+		return nil, errNoTmuxSocket
+	}
+	return r.inner.Run(ctx, name, append([]string{"-S", r.socket}, args...)...)
 }

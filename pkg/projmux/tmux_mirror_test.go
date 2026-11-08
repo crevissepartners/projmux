@@ -106,4 +106,62 @@ func TestTmuxMirrorOutsideTmuxContactsNothing(t *testing.T) {
 	}
 }
 
+// A public read must ask the server the callback's $TMUX names, whatever server
+// the process environment names.
+func TestTmuxMirrorPinsTheServerNamedByLookupEnv(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/ambient-server,1,0")
+	env := map[string]string{"TMUX": "/tmp/callback-server,2,1", "TMUX_PANE": "%46"}
+	for _, test := range []struct {
+		name string
+		read func(inner store.Runner) TmuxMirror
+	}{
+		{"inherited", func(inner store.Runner) TmuxMirror {
+			return readTmuxMirror(context.Background(), tmuxServerRunner(inner, mirrorEnv(env)), func() (string, bool) {
+				return store.InheritedTmuxPane(mirrorEnv(env))
+			})
+		}},
+		{"anchored", func(inner store.Runner) TmuxMirror {
+			return readTmuxMirror(context.Background(), tmuxServerRunner(inner, mirrorEnv(env)), func() (string, bool) {
+				return store.AnchoredTmuxPane("%46", mirrorEnv(env))
+			})
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runner := &tmuxMirrorRunner{replies: map[string]string{
+				"-S /tmp/callback-server " + mirrorPaneKey:   "pan-alpha",
+				"-S /tmp/callback-server " + mirrorWindowKey: "win-alpha",
+			}}
+			got := test.read(runner)
+			if got != (TmuxMirror{PaneID: "%46", PaneUID: "pan-alpha", WindowUID: "win-alpha", Inside: true}) {
+				t.Fatalf("mirror = %+v", got)
+			}
+			if len(runner.calls) != 2 {
+				t.Fatalf("tmux calls = %v", runner.calls)
+			}
+			for _, call := range runner.calls {
+				if len(call) < 3 || call[0] != "tmux" || call[1] != "-S" || call[2] != "/tmp/callback-server" {
+					t.Fatalf("call %v does not start with tmux -S <callback socket>", call)
+				}
+			}
+		})
+	}
+}
+
+func TestTmuxMirrorEmptySocketRunsNoTmux(t *testing.T) {
+	t.Parallel()
+	for _, tmuxValue := range []string{",1,0", " ,1,0"} {
+		env := map[string]string{"TMUX": tmuxValue, "TMUX_PANE": "%46"}
+		runner := &tmuxMirrorRunner{replies: map[string]string{mirrorPaneKey: "pan-alpha", mirrorWindowKey: "win-alpha"}}
+		got := readTmuxMirror(context.Background(), tmuxServerRunner(runner, mirrorEnv(env)), func() (string, bool) {
+			return store.InheritedTmuxPane(mirrorEnv(env))
+		})
+		if got != (TmuxMirror{PaneID: "%46", Inside: true}) {
+			t.Fatalf("TMUX=%q mirror = %+v, want inside with empty uids", tmuxValue, got)
+		}
+		if len(runner.calls) != 0 {
+			t.Fatalf("TMUX=%q ran tmux: %v", tmuxValue, runner.calls)
+		}
+	}
+}
+
 func ptr(s string) *string { return &s }
