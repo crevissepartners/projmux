@@ -6,6 +6,8 @@ import (
 	"io"
 	"slices"
 	"strings"
+
+	"github.com/crevissepartners/projmux/internal/cli/usageblock"
 )
 
 // helpFlagNames are the flag names that request help.
@@ -388,10 +390,7 @@ func WriteRouteUsage(w io.Writer, route string) {
 	if !ok || !slices.Equal(path, tokens) || len(resolved.Usage) == 0 {
 		return
 	}
-	fmt.Fprintln(w, "Usage:")
-	for _, line := range resolved.Usage {
-		fmt.Fprintln(w, "  "+line)
-	}
+	usageblock.Write(w, resolved.Usage)
 }
 
 // SetRouteUsage makes fs answer a flag parse failure with the catalog Usage of
