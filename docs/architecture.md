@@ -22,7 +22,7 @@ imports in non-test code (`go list -f '{{.Imports}}' ./...`), not a wish list.
 | --- | --- | --- | --- |
 | Entry | `cmd/projmux` | Binary entrypoint. Records the run in the diagnostics journal and hands the arguments to `internal/app`. | app, cli, diagnostics, version |
 | Application | `internal/app` | Command implementations: parses each route, reads config and state, calls core rules and integration adapters, and renders through `internal/cli` and `internal/ui`. | every directory except testutil and tools |
-| SDK | `pkg/projmux` | Experimental v0 public Go API for instructions, resources, runtime observations, models, profiles, central settings, saved usage and notifications; immutable paths, independent public types and typed refusals. | config, core, services |
+| SDK | `pkg/projmux` | Experimental v0 public Go API for instructions, resources, runtime observations, models, profiles, central settings, saved usage and notifications; immutable paths, independent public types and typed refusals. | config, core, services, integrations (`metadata`, `tmux`), cli/usageblock (the leaf block writer only; the parent `internal/cli` and cobra are not allowed) |
 | Services | `internal/services` | Transport-independent execution and saved-state reading for the public SDK operations, shared by CLI and SDK. | aiprovider, config, core, i18n, integrations |
 | UI | `internal/ui` | Native picker model, input handling, and row and preview rendering for popups and the sidebar. | core, i18n, theme |
 | Integrations | `internal/integrations` | Adapters to the outside world: tmux, the Registry file and its tmux mirror, AI agent providers and their local transports, lifecycle hooks, and procfs resource collection. | config, core, diagnostics, state, theme, version |

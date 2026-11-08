@@ -94,11 +94,8 @@ func defaultActiveTargetLookup() activeTargetLookup {
 // mirror.
 func tmuxActiveTargetLookup(getenv func(string) string, mirror intmetadata.Mirror) activeTargetLookup {
 	return func() (activeTargetObserver, bool) {
-		if getenv == nil {
-			return activeTargetObserver{}, false
-		}
-		paneID := strings.TrimSpace(getenv("TMUX_PANE"))
-		if paneID == "" || strings.TrimSpace(getenv("TMUX")) == "" {
+		paneID, inside := intmetadata.InheritedTmuxPane(getenv)
+		if !inside {
 			return activeTargetObserver{}, false
 		}
 		return newActiveTargetObserver(paneID, mirror), true
@@ -134,12 +131,9 @@ func defaultAnchoredActiveTargetLookup(paneID string) activeTargetLookup {
 //     would otherwise address a pane on a server this invocation never
 //     inherited.
 func anchoredActiveTargetLookup(paneID string, getenv func(string) string, mirror intmetadata.Mirror) activeTargetLookup {
-	anchor := strings.TrimSpace(paneID)
 	return func() (activeTargetObserver, bool) {
-		if getenv == nil || anchor == "" {
-			return activeTargetObserver{}, false
-		}
-		if strings.TrimSpace(getenv("TMUX")) == "" {
+		anchor, inside := intmetadata.AnchoredTmuxPane(paneID, getenv)
+		if !inside {
 			return activeTargetObserver{}, false
 		}
 		return newActiveTargetObserver(anchor, mirror), true
@@ -150,19 +144,10 @@ func anchoredActiveTargetLookup(paneID string, getenv func(string) string, mirro
 // target. The two uid reads stay independent so a route only pays for the option
 // its own kind needs.
 func newActiveTargetObserver(paneID string, mirror intmetadata.Mirror) activeTargetObserver {
-	read := func(resolve func(context.Context, string) (string, error)) func() string {
-		return func() string {
-			value, err := resolve(context.Background(), paneID)
-			if err != nil {
-				return ""
-			}
-			return strings.TrimSpace(value)
-		}
-	}
 	return activeTargetObserver{
 		paneID:    paneID,
-		paneUID:   read(mirror.ResolvePaneUID),
-		windowUID: read(mirror.ResolveWindowUID),
+		paneUID:   func() string { return mirror.MirroredPaneUID(context.Background(), paneID) },
+		windowUID: func() string { return mirror.MirroredWindowUID(context.Background(), paneID) },
 	}
 }
 
