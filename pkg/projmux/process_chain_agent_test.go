@@ -43,7 +43,9 @@ func TestProcessChainAgentEqualsRegistryJudgment(t *testing.T) {
 		agent  ProcessChainAgent
 		skip   ProcessChainSkip
 	}{
-		{"found", nil, func(c core.ProcessIdentity) ([]core.ProcessIdentity, error) { return []core.ProcessIdentity{caller, c}, nil },
+		{"found", nil, func(c core.ProcessIdentity) ([]core.ProcessIdentity, error) {
+			return []core.ProcessIdentity{caller, c}, nil
+		},
 			ProcessChainAgent{AgentUID: "agent-01", PaneUID: "pane-02"}, ""},
 		{"unrelated shell", nil, func(core.ProcessIdentity) ([]core.ProcessIdentity, error) { return []core.ProcessIdentity{caller}, nil }, ProcessChainAgent{}, ""},
 		{"empty chain", nil, func(core.ProcessIdentity) ([]core.ProcessIdentity, error) { return nil, nil }, ProcessChainAgent{}, ""},
@@ -63,7 +65,10 @@ func TestProcessChainAgentEqualsRegistryJudgment(t *testing.T) {
 			return []core.ProcessIdentity{c}, nil
 		}, ProcessChainAgent{}, ProcessChainSkipIdentityMismatch},
 		{"other uid", func(r *metadata.Registry) { r.Panes[1].Status.Activation.Process.Child.OwnerUID++ },
-			func(c core.ProcessIdentity) ([]core.ProcessIdentity, error) { c.OwnerUID++; return []core.ProcessIdentity{c}, nil },
+			func(c core.ProcessIdentity) ([]core.ProcessIdentity, error) {
+				c.OwnerUID++
+				return []core.ProcessIdentity{c}, nil
+			},
 			ProcessChainAgent{}, ProcessChainSkipIdentityMismatch},
 		{"offline", func(r *metadata.Registry) { r.Agents[0].Status.Phase = metadata.PhaseOffline },
 			func(c core.ProcessIdentity) ([]core.ProcessIdentity, error) { return []core.ProcessIdentity{c}, nil },
