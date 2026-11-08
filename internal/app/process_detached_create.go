@@ -349,20 +349,7 @@ func bindDetachedCaller(command *createCommand, caller coremetadata.ProcessIdent
 		if err != nil || current != caller {
 			return nil, errors.New("process-detached-caller-ended")
 		}
-		var chain []coremetadata.ProcessIdentity
-		pid := caller.PID
-		for range creatorProcessChainMaxSteps {
-			identity, parent, err := localipc.Process(pid)
-			if err != nil {
-				return chain, err
-			}
-			chain = append(chain, identity)
-			if parent <= 1 || parent == pid {
-				break
-			}
-			pid = parent
-		}
-		return chain, nil
+		return localipc.ProcessAncestry(caller.PID)
 	}
 	command.processCreatorAncestors = ancestors
 	command.processAncestors = func() ([]int, error) {
