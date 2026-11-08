@@ -388,8 +388,21 @@ func WriteRouteUsage(w io.Writer, route string) {
 	if !ok || !slices.Equal(path, tokens) || len(resolved.Usage) == 0 {
 		return
 	}
+	WriteUsageLines(w, resolved.Usage)
+}
+
+// WriteUsageLines writes lines as the `Usage:` block every catalog route
+// prints: the heading, then each line indented two spaces. It is the one
+// definition of that block's format; WriteRouteUsage writes a catalog route's
+// lines through it, and a caller whose route lives outside this catalog
+// writes its own lines through it to print the same block. No lines write
+// nothing.
+func WriteUsageLines(w io.Writer, lines []string) {
+	if len(lines) == 0 {
+		return
+	}
 	fmt.Fprintln(w, "Usage:")
-	for _, line := range resolved.Usage {
+	for _, line := range lines {
 		fmt.Fprintln(w, "  "+line)
 	}
 }

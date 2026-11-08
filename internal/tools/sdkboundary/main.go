@@ -107,6 +107,7 @@ func allowedImplementation(p packageData) bool {
 		module + "/internal/services/mutations",
 		module + "/internal/services/mutations/runtime",
 		module + "/internal/core/receipt",
+		module + "/internal/cli",
 		module + "/internal/core/agentmessage",
 		module + "/internal/core/agentdelivery",
 		module + "/internal/services/agentmessages",

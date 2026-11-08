@@ -612,6 +612,8 @@ Service.executeOperatorSend	Public v0 operator message SDK closure for external 
 Service.pushNative	Client.SendMessage dispatches the native Codex peer-context operation without user-turn fallback through this adapter.
 Service.pushProcessCodex	Client.SendMessage dispatches an existing exact process Codex peer-message and reloads its receipt through this adapter.
 Service.terminal	Client.SendMessage preserves known and uncertain terminal receipt projections when transport or persistence fails.
+SetRouteUsage	Public v0 route usage SDK entrypoint for external frontends (Backlog 822 Task 1); the binary does not import pkg/projmux, covered by TestPublicRouteUsageEqualsCLI, TestPublicUsageEqualsCatalogRoute and TestPublicUsageEdges.
+SetUsage	Public v0 route usage SDK entrypoint for external frontends (Backlog 822 Task 1); the binary does not import pkg/projmux, covered by TestPublicRouteUsageEqualsCLI, TestPublicUsageEqualsCatalogRoute and TestPublicUsageEdges.
 SettingItems	Read-only projection of the settings layer declaration retained as the test seam the settings layer guard seeds every front file from.
 SettingsDirectories	Public v0 pure profile/persona directory paths; retained for external SDK consumers and covered by input, no-effect and external consumer tests.
 SettingsInputPaths	Public v0 pure settings input paths (SettingsInputPaths); retained for external SDK consumers and covered by input, store path parity, no-effect and external consumer tests.
@@ -734,8 +736,10 @@ WithSocketName	The injected tmux socket option is retained as an exact routing c
 WithTmuxConfigDigest	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
 WriteKeymapFile	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 WriteKeymapMigrationPreflight	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+WriteRouteUsage	Public v0 route usage SDK entrypoint for external frontends (Backlog 822 Task 1); the binary does not import pkg/projmux, covered by TestPublicRouteUsageEqualsCLI, TestPublicUsageEqualsCatalogRoute and TestPublicUsageEdges.
 WriteShellAppConfig	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
 WriteTmuxAppConfig	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+WriteUsage	Public v0 route usage SDK entrypoint for external frontends (Backlog 822 Task 1); the binary does not import pkg/projmux, covered by TestPublicRouteUsageEqualsCLI, TestPublicUsageEqualsCatalogRoute and TestPublicUsageEdges.
 accountRefusal	Public v0 provider account catalog SDK entrypoint or refusal adapter retained for external consumers; covered by CLI/SDK parity, public field coverage, and GOWORK=off consumer fixtures.
 acknowledgedProof	Shared acknowledged-proof copy and source-binding fence for the public Validate APIs; external consumer, parity and refusal tests preserve the stale-proof contract.
 agentCommand.callProcessForegroundAction	Existing typed process foreground caller retained for private WEB64 consumer compatibility and isolated process receipt parity tests; no additional delivery policy.
