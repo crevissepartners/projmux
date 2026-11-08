@@ -34,7 +34,10 @@ type ProcessChainAgent struct {
 }
 
 // ResolveProcessChainAgent finds the single process Agent whose provider child
-// is the nearest recorded provider child in chain, using this prepared Registry.
+// is the nearest valid matching provider child in chain, using this prepared
+// Registry. A nearer recorded child that fails the identity or binding check
+// does not stop the search; that failure becomes a skip only when no farther
+// valid child is found.
 // chain is the caller's ancestry, nearest first, as ReadProcessAncestry returns
 // it, and chainErr is the error of that same call, passed through unchanged. The
 // caller's user id is read by the SDK (os.Getuid).

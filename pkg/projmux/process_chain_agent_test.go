@@ -119,7 +119,7 @@ func TestProcessChainAgentUnpreparedHandleObservesNothing(t *testing.T) {
 	}
 }
 
-// The four tokens are public spelling; the core sentence is the web's, not the SDK's.
+// The four tokens are public spelling; the core sentence is the caller's, not the SDK's.
 func TestProcessChainSkipSpellingIsPinned(t *testing.T) {
 	for token, want := range map[ProcessChainSkip]string{
 		ProcessChainSkipUnobservable:     "process-chain-unobservable",
