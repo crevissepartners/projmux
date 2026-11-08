@@ -76,7 +76,7 @@ func TestProcessAncestryEqualsLegacyBody(t *testing.T) {
 func TestProcessAncestryFailureReturnsPartialChain(t *testing.T) {
 	boom := errors.New("boom")
 	parents := map[int]int{10: 9, 9: 8, 8: 7, 7: 6, 6: 1}
-	for k := 0; k < 5; k++ {
+	for k := range 5 {
 		pid := 10 - k
 		got, err := processAncestry(10, ancestryFixture(parents, map[int]error{pid: boom}))
 		if !errors.Is(err, boom) || len(got) != k {
