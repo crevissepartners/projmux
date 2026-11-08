@@ -39,7 +39,7 @@ func TestProcessAncestryFailureIsPartialChainWithRefusal(t *testing.T) {
 		}
 		got, err := publicProcessAncestry(50, func(int) ([]metadata.ProcessIdentity, error) { return partial, cause })
 		var refusal *Refusal
-		if !errors.As(err, &refusal) || refusal.Code != CodeProcessAncestryUnobservable || refusal.Code != "process-ancestry-unobservable" {
+		if !errors.As(err, &refusal) || string(refusal.Code) != "process-ancestry-unobservable" {
 			t.Fatalf("k=%d err = %v, want the unobservable refusal", k, err)
 		}
 		if !errors.Is(err, cause) || err.Error() != cause.Error() {
@@ -71,8 +71,11 @@ func TestProcessAncestrySuccessCarriesNoError(t *testing.T) {
 }
 
 func TestProcessAncestryBoundEqualsInternal(t *testing.T) {
-	if ProcessAncestryMaxSteps != localipc.ProcessAncestryMaxSteps || ProcessAncestryMaxSteps != 64 {
-		t.Fatalf("ProcessAncestryMaxSteps = %d", ProcessAncestryMaxSteps)
+	if ProcessAncestryMaxSteps != localipc.ProcessAncestryMaxSteps {
+		t.Fatalf("ProcessAncestryMaxSteps = %d, internal %d", ProcessAncestryMaxSteps, localipc.ProcessAncestryMaxSteps)
+	}
+	if n := ProcessAncestryMaxSteps; n != 64 {
+		t.Fatalf("ProcessAncestryMaxSteps = %d, want 64", n)
 	}
 }
 

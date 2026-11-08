@@ -96,7 +96,7 @@ func TestProcessAncestryBoundsTheChainAtSixtyFourWithoutError(t *testing.T) {
 		parents[pid] = pid + 1
 	}
 	got, err := processAncestry(100, ancestryFixture(parents, nil))
-	if err != nil || len(got) != ProcessAncestryMaxSteps || ProcessAncestryMaxSteps != 64 {
+	if err != nil || len(got) != 64 {
 		t.Fatalf("len=%d err=%v, want 64 and no error", len(got), err)
 	}
 }
