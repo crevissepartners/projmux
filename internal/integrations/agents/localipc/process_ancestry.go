@@ -9,7 +9,7 @@ import (
 var errProcessAncestryPID = errors.New("process ancestry pid invalid")
 
 // ProcessAncestryMaxSteps bounds the parent-chain walk of ProcessAncestry.
-const ProcessAncestryMaxSteps = 64
+const ProcessAncestryMaxSteps = coremetadata.ProcessChainMaxSteps
 
 // ProcessAncestry reads the identity of pid and of each ancestor, nearest first,
 // for at most ProcessAncestryMaxSteps processes. The walk ends at a parent of 1
