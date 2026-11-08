@@ -97,7 +97,7 @@ func TestProcessChainAgentEqualsRegistryJudgment(t *testing.T) {
 			if agent != tc.agent || skip != tc.skip {
 				t.Fatalf("got %+v %q, want %+v %q", agent, skip, tc.agent, tc.skip)
 			}
-			wantAgent, wantPane, wantSkip := loaded.ResolveProcessChainActor(metadataChain(chain), chainErr, uint32(os.Getuid()))
+			wantAgent, wantPane, wantSkip := loaded.ResolveProcessChainActor(metadataChain(chain), chainErr, os.Getuid())
 			if agent.AgentUID != wantAgent || agent.PaneUID != wantPane || string(skip) != string(wantSkip) {
 				t.Fatalf("public %+v %q differs from the Registry judgment %q %q %q", agent, skip, wantAgent, wantPane, wantSkip)
 			}

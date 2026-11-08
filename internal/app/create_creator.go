@@ -463,7 +463,7 @@ func observeProcessChainActor(working *coremetadata.Registry, ancestors func() (
 		return creatorProvenance{}
 	}
 	chain, err := ancestors()
-	agentUID, paneUID, skip := working.ResolveProcessChainActor(chain, err, uint32(os.Getuid()))
+	agentUID, paneUID, skip := working.ResolveProcessChainActor(chain, err, os.Getuid())
 	if skip != "" {
 		return creatorProvenance{skip: string(skip)}
 	}

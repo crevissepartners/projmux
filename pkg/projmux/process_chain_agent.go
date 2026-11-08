@@ -57,7 +57,7 @@ func (p *PreparedRegistrySnapshot) ResolveProcessChainAgent(chain []core.Process
 	for i := range chain {
 		internal[i] = metadata.ProcessIdentity(chain[i])
 	}
-	agentUID, paneUID, skip := p.registry.ResolveProcessChainActor(internal, chainErr, uint32(os.Getuid()))
+	agentUID, paneUID, skip := p.registry.ResolveProcessChainActor(internal, chainErr, os.Getuid())
 	if skip != "" {
 		return ProcessChainAgent{}, ProcessChainSkip(skip)
 	}

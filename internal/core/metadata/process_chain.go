@@ -31,7 +31,7 @@ const (
 // evidence; a partial walk never proves an actor. The result is one of: found
 // (agentUID and paneUID set, skip empty), skipped (both empty, skip set) or
 // nothing to observe (all empty).
-func (r *Registry) ResolveProcessChainActor(chain []ProcessIdentity, chainErr error, uid uint32) (agentUID, paneUID string, skip ProcessChainSkip) {
+func (r *Registry) ResolveProcessChainActor(chain []ProcessIdentity, chainErr error, uid int) (agentUID, paneUID string, skip ProcessChainSkip) {
 	if r == nil {
 		return "", "", ""
 	}
