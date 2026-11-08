@@ -68,7 +68,7 @@ const (
 )
 
 // creatorProcessChainMaxSteps bounds the parent-chain walk.
-const creatorProcessChainMaxSteps = 64
+const creatorProcessChainMaxSteps = localipc.ProcessAncestryMaxSteps
 
 // creatorProvenance is one create invocation's creator observation. It is
 // computed once per create and reused for every Agent a fan-out allocates.
@@ -511,18 +511,5 @@ func observeProcessChainActor(working *coremetadata.Registry, ancestors func() (
 }
 
 func processCreatorAncestry() ([]coremetadata.ProcessIdentity, error) {
-	pid := os.Getpid()
-	chain := make([]coremetadata.ProcessIdentity, 0, 8)
-	for range creatorProcessChainMaxSteps {
-		identity, parent, err := localipc.Process(pid)
-		if err != nil {
-			return chain, err
-		}
-		chain = append(chain, identity)
-		if parent <= 1 || parent == pid {
-			break
-		}
-		pid = parent
-	}
-	return chain, nil
+	return localipc.ProcessAncestry(os.Getpid())
 }
