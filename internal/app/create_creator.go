@@ -62,13 +62,13 @@ const (
 	creatorSkipAnchorQueryFailed    = "anchor-query-failed"
 	creatorSkipServerMismatch       = "anchor-server-mismatch"
 	creatorSkipAnchorPaneMismatch   = "anchor-pane-mismatch"
-	creatorSkipProcessUnobservable  = "process-chain-unobservable"
+	creatorSkipProcessUnobservable  = string(coremetadata.ProcessChainSkipUnobservable)
 	creatorSkipNotPaneDescendant    = "not-pane-descendant"
 	creatorNotRecordedDiagnosticFmt = "creator not recorded: %s\n"
 )
 
 // creatorProcessChainMaxSteps bounds the parent-chain walk.
-const creatorProcessChainMaxSteps = localipc.ProcessAncestryMaxSteps
+const creatorProcessChainMaxSteps = coremetadata.ProcessChainMaxSteps
 
 // creatorProvenance is one create invocation's creator observation. It is
 // computed once per create and reused for every Agent a fan-out allocates.
@@ -440,9 +440,9 @@ func processAncestry() ([]int, error) {
 
 // Process candidates must be provider children, never just a shared host.
 const (
-	creatorSkipProcessIdentity  = "process-child-identity-mismatch"
-	creatorSkipProcessBinding   = "process-binding-mismatch"
-	creatorSkipProcessAmbiguous = "process-child-ambiguous"
+	creatorSkipProcessIdentity  = string(coremetadata.ProcessChainSkipIdentityMismatch)
+	creatorSkipProcessBinding   = string(coremetadata.ProcessChainSkipBindingMismatch)
+	creatorSkipProcessAmbiguous = string(coremetadata.ProcessChainSkipAmbiguous)
 )
 
 func (c *createCommand) observeProcessCreator(working *coremetadata.Registry) creatorProvenance {
@@ -455,59 +455,22 @@ func (c *createCommand) observeProcessCreator(working *coremetadata.Registry) cr
 }
 
 // observeProcessChainActor identifies the nearest live provider child in the
-// caller's process ancestry, bound to exactly one current Agent and Pane.
-// A skip token describes refused evidence; a partial walk never proves an actor.
+// caller's process ancestry, bound to exactly one current Agent and Pane. The
+// judgment is coremetadata.Registry.ResolveProcessChainActor; this only adapts
+// its result to the creator provenance.
 func observeProcessChainActor(working *coremetadata.Registry, ancestors func() ([]coremetadata.ProcessIdentity, error)) creatorProvenance {
 	if working == nil || ancestors == nil {
 		return creatorProvenance{}
 	}
 	chain, err := ancestors()
-	// A partial walk is not evidence: no guessed ancestry on read failure.
-	if err != nil || len(chain) == 0 || len(chain) > creatorProcessChainMaxSteps {
-		// A partially observed provider candidate deserves a stable diagnostic;
-		// an unrelated shell still has no creator claim to report.
-		for _, identity := range chain {
-			for _, pane := range working.Panes {
-				if activation := pane.Status.Activation.Process; activation != nil && activation.Child.PID == identity.PID {
-					return creatorProvenance{skip: creatorSkipProcessUnobservable}
-				}
-			}
-		}
+	agentUID, paneUID, skip := working.ResolveProcessChainActor(chain, err, uint32(os.Getuid()))
+	if skip != "" {
+		return creatorProvenance{skip: string(skip)}
+	}
+	if agentUID == "" {
 		return creatorProvenance{}
 	}
-	var rejected string
-	for _, identity := range chain {
-		var matches []creatorProvenance
-		for _, pane := range working.Panes {
-			activation := pane.Status.Activation.Process
-			if activation == nil || activation.Child.PID != identity.PID {
-				continue
-			}
-			if !identity.Valid() || int64(identity.OwnerUID) != int64(os.Getuid()) || activation.Child != identity {
-				rejected = creatorSkipProcessIdentity
-				continue
-			}
-			binding := activation.Binding
-			current, _, ok := working.CurrentProcessActivation(binding)
-			agent, found := working.Agent(binding.AgentUID)
-			_, missing := pane.HasCondition(coremetadata.ConditionMissingRuntime)
-			if !ok || !found || missing || agent.Status.Phase != coremetadata.PhaseRunning ||
-				binding.PaneUID != pane.Metadata.UID || current != *activation ||
-				pane.Status.ProcessSession == nil || pane.Status.ProcessSession.Binding != binding ||
-				pane.Status.ProcessSession.Provider != agent.Spec.Provider {
-				rejected = creatorSkipProcessBinding
-				continue
-			}
-			matches = append(matches, creatorProvenance{agentUID: binding.AgentUID, paneUID: binding.PaneUID, basis: coremetadata.CreatorBasisProcessChain})
-		}
-		if len(matches) > 1 {
-			return creatorProvenance{skip: creatorSkipProcessAmbiguous}
-		}
-		if len(matches) == 1 {
-			return matches[0]
-		}
-	}
-	return creatorProvenance{skip: rejected}
+	return creatorProvenance{agentUID: agentUID, paneUID: paneUID, basis: coremetadata.CreatorBasisProcessChain}
 }
 
 func processCreatorAncestry() ([]coremetadata.ProcessIdentity, error) {
