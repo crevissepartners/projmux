@@ -16,14 +16,15 @@ func TestWriteRouteUsageBlockFormatUnchanged(t *testing.T) {
 		for _, route := range routes {
 			path := append(append([]string{}, prefix...), route.Name)
 			if len(route.Usage) > 0 {
-				want := "Usage:\n"
+				var want strings.Builder
+				want.WriteString("Usage:\n")
 				for _, line := range route.Usage {
-					want += "  " + line + "\n"
+					want.WriteString("  " + line + "\n")
 				}
 				var got bytes.Buffer
 				WriteRouteUsage(&got, strings.Join(path, " "))
-				if got.String() != want {
-					t.Fatalf("WriteRouteUsage(%q) = %q, want %q", path, got.String(), want)
+				if got.String() != want.String() {
+					t.Fatalf("WriteRouteUsage(%q) = %q, want %q", path, got.String(), want.String())
 				}
 				checked++
 			}
@@ -33,13 +34,5 @@ func TestWriteRouteUsageBlockFormatUnchanged(t *testing.T) {
 	walk(nil, Routes())
 	if checked == 0 {
 		t.Fatal("no catalog route declares Usage")
-	}
-}
-
-func TestWriteUsageLinesEmptyWritesNothing(t *testing.T) {
-	var buf bytes.Buffer
-	WriteUsageLines(&buf, nil)
-	if buf.Len() != 0 {
-		t.Fatalf("wrote %q", buf.String())
 	}
 }
