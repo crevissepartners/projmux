@@ -205,3 +205,51 @@ func TestDeleteCascadeResultIsCopied(t *testing.T) {
 		t.Fatal("a changed result altered the handle")
 	}
 }
+
+// The method collects by owner references like CascadeOf and does not check that
+// the target is an actual resource: a Window whose Project is missing is still
+// listed under that Project uid.
+func TestDeleteCascadeOrphanWindowFollowsCascadeOf(t *testing.T) {
+	win := func(uid string) metadata.OwnerRef { return metadata.OwnerRef{Kind: metadata.KindWindow, UID: uid} }
+	agt := func(uid string) metadata.OwnerRef { return metadata.OwnerRef{Kind: metadata.KindAgent, UID: uid} }
+	prepared, reg := cascadeFixture(t, func(r *metadata.Registry) {
+		orphan := cascadeWindow("window-90", "pane-91")
+		orphan.Metadata.OwnerRef = &metadata.OwnerRef{Kind: metadata.KindProject, UID: "project-absent"}
+		r.Windows = append(r.Windows, orphan)
+		r.Agents = append(r.Agents, cascadeAgent("agent-91", "window-90", "pane-92"))
+		r.Panes = append(r.Panes,
+			cascadePane("pane-91", win("window-90"), metadata.PaneRoleShell, metadata.RuntimeTmux),
+			cascadePane("pane-92", agt("agent-91"), metadata.PaneRoleAgent, metadata.RuntimeTmux),
+		)
+	})
+	got := prepared.DeleteCascade(core.KindProject, "project-absent")
+	want := internalCascade(reg, core.KindProject, "project-absent")
+	if len(got) == 0 {
+		t.Fatalf("an orphan Window cascade was dropped: %+v", got)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DeleteCascade(Project, project-absent) = %+v, internal = %+v", got, want)
+	}
+	if got[0].Kind != core.KindWindow || got[0].UID != "window-90" {
+		t.Fatalf("first item: %+v", got[0])
+	}
+}
+
+// A uid of the wrong kind is collected by owner references too: an Agent lookup
+// with a Window uid returns the Panes that Window owns directly.
+func TestDeleteCascadeWrongKindUIDFollowsCascadeOf(t *testing.T) {
+	prepared, reg := cascadeFixture(t, nil)
+	got := prepared.DeleteCascade(core.KindAgent, "window-02")
+	want := internalCascade(reg, core.KindAgent, "window-02")
+	if len(got) == 0 {
+		t.Fatalf("a wrong-kind uid cascade was dropped: %+v", got)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DeleteCascade(Agent, window-02) = %+v, internal = %+v", got, want)
+	}
+	for _, item := range got {
+		if item.Kind != core.KindPane {
+			t.Fatalf("non-Pane item for an Agent lookup: %+v", item)
+		}
+	}
+}
