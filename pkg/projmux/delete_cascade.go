@@ -7,9 +7,11 @@ import (
 )
 
 // DeleteCascade returns the resources one delete of (kind, uid) removes besides
-// the target itself, as the same items in the same order the delete plan prints
-// as Descendants. The collecting rule has one definition,
-// mutations.CascadeOf; this method only copies its items into core.DeleteResource.
+// the target itself, as the same items in the same order mutations.CascadeOf
+// collects for that one target. The collecting rule has one definition,
+// CascadeOf; this method only copies its items into core.DeleteResource. A
+// delete plan for several Panes at once may append a virtual Window the targets
+// empty together; this method does not include that.
 //
 //   - a Project cascades to each of its Windows, each followed by that Window's
 //     own cascade.
