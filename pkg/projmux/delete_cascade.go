@@ -28,13 +28,14 @@ import (
 // An item carries no Pane runtime. A caller that needs it reads the Pane row
 // from Snapshot() of the same handle.
 //
-// The cascade is collected by the rows' owner references. Whether (kind, uid)
-// is an actual resource of that kind is not checked: when no row names uid as
-// its owner the result is nil, but an orphan row of a degraded handle (a Window
-// whose Project is missing) or a uid of the wrong kind (an Agent lookup with a
-// Window uid) returns the rows that name it, as CascadeOf does. A caller that
-// needs the target to exist checks Snapshot() first. A handle that was not
-// prepared and a kind other than Project, Window, Agent or Pane return nil;
+// The cascade is collected from the rows' owner references, and whether
+// (kind, uid) is an actual resource of that kind is not checked. An orphan row
+// of a degraded handle (a Window whose Project is missing) or a uid of the
+// wrong kind (an Agent lookup with a Window uid) therefore returns the rows
+// that name it, as CascadeOf does; a caller that needs the target to exist
+// checks Snapshot() first. The result is nil exactly when CascadeOf collects
+// nothing for (kind, uid), the virtual Window tail included, and for a handle
+// that was not prepared or a kind other than Project, Window, Agent or Pane;
 // there is no error. The handle's rows are read and not changed, and the caller
 // owns the returned slice.
 func (p *PreparedRegistrySnapshot) DeleteCascade(kind core.Kind, uid string) []core.DeleteResource {
