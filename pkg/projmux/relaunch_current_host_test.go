@@ -91,3 +91,23 @@ func TestRelaunchCurrentHostEmptyForUnpreparedHandleAndMissingAgentDiffersFromIn
 		t.Fatalf("zero handle = %q, want empty", got)
 	}
 }
+
+// A process Pane whose owner is a uid with no Agent row is an orphan. The
+// internal rule does not check for the Agent row, so it answers "process" for
+// that uid; the public method answers "" because there is no Agent row.
+func TestRelaunchCurrentHostEmptyForMissingAgentWithOrphanProcessPane(t *testing.T) {
+	prepared, reg := cascadeFixture(t, func(r *metadata.Registry) {
+		r.Panes = append(r.Panes, cascadePane("pane-rh-orphan",
+			metadata.OwnerRef{Kind: metadata.KindAgent, UID: "agent-rh-gone"},
+			metadata.PaneRoleAgent, metadata.RuntimeProcess))
+	})
+	if _, ok := reg.Agent("agent-rh-gone"); ok {
+		t.Fatal("fixture shape changed: agent-rh-gone has an Agent row")
+	}
+	if got := runtime.RelaunchCurrentHost(reg, "agent-rh-gone"); got != "process" {
+		t.Fatalf("internal rule = %q, want process (it does not check for the Agent row)", got)
+	}
+	if got := prepared.RelaunchCurrentHost("agent-rh-gone"); got != "" {
+		t.Fatalf("RelaunchCurrentHost(agent-rh-gone) = %q, want empty", got)
+	}
+}
