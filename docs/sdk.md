@@ -584,6 +584,14 @@ origin, an empty origin and an operator origin with an empty or invalid client
 are false; kind and client are not trimmed or case-folded. It is the judgement
 behind `Operator` on archive entries (`TestIsOperatorMessageOriginEqualsInternal`).
 
+`projmux.IsClaudeApprovalRequestID(id)` reports whether `id` has the shape of a
+permission request id projmux mints for a Claude Agent: `permission-` followed
+by 16 lowercase hexadecimal digits, with nothing before or after; `id` is not
+trimmed. `AnswerApproval` trims a Claude Agent's `RequestID` and refuses it with
+`CodePermissionNotFound` before it is answered when this is false. A true result
+does not mean the request exists or is pending. It is the rule behind that
+refusal, not a second copy (`TestIsClaudeApprovalRequestIDEqualsInternal`).
+
 `projmux.MessagePayloadSHA256(payload)` returns the SHA-256 of the payload's
 exact bytes as 64 lowercase hex characters, the value a message history entry
 carries in `PayloadSHA256`
