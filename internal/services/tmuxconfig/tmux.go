@@ -238,6 +238,7 @@ func TmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourc
 		// Query the exact global/server array entries before appending. Keep
 		// user entries and historical duplicates; only prevent new ones.
 		`if-shell 'tmux -S #{q:socket_path} show-options -sv terminal-features | grep -Fxq "xterm*:RGB"' '' 'set -as terminal-features ",xterm*:RGB"'`,
+		`if-shell 'tmux -S #{q:socket_path} show-options -sv terminal-features | grep -Fxq "xterm*:hyperlinks"' '' 'set -as terminal-features ",xterm*:hyperlinks"'`,
 		"set -g " + StatusbarDecorationTmuxOption + " " + string(config.NormalizeStatusbarDecoration(string(decorations.Cwd))),
 		"set -g " + StatusbarDecorationCwdTmuxOption + " " + string(config.NormalizeStatusbarDecoration(string(decorations.Cwd))),
 		"set -g " + StatusbarDecorationGitTmuxOption + " " + string(config.NormalizeStatusbarDecoration(string(decorations.Git))),
@@ -377,6 +378,7 @@ func TmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVi
 		// Query the exact global/server array entries before appending. Keep
 		// user entries and historical duplicates; only prevent new ones.
 		`if-shell 'tmux -S #{q:socket_path} show-options -sv terminal-features | grep -Fxq "xterm*:RGB"' '' 'set -as terminal-features ",xterm*:RGB"'`,
+		`if-shell 'tmux -S #{q:socket_path} show-options -sv terminal-features | grep -Fxq "xterm*:hyperlinks"' '' 'set -as terminal-features ",xterm*:hyperlinks"'`,
 		"set -g mouse on",
 		"set -g history-limit 10000",
 		"set -g set-clipboard on",
