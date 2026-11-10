@@ -228,6 +228,9 @@ func encodeDetachedResumeError(encoder *json.Encoder, owner coremetadata.Process
 	if errors.As(err, &recipe) {
 		reply.ErrorDetail, _ = json.Marshal(recipe)
 	}
+	if detail := mutationruntime.ResumeNotPreparedDetail(err); detail != nil && len(reply.ErrorDetail) == 0 {
+		reply.ErrorDetail = detail
+	}
 	_ = encoder.Encode(reply)
 	return err
 }

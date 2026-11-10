@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -14,6 +15,32 @@ import (
 const ResumePreparationStale = "process-resume-preparation-stale"
 
 var ErrResumePreparationStale = errors.New(ResumePreparationStale)
+
+// ResumeNotPrepared is the error text of a prepare worker that finished
+// without leaving a prepared plan.
+const ResumeNotPrepared = "process-resume-not-prepared"
+
+// ErrResumeNotPrepared is the sentinel behind ResumeNotPrepared.
+var ErrResumeNotPrepared = errors.New(ResumeNotPrepared)
+
+// ResumeNotPreparedDetail is the structured marker a failed prepare reply
+// carries in ErrorDetail when err is ErrResumeNotPrepared, so the caller does
+// not have to read the error text. It is nil for any other error.
+func ResumeNotPreparedDetail(err error) json.RawMessage {
+	if !errors.Is(err, ErrResumeNotPrepared) {
+		return nil
+	}
+	detail, _ := json.Marshal(struct{ Code string }{ResumeNotPrepared})
+	return detail
+}
+
+// IsResumeNotPreparedDetail reports whether a reply's ErrorDetail is the
+// marker ResumeNotPreparedDetail writes. Empty, damaged and other detail are
+// false.
+func IsResumeNotPreparedDetail(detail json.RawMessage) bool {
+	var marker struct{ Code string }
+	return len(detail) != 0 && json.Unmarshal(detail, &marker) == nil && marker.Code == ResumeNotPrepared
+}
 
 // ProcessResumePreparation carries evidence only, never a claim credential.
 type ProcessResumePreparation struct {

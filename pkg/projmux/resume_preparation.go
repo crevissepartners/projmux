@@ -208,7 +208,11 @@ func preparationRefusal(err error, agent string, replyDetail json.RawMessage) er
 	err = restoreRecipeDetail(err, replyDetail)
 	var failure *mutationruntime.ProcessResumeFailure
 	if errors.As(err, &failure) {
-		detail := &ResumeProcessError{Code: Code(failure.Code), cause: err}
+		cause := err
+		if mutationruntime.IsResumeNotPreparedDetail(replyDetail) {
+			cause = notPreparedCause{err}
+		}
+		detail := &ResumeProcessError{Code: Code(failure.Code), cause: cause}
 		_ = unregisterCopy(failure.Owner, &detail.Owner)
 		b := failure.Binding
 		_ = unregisterCopy(m.ProcessBinding{HostInstanceID: b.Host, ProjectUID: b.Project, WindowUID: b.Window, AgentUID: b.Agent, PaneUID: b.Pane, Generation: b.Generation, OperationID: b.Operation}, &detail.Binding)
@@ -216,3 +220,11 @@ func preparationRefusal(err error, agent string, replyDetail json.RawMessage) er
 	}
 	return resumeRefusal(err)
 }
+
+// notPreparedCause marks a failure the owner process reported as
+// ErrResumeNotPrepared. Its text is the wrapped error's text, byte for byte.
+type notPreparedCause struct{ error }
+
+func (e notPreparedCause) Unwrap() error { return e.error }
+
+func (e notPreparedCause) Is(target error) bool { return target == ErrResumeNotPrepared }
