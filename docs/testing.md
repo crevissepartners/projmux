@@ -542,10 +542,10 @@ for internal type leaks. Private implementation fields may use internal services
 A separate `example.com` consumer module imports only `pkg/projmux` and exercises
 instruction List/Read/Write/Delete with typed refusals under `GOWORK=off`.
 Positive and negative fixture modules prove the checker accepts public types
-and rejects app/web dependencies and leaked internal aliases; a fixture compile
+and rejects app and external-consumer dependencies and leaked internal aliases; a fixture compile
 failure is not accepted as proof of boundary rejection. Fixtures use local
 `replace` directives to test this checkout, without a workspace file. The negative modules live under `test/sdk/testdata`, and
-the checker's `_test.go` assertions prove app/web rejection without teaching
+the checker's `_test.go` assertions prove that rejection without teaching
 product code an operator client name.
 `pkg/projmux` parity tests compare the SDK to the CLI adapter using isolated
 configuration roots, exact bytes, private permissions, names, limits, missing

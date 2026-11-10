@@ -78,7 +78,7 @@ type installResidueRecord struct {
 	Roles []projmuxProcessRoleVintage `json:"roles,omitempty"`
 	// ProcessOwners is how many live process Agent owners the install
 	// retained. They are counted from the Registry rather than the process
-	// table, because a web-hosted owner runs another executable; which owners
+	// table, because an externally hosted owner runs another executable; which owners
 	// and which builds they run is printed, never recorded.
 	ProcessOwners int `json:"processOwners,omitempty"`
 }

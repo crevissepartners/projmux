@@ -13,7 +13,7 @@ import (
 
 // TestCentralStatusbarDefaultsSDKParityWithLegacyLoaders is acceptance 1, 4 and
 // 5: in every central file state the public read equals the receiver-less app
-// loaders the web reads through, leaf by leaf. Where the strict GetConfig read
+// loaders external consumers read through, leaf by leaf. Where the strict GetConfig read
 // succeeds it returns the same states; where the central file cannot be read
 // or parsed GetConfig keeps its empty value and error while the public read
 // keeps the built-in defaults.

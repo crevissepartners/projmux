@@ -138,7 +138,7 @@ type createCommand struct {
 	now func() time.Time
 	// outcomes records one create.outcome per transaction: its kind, result,
 	// duration, and Registry lock hold. Nil records nothing -- fixtures, the
-	// Project startup helper, and the web API, whose app has no recorder.
+	// Project startup helper, and an external API, whose app has no recorder.
 	outcomes *diagnostics.CreateRecorder
 	// outcomeClock measures those timings. It is separate from now so the
 	// measurement never adds a read to the operation-marker clock a test pins.

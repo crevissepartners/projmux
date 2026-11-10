@@ -356,8 +356,8 @@ with its fixed client name stay operator input under the same rule.
   with the origin's client name, and
   `replyAction` is empty. The other keys are those of an Agent frame. The
   helper proves only the target current, since there is no source route.
-- **Readers.** The web transcript reader shows operator input as a `user`
-  turn with `via` `projmux-web` and no `from`, judged by the `source` fields
+- **Readers.** A transcript reader shows operator input as a `user`
+  turn with a `via` naming the client and no `from`, judged by the `source` fields
   alone. A frame without an origin keeps its existing reading: one whose
   source and target are the same Agent is the operator's own `user` turn.
   `agent message status` labels operator input `source=operator (<client>)` in a trailing text column and prints
@@ -370,7 +370,7 @@ path for user-turn input other than typing into its terminal, and projmux
 forbids sending keys on the Agent input path. The coordination push is the
 only channel that reaches a Claude session without keys, so operator input
 travels as an envelope and is labelled for what it is. Codex needs none of
-this: it already takes web input as a native user turn.
+this: it already takes operator input as a native user turn.
 
 Reply egress uses only documented official `Stop.last_assistant_message` plus
 one delivered Projmux-owned pending record at the same boundary. Push ingress

@@ -170,7 +170,7 @@ func newProjectIntentRealTmuxOn(t *testing.T, ctx context.Context, freshConfig s
 	}
 	store := &fakeResourceStore{registry: registry, dirs: map[string]bool{liveRoot: true, stoppedRoot: true}, now: resourceFixtureClock}
 
-	// A process outside tmux -- a web server -- inherits nothing that names a
+	// A process outside tmux -- a long-lived server -- inherits nothing that names a
 	// server or a Pane.
 	lookupEnv := func(string) string { return "" }
 	runner := shellTmuxExecRunner{env: func() []string { return environment }}

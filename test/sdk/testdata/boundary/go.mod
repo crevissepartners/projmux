@@ -6,7 +6,7 @@ require github.com/crevissepartners/projmux v0.0.0
 
 replace github.com/crevissepartners/projmux => ../../../..
 
-require github.com/crevissepartners/projmux/internal/web/fixture v0.0.0
+require github.com/crevissepartners/projmux/internal/consumer/fixture v0.0.0
 
 require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
@@ -15,4 +15,4 @@ require (
 	golang.org/x/sys v0.46.0 // indirect
 )
 
-replace github.com/crevissepartners/projmux/internal/web/fixture => ./fakeweb
+replace github.com/crevissepartners/projmux/internal/consumer/fixture => ./fakeconsumer

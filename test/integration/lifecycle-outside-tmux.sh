@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Real-tmux boundary for `start project` / `stop project` run outside tmux.
 #
-# With no `$TMUX` (a web request, a script, an IDE terminal) the lifecycle verbs
+# With no `$TMUX` (a long-lived request handler, a script, an IDE terminal) the lifecycle verbs
 # must read liveness from the app server their writes use -- the default app
 # socket `-L projmux` -- and not from tmux's default server. The unit tests pin
 # the route threading against fakes; this script proves the built binary does

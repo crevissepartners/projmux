@@ -172,7 +172,7 @@ func TestNewCodexAgentAttachesToTheInstalledImageWhileTheOldRuntimeDrains(t *tes
 
 // TestCodexMessageFromAnotherBinaryPathReachesTheRuntimeThatGrantedIt is the
 // two-binary case a live machine has: an Agent bound on the runtime binary A
-// started (say the web-dev build) receives a message sent by binary B (say
+// started (say a development build) receives a message sent by binary B (say
 // ~/go/bin/projmux), whose own image keys a different runtime. The sender
 // proves the target's authority on the runtime that granted it, never on the
 // one its own image would start.
@@ -186,7 +186,7 @@ func TestCodexMessageFromAnotherBinaryPathReachesTheRuntimeThatGrantedIt(t *test
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	binaryA, binaryB := filepath.Join(dir, "web-dev", "projmux"), filepath.Join(dir, "go-bin", "projmux")
+	binaryA, binaryB := filepath.Join(dir, "dev-build", "projmux"), filepath.Join(dir, "go-bin", "projmux")
 	for _, path := range []string{binaryA, binaryB} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)

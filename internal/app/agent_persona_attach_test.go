@@ -446,7 +446,7 @@ func TestAgentPersonaAttachRefusesABusyAgentWithoutYesAndLeavesNoTrace(t *testin
 }
 
 // TestAgentPersonaDryRunJSONOfAnIdleAgentNeedsNoConfirmation pins the dry-run
-// JSON field names the web confirmation dialog reads.
+// JSON field names an external confirmation dialog reads.
 func TestAgentPersonaDryRunJSONOfAnIdleAgentNeedsNoConfirmation(t *testing.T) {
 	f := newPersonaAttachFixture(t)
 	f.writePersona(t, "go-reviewer", personaResumeContent)
@@ -639,7 +639,7 @@ func TestAgentPersonaAttachOfTheSamePersonaAndDigestIsUnchanged(t *testing.T) {
 }
 
 // TestAgentPersonaAttachOutsideTmuxStopsThroughTheNamedSocket covers the
-// callers with no tmux client, the web server and an isolated smoke: without
+// callers with no tmux client, a long-lived server and an isolated smoke: without
 // $TMUX the stop needs --socket exactly like `delete pane`, it is refused
 // with no trace when absent, and with it the delete and the resume both run.
 func TestAgentPersonaAttachOutsideTmuxStopsThroughTheNamedSocket(t *testing.T) {

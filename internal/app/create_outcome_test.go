@@ -360,7 +360,7 @@ func TestCreateOutcomeIsAppendedAfterTheRegistryLockIsReleased(t *testing.T) {
 }
 
 // TestCreateOutcomeNilRecorderWritesNothing is acceptance item 5: a nil
-// recorder -- a fixture, the Project startup helper, the web API's app --
+// recorder -- a fixture, the Project startup helper, an external API's app --
 // neither writes nor panics, on success and on failure.
 func TestCreateOutcomeNilRecorderWritesNothing(t *testing.T) {
 	t.Parallel()
@@ -385,7 +385,7 @@ func TestCreateOutcomeNilRecorderWritesNothing(t *testing.T) {
 }
 
 // TestApplicationGraphWiresTheCreateOutcomeRecorder pins the wiring: the app
-// graph's create command records on the invocation recorder, and the web
+// graph's create command records on the invocation recorder, and an external
 // layer's nil-recorder app records nothing.
 func TestApplicationGraphWiresTheCreateOutcomeRecorder(t *testing.T) {
 	home := t.TempDir()

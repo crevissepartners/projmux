@@ -73,7 +73,7 @@ var (
 	// ErrInvalidEnvelope so existing refusal handling still applies.
 	ErrOperatorOriginReply = fmt.Errorf("%w: %s", ErrInvalidEnvelope, ReasonExplicitReplyOperatorOrigin)
 	// ErrOperatorOriginTargetNotClaude refuses operator input for any target
-	// but Claude. Codex already takes web input as a native user turn, so the
+	// but Claude. Codex already takes operator input as a native user turn, so the
 	// envelope path is Claude's alone.
 	ErrOperatorOriginTargetNotClaude = fmt.Errorf("%w: %s", ErrInvalidEnvelope, ReasonOperatorOriginTargetNotClaude)
 	// ErrReplyConversationChanged is ReplyRoutes' refusal of a reply whose

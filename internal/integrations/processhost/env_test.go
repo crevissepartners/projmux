@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// A web server or an agent shell carries another session's provider markers,
+// A long-lived server or an agent shell carries another session's provider markers,
 // tmux client and activation identity. A headless provider keeps only the
 // allowlisted user session and its own provider configuration.
 var inheritedProviderMarkers = []string{

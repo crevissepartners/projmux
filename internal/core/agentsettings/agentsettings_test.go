@@ -213,7 +213,7 @@ func TestAProfileWithoutAnItemDropsTheItemFromItsLayer(t *testing.T) {
 	}
 }
 
-// TestSettingsJSONIsTheShapeRelaunchPrints pins the field names WEB reads.
+// TestSettingsJSONIsTheShapeRelaunchPrints pins the field names external consumers read.
 func TestSettingsJSONIsTheShapeRelaunchPrints(t *testing.T) {
 	got, err := json.Marshal(Settings{
 		Profile: ProfileLayer{Name: "role", Digest: "sha256:p1", Source: "role"},

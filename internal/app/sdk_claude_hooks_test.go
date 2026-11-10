@@ -195,7 +195,7 @@ func TestApplyClaudeHooksMatchesCLIInstall(t *testing.T) {
 	}
 }
 
-// The command's settings names the private web server also reads stay
+// The command's settings names an external server also reads stay
 // callable with their signatures and are the shared claudesettings code.
 func TestClaudeSettingsNamesDelegate(t *testing.T) {
 	settings, err := parseClaudeSettings(`{"hooks":{"Stop":[]}}`, "settings.json")

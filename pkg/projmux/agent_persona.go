@@ -90,7 +90,7 @@ func (c *Client) agentPersonaWithResume(ctx context.Context, q runtime.AgentPers
 		return out, resourceRefusal(err)
 	}
 	target, _ := reg.Agent(resolution.Matches[0].UID)
-	// The web persona route has never admitted a process relaunch.
+	// No external persona route has ever admitted a process relaunch.
 	for _, p := range reg.PanesOf(target.Metadata.UID) {
 		if p.Spec.Runtime.EffectiveKind() == metadata.RuntimeProcess {
 			return out, &Refusal{Code: CodeProcessRelaunchUnsupported, message: "persona attach/detach does not support process Agents"}

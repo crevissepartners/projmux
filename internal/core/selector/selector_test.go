@@ -867,7 +867,7 @@ func TestUnobservedResourcesReportUnknownNotOffline(t *testing.T) {
 	}
 }
 
-// TestIdentityOnlyResolverIsUnchangedByUnknownStatus pins the WEB boundary of
+// TestIdentityOnlyResolverIsUnchangedByUnknownStatus pins the external-consumer boundary of
 // C-2: New builds no observation, so its label and Project queries match the
 // same resources as before unknown existed, and it never reports unknown. A
 // Project there still reads its stored session projection.

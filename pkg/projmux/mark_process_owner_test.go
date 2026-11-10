@@ -70,13 +70,13 @@ func wantRefusal(t *testing.T, err error, code Code, agent string) *Refusal {
 func TestMarkProcessOwnerWritesAndRepeatIsUnchanged(t *testing.T) {
 	c, b, path := ownerMarkFixture(t, "mark-write", true)
 	ctx := context.Background()
-	res, err := c.MarkProcessOwner(ctx, core.MarkProcessOwnerRequest{Binding: b, Owner: "web"})
-	if err != nil || !res.Changed || res.Previous != "" || res.Agent.Metadata.Labels["process-owner"] != "web" {
+	res, err := c.MarkProcessOwner(ctx, core.MarkProcessOwnerRequest{Binding: b, Owner: "dashboard"})
+	if err != nil || !res.Changed || res.Previous != "" || res.Agent.Metadata.Labels["process-owner"] != "dashboard" {
 		t.Fatalf("%+v %v", res, err)
 	}
 	before := registryBytes(t, path)
-	res, err = c.MarkProcessOwner(ctx, core.MarkProcessOwnerRequest{Binding: b, Owner: "web"})
-	if err != nil || res.Changed || res.Previous != "web" || res.Agent.Metadata.Labels["process-owner"] != "web" {
+	res, err = c.MarkProcessOwner(ctx, core.MarkProcessOwnerRequest{Binding: b, Owner: "dashboard"})
+	if err != nil || res.Changed || res.Previous != "dashboard" || res.Agent.Metadata.Labels["process-owner"] != "dashboard" {
 		t.Fatalf("%+v %v", res, err)
 	}
 	if !bytes.Equal(before, registryBytes(t, path)) {
@@ -91,13 +91,13 @@ func TestMarkProcessOwnerForeignRefusedUnlessReplaced(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := registryBytes(t, path)
-	_, err := c.MarkProcessOwner(ctx, core.MarkProcessOwnerRequest{Binding: b, Owner: "web"})
+	_, err := c.MarkProcessOwner(ctx, core.MarkProcessOwnerRequest{Binding: b, Owner: "dashboard"})
 	wantRefusal(t, err, CodeProcessOwnerMarkForeign, b.AgentUID)
 	if !bytes.Equal(before, registryBytes(t, path)) {
 		t.Fatal("foreign refusal changed the Registry")
 	}
-	res, err := c.MarkProcessOwner(ctx, core.MarkProcessOwnerRequest{Binding: b, Owner: "web", ReplaceForeign: true})
-	if err != nil || !res.Changed || res.Previous != "other-host" || res.Agent.Metadata.Labels["process-owner"] != "web" {
+	res, err := c.MarkProcessOwner(ctx, core.MarkProcessOwnerRequest{Binding: b, Owner: "dashboard", ReplaceForeign: true})
+	if err != nil || !res.Changed || res.Previous != "other-host" || res.Agent.Metadata.Labels["process-owner"] != "dashboard" {
 		t.Fatalf("%+v %v", res, err)
 	}
 }
@@ -124,7 +124,7 @@ func TestMarkProcessOwnerStaleBindingTable(t *testing.T) {
 				agent = b.AgentUID
 			}
 			before := registryBytes(t, path)
-			_, err := c.MarkProcessOwner(context.Background(), core.MarkProcessOwnerRequest{Binding: b, Owner: "web", ReplaceForeign: true})
+			_, err := c.MarkProcessOwner(context.Background(), core.MarkProcessOwnerRequest{Binding: b, Owner: "dashboard", ReplaceForeign: true})
 			wantRefusal(t, err, tc.code, agent)
 			if !bytes.Equal(before, registryBytes(t, path)) {
 				t.Fatal("refusal changed the Registry")
@@ -136,7 +136,7 @@ func TestMarkProcessOwnerStaleBindingTable(t *testing.T) {
 func TestMarkProcessOwnerInactiveReservationIsStale(t *testing.T) {
 	c, b, path := ownerMarkFixture(t, "mark-inactive", false)
 	before := registryBytes(t, path)
-	_, err := c.MarkProcessOwner(context.Background(), core.MarkProcessOwnerRequest{Binding: b, Owner: "web"})
+	_, err := c.MarkProcessOwner(context.Background(), core.MarkProcessOwnerRequest{Binding: b, Owner: "dashboard"})
 	wantRefusal(t, err, CodeProcessOwnerMarkStale, b.AgentUID)
 	if !bytes.Equal(before, registryBytes(t, path)) {
 		t.Fatal("refusal changed the Registry")
@@ -154,7 +154,7 @@ func TestMarkProcessOwnerInputRefusals(t *testing.T) {
 	}
 	empty := b
 	empty.OperationID = ""
-	_, err := c.MarkProcessOwner(ctx, core.MarkProcessOwnerRequest{Binding: empty, Owner: "web"})
+	_, err := c.MarkProcessOwner(ctx, core.MarkProcessOwnerRequest{Binding: empty, Owner: "dashboard"})
 	if r := wantRefusal(t, err, CodeSelectorInvalid, ""); r.Field != "MarkProcessOwnerRequest.Binding.OperationID" {
 		t.Fatalf("field %q", r.Field)
 	}
@@ -165,7 +165,7 @@ func TestMarkProcessOwnerCancelledBeforeWrite(t *testing.T) {
 	before := registryBytes(t, path)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := c.MarkProcessOwner(ctx, core.MarkProcessOwnerRequest{Binding: b, Owner: "web"}); !errors.Is(err, context.Canceled) {
+	if _, err := c.MarkProcessOwner(ctx, core.MarkProcessOwnerRequest{Binding: b, Owner: "dashboard"}); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(before, registryBytes(t, path)) {

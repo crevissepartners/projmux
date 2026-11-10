@@ -5,7 +5,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/services/settings"
 )
 
-// The central settings are the settings every front (TUI, web, CLI) shares:
+// The central settings are the settings every front (TUI, external clients, CLI) shares:
 // `[ui] locale` in config.toml, the agent-question-answering file, and the
 // agent-question-window-seconds file. These functions read, validate, and
 // store them from the home and env resolvers alone; they never read a front

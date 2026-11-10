@@ -228,7 +228,7 @@ func TestOperatorSeamRecordsTheClientAndObservesNoPaneChain(t *testing.T) {
 
 func TestOperatorSeamRefusesANameOutsideTheClientRule(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"", "Web", "2x", "a b", strings.Repeat("a", operatorclient.MaxBytes+1)} {
+	for _, name := range []string{"", "Dashboard", "2x", "a b", strings.Repeat("a", operatorclient.MaxBytes+1)} {
 		command := &createCommand{}
 		err := command.recordOperatorCreator(name)
 		if !errors.Is(err, operatorclient.ErrInvalid) || command.operatorCreatorClient != "" {
