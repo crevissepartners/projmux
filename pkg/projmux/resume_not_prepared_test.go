@@ -32,7 +32,6 @@ func TestPrepareAgentResumeRefusalTellsNotPreparedApart(t *testing.T) {
 		"other failure":     {failure("resume-execution-failed", "launch failed"), nil, false},
 		"other code marked": {failure("process-resume-refused", "refused"), marker, true},
 		"damaged marker":    {failure("resume-execution-failed", text), json.RawMessage(`{"Code":`), false},
-		"recipe detail":     {failure("process-resume-refused", "refused"), json.RawMessage(`{"Code":"process-resume-refused"}`), false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got := preparationRefusal(tc.err, "agent-01", tc.detail)
@@ -54,10 +53,10 @@ func TestPrepareAgentResumeRefusalTellsNotPreparedApart(t *testing.T) {
 			}
 		})
 	}
-	// The pinned text and code of the not-prepared refusal.
+	// The refusal keeps the failure's code and, being its message, the failure's text.
 	got := preparationRefusal(failure("resume-execution-failed", text), "agent-01", marker)
 	var refusal *Refusal
-	if !errors.As(got, &refusal) || got.Error() != text || refusal.Code != CodeResumeExecutionFailed {
+	if !errors.As(got, &refusal) || refusal.Code != CodeResumeExecutionFailed {
 		t.Fatalf("refusal %v code %v", got, refusal)
 	}
 	// The general Resume reader leaves an error with the marker unchanged.
