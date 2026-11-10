@@ -13,7 +13,7 @@ func TestIsClaudeApprovalRequestIDEqualsInternal(t *testing.T) {
 		minted bool
 	}
 	var rows []row
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		id, err := agentapproval.NewID()
 		if err != nil {
 			t.Fatal(err)
