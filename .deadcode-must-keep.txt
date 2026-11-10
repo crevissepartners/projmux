@@ -340,6 +340,7 @@ Host.StartCodex	Owned processhost Codex preparation retained for dedicated stdio
 InheritedEnv	Test-only guard API retained: every test package that links the Registry store, a tmux runner, or provider exec code runs behind it.
 InstalledTestEnvReads	Test-only guard API retained: it keeps each package's provider opt-in gates closed over the variables its installed tests read.
 IsAgentProvider	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
+IsClaudeApprovalRequestID	Public v0 value and judgement SDK name for external frontends (Backlog 826 Task 1); the binary does not import pkg/projmux, covered by TestIsClaudeApprovalRequestIDEqualsInternal.
 IsOperatorMessageOrigin	Public v0 value and judgement SDK name for external frontends (Backlog 820 Task 3); the binary does not import pkg/projmux, covered by TestIsOperatorMessageOriginEqualsInternal.
 IsPickerAdapter	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
 IsProjectConfigTrusted	Ambient trust-store read retained as the test seam over the live loadTrustedProjects path.
