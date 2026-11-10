@@ -13,8 +13,8 @@ import (
 // error text stay what a caller saw before the sentinel existed.
 func TestPrepareAgentResumeRefusalTellsNotPreparedApart(t *testing.T) {
 	const text = "process-resume-not-prepared"
-	// The public sentinel, the producer's sentinel and the token the web reads
-	// today are one text.
+	// The public sentinel, the producer's sentinel and the existing error text
+	// are one text.
 	if ErrResumeNotPrepared.Error() != text || mutationruntime.ErrResumeNotPrepared.Error() != text {
 		t.Fatalf("sentinel texts %q %q", ErrResumeNotPrepared.Error(), mutationruntime.ErrResumeNotPrepared.Error())
 	}

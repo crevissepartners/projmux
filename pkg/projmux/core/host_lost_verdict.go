@@ -20,6 +20,12 @@ type ReadAgentHostLostRequest struct {
 // recorded activation's generation and Conversation is the provider
 // conversation of the process session record; Conversation is set only for a
 // candidate.
+//
+// History and LastTermination are, for a candidate, a copy of the process
+// session record's resume history and of the candidate Pane's last termination
+// evidence; they are nil for a non-candidate, and nil for a candidate that
+// records none. Every call returns new copies, so two verdicts are equal under
+// == only when both are nil; compare verdicts with reflect.DeepEqual.
 type AgentHostLostVerdict struct {
 	AgentUID, PaneUID, Conversation string
 	Binding                         ProcessBinding
@@ -27,4 +33,10 @@ type AgentHostLostVerdict struct {
 	HostIdentityAbsent              bool
 	ChildIdentityAbsent             bool
 	ActivationAbsent                bool
+	// History is the candidate's recorded resume history, set only when
+	// Candidate is true and a history is recorded; otherwise nil.
+	History *ProcessResumeHistory
+	// LastTermination is the candidate Pane's recorded termination evidence,
+	// set only when Candidate is true and one is recorded; otherwise nil.
+	LastTermination *TerminationEvidence
 }

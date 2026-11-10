@@ -110,8 +110,11 @@ func TestReadAgentHostLostVerdictTable(t *testing.T) {
 			want := core.AgentHostLostVerdict{AgentUID: "agent-01", PaneUID: "pane-02", Binding: binding, Candidate: tc.candidate, HostIdentityAbsent: tc.h, ChildIdentityAbsent: tc.c, ActivationAbsent: tc.both}
 			if tc.candidate {
 				want.Conversation = "thread-one"
+				internal, _ := mutationruntime.HostLostResumeCandidate(prepared.registry, "agent-01", stub.read)
+				want.History = copiedHistory(t, internal.Record.History)
+				want.LastTermination = copiedTermination(t, internal.Pane.Status.LastTermination)
 			}
-			if got != want {
+			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("verdict\n got %+v\nwant %+v", got, want)
 			}
 			if stub.reads[host.PID] != 1 || stub.reads[child.PID] != 1 || len(stub.reads) != 2 {
@@ -260,7 +263,7 @@ func TestReadAgentHostLostVerdictIsReadOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	again, err := c.ReadAgentHostLostFromPrepared(context.Background(), prepared, req)
-	if err != nil || again != first {
+	if err != nil || !reflect.DeepEqual(again, first) {
 		t.Fatalf("second read %+v %v", again, err)
 	}
 }
@@ -278,5 +281,139 @@ func TestReadAgentHostLostVerdictCancelDuringKernelRead(t *testing.T) {
 	got, err := c.ReadAgentHostLostFromPrepared(ctx, prepared, core.ReadAgentHostLostRequest{Ref: "uid:agent-01"})
 	if !errors.Is(err, context.Canceled) || got != (core.AgentHostLostVerdict{}) {
 		t.Fatalf("%+v %v", got, err)
+	}
+}
+
+func copiedHistory(t *testing.T, h *metadata.ProcessResumeHistory) *core.ProcessResumeHistory {
+	t.Helper()
+	var out *core.ProcessResumeHistory
+	if err := unregisterCopy(h, &out); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func copiedTermination(t *testing.T, e *metadata.TerminationEvidence) *core.TerminationEvidence {
+	t.Helper()
+	var out *core.TerminationEvidence
+	if err := unregisterCopy(e, &out); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// A candidate carries the history and last termination of the internal
+// candidate, each present or absent on its own.
+func TestReadAgentHostLostVerdictHistoryAndLastTermination(t *testing.T) {
+	code := 137
+	termination := &metadata.TerminationEvidence{Source: "supervisor", Classification: "exit", PaneUID: "pane-02", AgentUID: "agent-01", Generation: "gen-one", ExitCode: &code, Signal: "KILL", OperationID: "op-one"}
+	for _, tc := range []struct {
+		name                 string
+		history, termination bool
+	}{
+		{"neither", false, false},
+		{"history only", true, false},
+		{"termination only", false, true},
+		{"both", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := hostLostRegistry(t, func(reg *metadata.Registry) {
+				for i := range reg.Panes {
+					s := reg.Panes[i].Status.ProcessSession
+					if s == nil {
+						continue
+					}
+					if tc.history && s.History == nil {
+						s.History = &metadata.ProcessResumeHistory{SessionID: "thread-one", InterruptedTurnID: "turn-one"}
+					}
+					if !tc.history {
+						s.History = nil
+					}
+					reg.Panes[i].Status.LastTermination = nil
+					if tc.termination {
+						e := *termination
+						reg.Panes[i].Status.LastTermination = &e
+					}
+				}
+			})
+			c, _ := graphFixtureClient(t, raw)
+			stub := identityStub{reads: map[int]int{}}
+			c.processIdentity = stub.read
+			prepared, _ := mustPrepare(t, c, nil)
+			got, err := c.ReadAgentHostLostFromPrepared(context.Background(), prepared, core.ReadAgentHostLostRequest{Ref: "uid:agent-01"})
+			if err != nil || !got.Candidate {
+				t.Fatalf("%+v %v", got, err)
+			}
+			internal, ok := mutationruntime.HostLostResumeCandidate(prepared.registry, "agent-01", stub.read)
+			if !ok {
+				t.Fatal("internal candidate missing")
+			}
+			if (got.History != nil) != tc.history || (got.LastTermination != nil) != tc.termination {
+				t.Fatalf("presence %+v", got)
+			}
+			if !reflect.DeepEqual(got.History, copiedHistory(t, internal.Record.History)) || !reflect.DeepEqual(got.LastTermination, copiedTermination(t, internal.Pane.Status.LastTermination)) {
+				t.Fatalf("differs from the internal candidate: %+v", got)
+			}
+		})
+	}
+}
+
+// A non-candidate carries neither field, even when the rows record them.
+func TestReadAgentHostLostVerdictNonCandidateHasNoHistory(t *testing.T) {
+	raw := hostLostRegistry(t, func(reg *metadata.Registry) {
+		for i := range reg.Panes {
+			reg.Panes[i].Status.LastTermination = &metadata.TerminationEvidence{Source: "supervisor", Classification: "exit"}
+		}
+	})
+	_, child := hostLostIdentities(t, raw)
+	host, _ := hostLostIdentities(t, raw)
+	c, _ := graphFixtureClient(t, raw)
+	stub := identityStub{alive: map[int]metadata.ProcessIdentity{host.PID: host, child.PID: child}, reads: map[int]int{}}
+	c.processIdentity = stub.read
+	prepared, _ := mustPrepare(t, c, nil)
+	got, err := c.ReadAgentHostLostFromPrepared(context.Background(), prepared, core.ReadAgentHostLostRequest{Ref: "uid:agent-01"})
+	if err != nil || got.Candidate || got.History != nil || got.LastTermination != nil {
+		t.Fatalf("live host %+v %v", got, err)
+	}
+}
+
+// The returned pointers are copies: changing them changes neither the handle
+// nor the next verdict.
+func TestReadAgentHostLostVerdictCopiesAreIndependent(t *testing.T) {
+	raw := hostLostRegistry(t, func(reg *metadata.Registry) {
+		for i := range reg.Panes {
+			if reg.Panes[i].Status.ProcessSession != nil {
+				reg.Panes[i].Status.LastTermination = &metadata.TerminationEvidence{Source: "supervisor", Classification: "exit", Signal: "KILL"}
+			}
+		}
+	})
+	c, _ := graphFixtureClient(t, raw)
+	stub := identityStub{reads: map[int]int{}}
+	c.processIdentity = stub.read
+	prepared, _ := mustPrepare(t, c, nil)
+	req := core.ReadAgentHostLostRequest{Ref: "uid:agent-01"}
+	first, err := c.ReadAgentHostLostFromPrepared(context.Background(), prepared, req)
+	if err != nil || first.History == nil || first.LastTermination == nil {
+		t.Fatalf("%+v %v", first, err)
+	}
+	before, err := c.ReadAgentHostLostFromPrepared(context.Background(), prepared, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle := prepared.registry
+	snapshot, err := json.Marshal(handle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.History.SessionID = "changed"
+	first.History.Expired = append(first.History.Expired, core.ProcessRecordedControl{ID: "x"})
+	first.LastTermination.Signal = "changed"
+	after, err := c.ReadAgentHostLostFromPrepared(context.Background(), prepared, req)
+	if err != nil || !reflect.DeepEqual(after, before) {
+		t.Fatalf("next verdict changed %+v %v", after, err)
+	}
+	again, err := json.Marshal(prepared.registry)
+	if err != nil || string(again) != string(snapshot) {
+		t.Fatal("handle registry changed")
 	}
 }
