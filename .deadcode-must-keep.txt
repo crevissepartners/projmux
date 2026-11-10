@@ -345,6 +345,7 @@ IsOperatorMessageOrigin	Public v0 value and judgement SDK name for external fron
 IsPickerAdapter	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
 IsProjectConfigTrusted	Ambient trust-store read retained as the test seam over the live loadTrustedProjects path.
 IsResponseError	Typed server-refusal classifier retained for dedicated processhost control until public activation supplies an importer.
+IsResumeNotPreparedDetail	Public prepared Resume not-prepared marker reader (Backlog 827 Task 2); the binary does not import pkg/projmux, covered by TestPrepareAgentResumeRefusalTellsNotPreparedApart and TestResumeNotPreparedDetailMarksOnlyTheSentinel.
 IsSharedOutputMode	Closed shared -o catalog membership predicate retained as the seam that keeps route-local projections out of the shared enum.
 IsUsageError	Public v0 value and judgement SDK name for external frontends (Backlog 802 Task 1); the binary does not import pkg/projmux, covered by TestStatusbarValuesEqualInternal and TestIsUsageErrorEqualsInternal.
 IsolatedPane.Alive	Test-only installed qualification API retained for exact pane-dead and socket-identity observation.
@@ -918,6 +919,8 @@ newMemoPromptPlanner	Public v0 admission-free Agent settings SDK entrypoint or i
 newProcessAttentionStore	Internal process attention seam retained for generation/store/consumer fixture proof before foreground activation; remove this entry when that caller ships.
 nonEmpty	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 normalizeProviderToken	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
+notPreparedCause.Is	Public ErrResumeNotPrepared match through the Refusal chain, reached by errors.Is; covered by TestPrepareAgentResumeRefusalTellsNotPreparedApart.
+notPreparedCause.Unwrap	Public not-prepared cause keeps errors.As of ResumeProcessError and the wrapped failure; covered by TestPrepareAgentResumeRefusalTellsNotPreparedApart.
 notificationRefusal	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 notifyCommand.buildNotifyLiveReport	Fallback-locale entry point of buildNotifyLiveReportLocale retained as the notify row classification seam.
 notifySidebarEntriesWithLive	Fallback-locale collapsed-entry projection of the live notify sidebar read model retained as the classification seam.

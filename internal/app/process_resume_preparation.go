@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"reflect"
 
 	m "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -104,7 +103,7 @@ func runResumePreparation(ctx context.Context, c *agentCommand, wire processDeta
 		return zero, nil, err
 	}
 	if result.Prepared == nil || result.Owned != nil || result.State != agentProcessPrepared {
-		return zero, nil, errors.New("process-resume-not-prepared")
+		return zero, nil, mutationruntime.ErrResumeNotPrepared
 	}
 	return c.readPreparedResume(ctx, opts)
 }

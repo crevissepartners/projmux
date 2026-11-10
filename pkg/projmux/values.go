@@ -4,6 +4,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 // ErrCodexThreadPolicyMismatch is the sentinel of a Codex thread whose
@@ -13,6 +14,13 @@ import (
 // the requested policy would silently drop the capability the profile asked
 // for.
 var ErrCodexThreadPolicyMismatch = codexappserver.ErrPolicyMismatch
+
+// ErrResumeNotPrepared is the sentinel of a PrepareAgentResume whose worker
+// finished without leaving a prepared plan. The refusal keeps the code
+// CodeResumeExecutionFailed and its error text, process-resume-not-prepared;
+// errors.Is finds the sentinel through the *Refusal's Unwrap chain without
+// matching that text. Other resume execution failures are not matched.
+var ErrResumeNotPrepared = mutationruntime.ErrResumeNotPrepared
 
 // CodexThreadPolicyMismatchReason is the stable reason token that starts the
 // error text of such a thread.
