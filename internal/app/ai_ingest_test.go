@@ -1239,6 +1239,47 @@ func TestIngestClaudeStopUsesTranscriptOrGenericFallback(t *testing.T) {
 	}
 }
 
+func TestIngestClaudeStopPrefersLastAssistantMessage(t *testing.T) {
+	staleTranscript := filepath.Join(t.TempDir(), "transcript.jsonl")
+	if err := os.WriteFile(staleTranscript, []byte(`{"role":"assistant","content":[{"type":"text","text":"previous reply"}]}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name       string
+		field      string
+		transcript string
+		want       string
+	}{
+		{name: "field wins over stale transcript", field: `"last_assistant_message": "this turn reply",`, transcript: staleTranscript, want: "this turn reply"},
+		{name: "hyphenated alias wins over stale transcript", field: `"last-assistant-message": "this turn reply",`, transcript: staleTranscript, want: "this turn reply"},
+		{name: "blank field falls back to transcript", field: `"last_assistant_message": "  \n ",`, transcript: staleTranscript, want: "previous reply"},
+		{name: "blank field without transcript is generic", field: `"last_assistant_message": "  ",`, want: "Ready"},
+		{name: "field without transcript", field: `"last_assistant_message": "only field",`, want: "only field"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &stubNotifyStore{}
+			cmd := testAICommand(t.TempDir())
+			cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+			cmd.stdin = strings.NewReader(`{
+				"hook_event_name": "Stop",
+				"session_id": "claude-session",
+				"cwd": "/repo/projmux",
+				` + tc.field + `
+				"transcript_path": "` + tc.transcript + `"
+			}`)
+			cmd.readCommand = claudeIngestReadCommand("%7")
+			cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
+			if err := cmd.Run([]string{"ingest", "claude-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run ingest claude-hook Stop error = %v", err)
+			}
+			if len(store.pushed) != 1 || store.pushed[0].Text != tc.want || store.pushed[0].Metadata["category"] != "response_complete" {
+				t.Fatalf("pushed = %#v, want text %q", store.pushed, tc.want)
+			}
+		})
+	}
+}
+
 func TestIngestClaudeNotificationMapsInputReady(t *testing.T) {
 	home := t.TempDir()
 	store := &stubNotifyStore{}

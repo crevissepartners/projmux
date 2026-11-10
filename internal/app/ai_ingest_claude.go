@@ -29,6 +29,7 @@ type claudeHookPayload struct {
 	SessionID               string
 	CWD                     string
 	TranscriptPath          string
+	LastAssistantMessage    string
 	NotificationType        string
 	Message                 string
 	Prompt                  string
@@ -648,6 +649,7 @@ func parseClaudeHookPayload(data []byte) (claudeHookPayload, error) {
 		SessionID:        firstString(raw, "session_id", "session-id"),
 		CWD:              firstString(raw, "cwd", "workspace", "project_dir"),
 		TranscriptPath:   firstString(raw, "transcript_path", "transcriptPath"),
+		LastAssistantMessage: firstString(raw, "last_assistant_message", "last-assistant-message"),
 		NotificationType: firstString(raw, "notification_type", "notificationType"),
 		Message:          firstString(raw, "message", "text"),
 		Prompt:           firstString(raw, "prompt", "user_prompt"),
