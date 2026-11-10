@@ -50,36 +50,36 @@ func appLightThemeConfig() theme.ThemeConfig {
 // config contract additions update every digest together.
 var brightPhase2ConfigGoldens = map[string]map[string]string{
 	"fallback": {
-		"standalone": "ad5b4ee0e83de769d0890dff03c9c21e1c432eb1c86eb303d530ffd83198d822",
-		"app":        "fa00bcdbe9447184bcd9203d5d414cf0efd563ec1e414059dd7c308c5242934d",
+		"standalone": "7f46bb2932f8561783fa756ac71da5d30278c1734dc04e01d39f5fb1f963696d",
+		"app":        "c1895ec9afc87fdafc80ef5907ab8b00641f22d7b4431cd1b09c8f62c11fb931",
 	},
 	"projmux": {
-		"standalone": "346a2fd7c926f97fd6bd040e1203bd4ced466854f617a32ffd013d324f58f633",
-		"app":        "efdc8dc37dabbe65af3fa9291e1ac9405690e4b858e3c6ec5d0b631e8f4337dd",
+		"standalone": "55ebf28c5c01079f204561fdbcfbb4fa75ea3203be78c23c14d1258f83e21d77",
+		"app":        "456cbfe5621a37a792a6baa96b8568c5ff7cf251638f5fc37bebd8a7c8b381f7",
 	},
 	"blue-hour": {
-		"standalone": "d651cbb95d9a448749fadd2db2b103f2becc6b7bedc50cc0b634cfa513b6a10f",
-		"app":        "e01f959d448edcd84b3af13cb92a3592669a04ca89e0097ed6423da4e9c32645",
+		"standalone": "5bf655c0b6674eff2eb4c072ae471e0309e8a11c8d885ce99f2d0599055c1511",
+		"app":        "70a5f316253b1ea729ff55aed87ffb015320b3412dc8268deac327b0d6897e1b",
 	},
 	"carbon-violet": {
-		"standalone": "f1f54bf8011f51d15c09c02a79ce1e4fd08aa12ed586af9be379c24fb2b73d47",
-		"app":        "8a0765d77e55dd140c093ae9e996bd32ebbd45d1489a11f85d53678c74f617c0",
+		"standalone": "a9f6219468584fe5e27a8e0787ed546992101aff97accc9b1e6d85db8ab93a8f",
+		"app":        "25cf64e2c1a1879d6f9528903f2dae0125631b26d924d85dec3e7bb74acc33dc",
 	},
 	"ember": {
-		"standalone": "bb87a3f0dc3abc9f70113e4780150f573ad2ef6ee4282f86afce7956524c7a78",
-		"app":        "e2caccfbc609d95a147d0c926176f1c2409b0d97c7d31c70dc9c9d8c64af0b3f",
+		"standalone": "36447e5bfc1db12fa33a6e2bef02006cc715f71d508d3c4c99a7d382566baa1d",
+		"app":        "6e025c7c5d727ebfb766ba2e92bce1f78cab9a2874d753dd68582d0f1cac0d6c",
 	},
 	"forest": {
-		"standalone": "38b2ed97098df2159a57dedc053e6583364abaaf593a5f9064943c3493b7d7ee",
-		"app":        "c8f3c7e2d1ae165c724cb76f9e66169768b92421156b8a3ae64a66b77470dd34",
+		"standalone": "24543c420f0b23f9e206c648fd69975fa11bf5e543b2a0df6266caefe389422b",
+		"app":        "6d797e0170b8ee4f553ed1af7c7e2e199129e9cbe568fb3b8e3c84adbfadba55",
 	},
 	"rose": {
-		"standalone": "638e596042dfc59a15055a5587b987284a04bcbb67a7f9f4fdadf7782301c760",
-		"app":        "49eaabbaaddbfb8b1b36fe003fc44ecc5ee6e8dd72bbde397f9a2012432426cb",
+		"standalone": "6024ff353356006a780805a80bd08143413f5ded38802cc9f6cb27556b00eb60",
+		"app":        "df081f6c1c1b15ef8e98c0665d884ad097de89fcae93ad8a734133a7d572bc80",
 	},
 	"high-contrast": {
-		"standalone": "3cd79610eb177c3be0148a38b79139bc17bc46820b1125e21723053c5bd0a229",
-		"app":        "1431410e365c753ac87f81f855441872965610a02177167b46f358606f526f16",
+		"standalone": "27d94d2f66a99e9bc51131edb10208af75ea9db601384c353b0a35ef2314ec94",
+		"app":        "13072896841d1db3c03ddf56bbf9ea8815c8f0181f987c65ed28a87e4f6d6a04",
 	},
 }
 
@@ -109,7 +109,11 @@ var brightPhase2ConfigGoldens = map[string]map[string]string{
 // Both configs were rebaselined again for exact-entry conditional appends to
 // terminal-features and (app only) update-environment. Only those generated
 // option commands and the embedded app config digest changed; theme rendering
-// itself is unchanged, which is what this test still pins.
+// itself is unchanged, which is what this test still pins. Every digest was
+// rebaselined once more for the xterm*:hyperlinks terminal-features line that
+// both configs add directly after the RGB line (that line, twice in the app
+// config because it embeds the standalone one, and the embedded and trailing
+// config digests are the only changed lines).
 func TestBrightPhase2GeneratedConfigByteIdentity(t *testing.T) {
 	t.Parallel()
 
