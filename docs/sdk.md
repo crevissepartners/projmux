@@ -610,7 +610,7 @@ are gone while its activation remains; this check is for a Pane already Offline
 whose `LastTermination` must match its binding
 (`TestMatchesProcessWaitEqualsInternal`).
 
-All three read nothing, need no Client and never fail.
+All four read nothing, need no Client and never fail.
 
 ### Owner-private socket listener
 
