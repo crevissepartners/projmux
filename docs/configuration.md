@@ -382,7 +382,9 @@ the exact hex value; 256-color mappings are retained only for renderer paths
 that explicitly require xterm `colourN`/ANSI-256 colors. Generated tmux config
 adds `xterm*:RGB` to `terminal-features` so capable terminals render exact
 theme hex values instead of tmux downsampling them to the nearest 256-color
-entry. The theme has no font keys: `font_family` and `font_size` were removed in
+entry. It also adds `xterm*:hyperlinks` (tmux 3.4 or newer) so OSC 8 links
+emitted by programs in a pane reach the outer terminal and are clickable there;
+a client that is already attached must reattach to pick this up. The theme has no font keys: `font_family` and `font_size` were removed in
 Phase 1b because tmux/ANSI rendering cannot force a terminal font. Leftover font
 keys in an existing config are accepted but ignored. See `docs/upgrading.md`.
 

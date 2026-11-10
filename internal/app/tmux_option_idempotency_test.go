@@ -80,8 +80,11 @@ func TestGeneratedTmuxOptionUpdatesAreIdempotent(t *testing.T) {
 			if got := read("-g", "update-environment"); !slices.Equal(got, firstEnv) {
 				t.Errorf("update-environment accumulated: first %q, third %q", firstEnv, got)
 			}
-			if !slices.Equal(firstFeatures, beforeFeatures) {
-				t.Errorf("existing feature entries changed: before %q, after %q", beforeFeatures, firstFeatures)
+			// Only the missing hyperlinks entry may be appended; every existing
+			// entry (RGB exact, similar, user, duplicates) keeps its place.
+			wantFirst := append(slices.Clone(beforeFeatures), "xterm*:hyperlinks")
+			if !slices.Equal(firstFeatures, wantFirst) {
+				t.Errorf("existing feature entries changed: before %q, after %q, want %q", beforeFeatures, firstFeatures, wantFirst)
 			}
 			if len(firstEnv) < len(beforeEnv) || !slices.Equal(firstEnv[:len(beforeEnv)], beforeEnv) {
 				t.Errorf("default/user env entries changed: before %q, after %q", beforeEnv, firstEnv)
@@ -99,12 +102,12 @@ func TestGeneratedTmuxOptionUpdatesAreIdempotent(t *testing.T) {
 					}
 				}
 			}
-			// A similar feature pattern is not an exact entry. A missing RGB entry
-			// must be appended once, without replacing the similar/user entries.
-			run("set", "-s", "terminal-features", "user*:RGB,xterm*:RGB-extra,prefix-xterm*:RGB")
+			// A similar feature pattern is not an exact entry. Missing RGB and
+			// hyperlinks entries must each be appended once, without replacing the similar/user entries.
+			run("set", "-s", "terminal-features", "user*:RGB,xterm*:RGB-extra,prefix-xterm*:RGB,xterm*:hyperlinks-extra")
 			run("source-file", path)
 			missingFeatures := read("-s", "terminal-features")
-			wantFeatures := []string{"user*:RGB", "xterm*:RGB-extra", "prefix-xterm*:RGB", "xterm*:RGB"}
+			wantFeatures := []string{"user*:RGB", "xterm*:RGB-extra", "prefix-xterm*:RGB", "xterm*:hyperlinks-extra", "xterm*:RGB", "xterm*:hyperlinks"}
 			if !slices.Equal(missingFeatures, wantFeatures) {
 				t.Errorf("missing exact feature: got %q, want %q", missingFeatures, wantFeatures)
 			}
