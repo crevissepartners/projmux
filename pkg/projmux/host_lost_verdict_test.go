@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"sort"
 	"testing"
+	"time"
 
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
@@ -110,7 +111,12 @@ func TestReadAgentHostLostVerdictTable(t *testing.T) {
 			want := core.AgentHostLostVerdict{AgentUID: "agent-01", PaneUID: "pane-02", Binding: binding, Candidate: tc.candidate, HostIdentityAbsent: tc.h, ChildIdentityAbsent: tc.c, ActivationAbsent: tc.both}
 			if tc.candidate {
 				want.Conversation = "thread-one"
-				internal, _ := mutationruntime.HostLostResumeCandidate(prepared.registry, "agent-01", stub.read)
+			}
+			// The expectation reads the internal candidate with its own counter
+			// so the one-read-per-pid check below stays about the verdict.
+			if tc.candidate {
+				fresh := identityStub{alive: stub.alive, reused: stub.reused, reads: map[int]int{}}
+				internal, _ := mutationruntime.HostLostResumeCandidate(prepared.registry, "agent-01", fresh.read)
 				want.History = copiedHistory(t, internal.Record.History)
 				want.LastTermination = copiedTermination(t, internal.Pane.Status.LastTermination)
 			}
@@ -305,8 +311,7 @@ func copiedTermination(t *testing.T, e *metadata.TerminationEvidence) *core.Term
 // A candidate carries the history and last termination of the internal
 // candidate, each present or absent on its own.
 func TestReadAgentHostLostVerdictHistoryAndLastTermination(t *testing.T) {
-	code := 137
-	termination := &metadata.TerminationEvidence{Source: "supervisor", Classification: "exit", PaneUID: "pane-02", AgentUID: "agent-01", Generation: "gen-one", ExitCode: &code, Signal: "KILL", OperationID: "op-one"}
+	termination := &metadata.TerminationEvidence{Source: metadata.TerminationSourceReconcile, Classification: metadata.TerminationUnknown, ObservedAt: time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC), PaneUID: "pane-02", AgentUID: "agent-01", Generation: "gen-earlier", OperationID: "op-earlier"}
 	for _, tc := range []struct {
 		name                 string
 		history, termination bool
@@ -362,7 +367,7 @@ func TestReadAgentHostLostVerdictHistoryAndLastTermination(t *testing.T) {
 func TestReadAgentHostLostVerdictNonCandidateHasNoHistory(t *testing.T) {
 	raw := hostLostRegistry(t, func(reg *metadata.Registry) {
 		for i := range reg.Panes {
-			reg.Panes[i].Status.LastTermination = &metadata.TerminationEvidence{Source: "supervisor", Classification: "exit"}
+			reg.Panes[i].Status.LastTermination = &metadata.TerminationEvidence{Source: metadata.TerminationSourceReconcile, Classification: metadata.TerminationUnknown, PaneUID: "pane-02"}
 		}
 	})
 	_, child := hostLostIdentities(t, raw)
@@ -383,7 +388,7 @@ func TestReadAgentHostLostVerdictCopiesAreIndependent(t *testing.T) {
 	raw := hostLostRegistry(t, func(reg *metadata.Registry) {
 		for i := range reg.Panes {
 			if reg.Panes[i].Status.ProcessSession != nil {
-				reg.Panes[i].Status.LastTermination = &metadata.TerminationEvidence{Source: "supervisor", Classification: "exit", Signal: "KILL"}
+				reg.Panes[i].Status.LastTermination = &metadata.TerminationEvidence{Source: metadata.TerminationSourceReconcile, Classification: metadata.TerminationUnknown, PaneUID: "pane-02", Generation: "gen-earlier", OperationID: "op-earlier"}
 			}
 		}
 	})
@@ -407,7 +412,7 @@ func TestReadAgentHostLostVerdictCopiesAreIndependent(t *testing.T) {
 	}
 	first.History.SessionID = "changed"
 	first.History.Expired = append(first.History.Expired, core.ProcessRecordedControl{ID: "x"})
-	first.LastTermination.Signal = "changed"
+	first.LastTermination.OperationID = "changed"
 	after, err := c.ReadAgentHostLostFromPrepared(context.Background(), prepared, req)
 	if err != nil || !reflect.DeepEqual(after, before) {
 		t.Fatalf("next verdict changed %+v %v", after, err)
