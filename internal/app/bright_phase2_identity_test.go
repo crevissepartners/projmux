@@ -111,7 +111,9 @@ var brightPhase2ConfigGoldens = map[string]map[string]string{
 // option commands and the embedded app config digest changed; theme rendering
 // itself is unchanged, which is what this test still pins. Every digest was
 // rebaselined once more for the xterm*:hyperlinks terminal-features line that
-// both configs add directly after the RGB line (that line is the only change).
+// both configs add directly after the RGB line (that line, twice in the app
+// config because it embeds the standalone one, and the embedded and trailing
+// config digests are the only changed lines).
 func TestBrightPhase2GeneratedConfigByteIdentity(t *testing.T) {
 	t.Parallel()
 

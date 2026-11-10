@@ -49,20 +49,23 @@ func TestGeneratedConfigsEnableHyperlinksTerminalFeatureAfterRGB(t *testing.T) {
 
 	const rgb = `if-shell 'tmux -S #{q:socket_path} show-options -sv terminal-features | grep -Fxq "xterm*:RGB"' '' 'set -as terminal-features ",xterm*:RGB"'`
 	const hyperlinks = `if-shell 'tmux -S #{q:socket_path} show-options -sv terminal-features | grep -Fxq "xterm*:hyperlinks"' '' 'set -as terminal-features ",xterm*:hyperlinks"'`
-	for name, output := range map[string]string{
-		"standalone": TmuxStandaloneConfig("/tmp/proj mux/bin/projmux", config.StatusbarDecorationOff),
-		"app":        TmuxAppConfig("/tmp/proj mux/bin/projmux", "/bin/sh", config.StatusbarDecorationOff),
+	// The app config embeds the whole standalone config, so it carries each
+	// pair twice; the exact-entry guard makes the second one a no-op.
+	for _, tc := range []struct {
+		name   string
+		output string
+		want   int
+	}{
+		{"standalone", TmuxStandaloneConfig("/tmp/proj mux/bin/projmux", config.StatusbarDecorationOff), 1},
+		{"app", TmuxAppConfig("/tmp/proj mux/bin/projmux", "/bin/sh", config.StatusbarDecorationOff), 2},
 	} {
+		name, output := tc.name, tc.output
 		lines := strings.Split(output, "\n")
-		// The app config already carries the RGB line more than once (the
-		// guard makes that harmless); each occurrence must be followed by
-		// exactly one hyperlinks line, and no hyperlinks line may stand alone.
-		rgbCount := strings.Count(output, rgb)
-		if rgbCount == 0 {
-			t.Fatalf("%s config has no RGB line:\n%s", name, output)
+		if count := strings.Count(output, rgb); count != tc.want {
+			t.Fatalf("%s config has the RGB line %d times, want %d:\n%s", name, count, tc.want, output)
 		}
-		if count := strings.Count(output, hyperlinks); count != rgbCount {
-			t.Fatalf("%s config has the hyperlinks line %d times, want %d (once per RGB line):\n%s", name, count, rgbCount, output)
+		if count := strings.Count(output, hyperlinks); count != tc.want {
+			t.Fatalf("%s config has the hyperlinks line %d times, want %d:\n%s", name, count, tc.want, output)
 		}
 		for at, line := range lines {
 			if line == rgb && (at+1 >= len(lines) || lines[at+1] != hyperlinks) {
