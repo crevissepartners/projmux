@@ -54,15 +54,20 @@ func TestGeneratedConfigsEnableHyperlinksTerminalFeatureAfterRGB(t *testing.T) {
 		"app":        TmuxAppConfig("/tmp/proj mux/bin/projmux", "/bin/sh", config.StatusbarDecorationOff),
 	} {
 		lines := strings.Split(output, "\n")
-		if count := strings.Count(output, rgb); count != 1 {
-			t.Fatalf("%s config has the RGB line %d times, want once:\n%s", name, count, output)
+		// The app config already carries the RGB line more than once (the
+		// guard makes that harmless); each occurrence must be followed by
+		// exactly one hyperlinks line, and no hyperlinks line may stand alone.
+		rgbCount := strings.Count(output, rgb)
+		if rgbCount == 0 {
+			t.Fatalf("%s config has no RGB line:\n%s", name, output)
 		}
-		if count := strings.Count(output, hyperlinks); count != 1 {
-			t.Fatalf("%s config has the hyperlinks line %d times, want once:\n%s", name, count, output)
+		if count := strings.Count(output, hyperlinks); count != rgbCount {
+			t.Fatalf("%s config has the hyperlinks line %d times, want %d (once per RGB line):\n%s", name, count, rgbCount, output)
 		}
-		at := slices.Index(lines, rgb)
-		if at < 0 || at+1 >= len(lines) || lines[at+1] != hyperlinks {
-			t.Fatalf("%s config does not place the hyperlinks line directly after the RGB line:\n%s", name, output)
+		for at, line := range lines {
+			if line == rgb && (at+1 >= len(lines) || lines[at+1] != hyperlinks) {
+				t.Fatalf("%s config does not place the hyperlinks line directly after the RGB line at %d:\n%s", name, at, output)
+			}
 		}
 	}
 }
