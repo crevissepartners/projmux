@@ -2334,6 +2334,35 @@ authority is returned.
 `ReadRegistrySnapshot`, `ListResources`, `GetResource`, and `ObserveRuntime`
 keep their existing behavior.
 
+### Declaring, admitting and copying process evidence
+
+A caller that holds a `core.GraphProcessInventory` can ask the same questions
+the CLI asks of a process Pane without a Client:
+
+```go
+declared := projmux.GraphProcessDeclares(processes, pane)
+key, err := projmux.AdmitGraphProcess(processes, pane, core.GraphProcessStop)
+held := processes.Clone() // shares no memory with processes
+```
+
+`GraphProcessDeclares(processes, pane)` reports whether `processes` declares
+the child of `pane` for the Pane's activation generation. A Pane stored with
+the process runtime is always declared.
+
+`AdmitGraphProcess(processes, pane, action)` takes one of the eleven
+`core.GraphProcessAction` values (`GraphProcessAttach`, `GraphProcessFocus`,
+`GraphProcessKeys`, `GraphProcessCapture`, `GraphProcessPopup`,
+`GraphProcessRelaunch`, `GraphProcessCreatePane`, `GraphProcessSplit`,
+`GraphProcessTurn`, `GraphProcessInterrupt`, `GraphProcessStop`). It returns
+the declared `core.GraphProcessKey` only for turn, interrupt and stop when the
+child is exactly live; every other input is an error before anything runs. The
+error text equals the internal admission error text for the same input
+(`process-<action>-unsupported`, `process-host-unavailable`,
+`process-capability-unsupported`, or `process target is not declared for this
+Pane generation`). Only that text is promised, not an error type, and the
+returned key is not a binding or control authority by itself.
+`GraphProcessInventory.Clone()` copies both slices; a nil slice stays nil.
+
 ### Prepared Registry snapshots and graphs from observed values
 
 A caller that resolves graphs repeatedly can decode the Registry once and keep

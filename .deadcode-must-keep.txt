@@ -8,6 +8,7 @@
 # they appear in deadcode output; unrelated new findings still fail the gate.
 
 AINewWindowModes	Public v0 value and judgement SDK name for external frontends (Backlog 802 Task 2); the binary does not import pkg/projmux, covered by TestAINewWindowModesEqualInternalAndAreCopied.
+AdmitGraphProcess	Public v0 process admission SDK name for external frontends (Backlog 836 Task 4); the binary does not import pkg/projmux, covered by TestAdmitGraphProcessEqualsInternal.
 Agent.ResourceKind	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 AgentActivation.IsZero	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 AgentCreation.WindowOperation	Public v0 Window create intent SDK closure for external frontends: one transaction for a Window and its new Agent with CreateAgent's validator; covered by TestWindowIntentCLIParity, TestWindowIntentCreatorProvenance, TestWindowIntentRollbackAndActivationUnknown and TestWindowIntentPublicPreflight.
@@ -302,6 +303,8 @@ Fixture.retireAfterFailure	Test-only installed qualification helper retained for
 FooterBlockLines	Default-theme entry point of FooterBlockLinesWithTheme retained as the picker footer geometry seam.
 FormatList	Locale-resolving list formatter retained as the test seam that pins payload-item preservation over the live formatter locale resolution.
 FoundationKeys	Foundation key set retained as the test seam that pins the shipped default catalog coverage of it.
+GraphProcessDeclares	Public v0 process declaration SDK name for external frontends (Backlog 836 Task 4); the binary does not import pkg/projmux, covered by TestAdmitGraphProcessEqualsInternal.
+GraphProcessInventory.Clone	Public v0 process inventory copy for external frontends (Backlog 836 Task 4); the binary does not import pkg/projmux, covered by TestGraphProcessInventoryCloneIsIndependent.
 GraphProcessKey.Valid	Public v0 resource graph process key validity, matching the internal ProcessKey rule; covered by process key copy parity and GOWORK=off consumer tests.
 HUDSnapshotsWithVisibility	Read-only HUD projection retained for caller-supplied provider and window visibility.
 Handle.BindClaudeHook	Internal Claude process binding/control fixture seam; remove the retention row when the Task 5 public consumer wires it.
@@ -861,6 +864,7 @@ guardSweepHelperRoots	Test-only guard helper retained behind the shared guard AP
 guardWrapperScript	Test-only CLI attribution proof for liveguard.MarkTest: builds the one wrapper script MarkTest writes and RequireActive compares against; covered by TestGuardPathWithMarkKeepsAnEarlierFake, TestGuardPathWithMarkPutsANestedMarkAheadOfItsParent, TestGuardResolvesUnderAcceptsOnlyTheGuardsOwnWrapper and TestRequireActiveAcceptsAMarkedWrapper.
 guidanceRefusal	Public v0 global guidance editing SDK entrypoint or adapter; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
 guidanceServicePlanner	Public v0 admission-free Agent settings SDK entrypoint or its adapter (ReadAgentSettings); reachable from external consumers rather than the CLI binary; covered by CLI relaunch dry-run parity, single-read, admission-free, field coverage and GOWORK=off consumer tests.
+internalGraphProcessPane	Public v0 process admission SDK helper copying a public Pane to the internal Pane (Backlog 836 Task 4); reachable from external consumers through GraphProcessDeclares and AdmitGraphProcess rather than the CLI binary; covered by TestAdmitGraphProcessEqualsInternal.
 internalGraphRuntimeInventory	Public v0 supplied-inventory resource graph SDK entrypoint or its adapter (ObserveGraphInventory/ResolveResourceGraphFromPrepared); reachable from external consumers rather than the CLI binary; covered by resolver JSON parity, zero file/tmux/process I/O, deterministic overlay, inventory field coverage and GOWORK=off consumer tests.
 internalProcessInventory	Public v0 supplied-snapshot resource graph SDK entrypoint or its adapter (ObserveResourceGraphFromSnapshot); reachable from external consumers rather than the CLI binary; covered by resolver JSON/process key parity, zero Registry/process probe, ownership and GOWORK=off consumer tests.
 internalProcessKey	Public v0 supplied-snapshot resource graph SDK entrypoint or its adapter (ObserveResourceGraphFromSnapshot); reachable from external consumers rather than the CLI binary; covered by resolver JSON/process key parity, zero Registry/process probe, ownership and GOWORK=off consumer tests.

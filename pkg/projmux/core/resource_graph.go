@@ -1,5 +1,7 @@
 package core
 
+import "slices"
+
 // ResourceGraph is one coherent observation: a single Registry read joined to
 // one tmux inventory and one process observation of that Registry.
 //
@@ -132,6 +134,30 @@ type GraphProcessInventory struct {
 	Declared []GraphProcessKey
 	Observed []GraphProcessObservation
 }
+
+// Clone returns a copy that shares no memory with p. A nil slice stays nil,
+// the same shape the internal inventory copy has.
+func (p GraphProcessInventory) Clone() GraphProcessInventory {
+	return GraphProcessInventory{Declared: slices.Clone(p.Declared), Observed: slices.Clone(p.Observed)}
+}
+
+// GraphProcessAction is a Pane operation that process admission judges. Its
+// strings are the operation names the CLI uses.
+type GraphProcessAction string
+
+const (
+	GraphProcessAttach     GraphProcessAction = "attach"
+	GraphProcessFocus      GraphProcessAction = "focus"
+	GraphProcessKeys       GraphProcessAction = "send-keys"
+	GraphProcessCapture    GraphProcessAction = "capture"
+	GraphProcessPopup      GraphProcessAction = "popup"
+	GraphProcessRelaunch   GraphProcessAction = "relaunch"
+	GraphProcessCreatePane GraphProcessAction = "create-pane"
+	GraphProcessSplit      GraphProcessAction = "split"
+	GraphProcessTurn       GraphProcessAction = "turn"
+	GraphProcessInterrupt  GraphProcessAction = "interrupt"
+	GraphProcessStop       GraphProcessAction = "stop"
+)
 
 // GraphPaneNode is one Registry Pane with its runtime overlay and resolved
 // owner chain. WindowUID is the effective containing Window. Process is set
