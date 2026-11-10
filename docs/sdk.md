@@ -917,7 +917,11 @@ and `Candidate`, the same judgement that `MarkAgentOffline` and
 `PrepareAgentResume(AllowHostLost)` start from. `Binding` is the recorded
 activation's generation, `PaneUID` its Pane, and `Conversation` the provider
 conversation of the process session record (the Claude session or the Codex
-thread), set only for a candidate. A tmux Agent, an Agent whose host is alive,
+thread), set only for a candidate. `History` and `LastTermination` are, for a
+candidate, copies of the session record's resume history and of the candidate
+Pane's last termination evidence, and nil otherwise (also nil when none is
+recorded); every call returns new copies, so two verdicts are `==` only when
+both are nil and callers compare verdicts with `reflect.DeepEqual`. A tmux Agent, an Agent whose host is alive,
 and an Agent without a recorded activation are a verdict with `Candidate=false`
 and no error.
 

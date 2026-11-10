@@ -68,6 +68,12 @@ func (c *Client) ReadAgentHostLostFromPrepared(ctx context.Context, prepared *Pr
 		if candidate.Record.Provider == "codex" {
 			verdict.Conversation = candidate.Record.ThreadID
 		}
+		if err = unregisterCopy(candidate.Record.History, &verdict.History); err != nil {
+			return core.AgentHostLostVerdict{}, err
+		}
+		if err = unregisterCopy(candidate.Pane.Status.LastTermination, &verdict.LastTermination); err != nil {
+			return core.AgentHostLostVerdict{}, err
+		}
 	}
 	// A cancellation during the kernel reads is not a verdict.
 	if err = ctx.Err(); err != nil {
