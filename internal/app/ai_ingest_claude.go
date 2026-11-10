@@ -466,7 +466,13 @@ func (c *aiCommand) ingestClaudeStop(paneID string, payload claudeHookPayload, m
 		}
 		return c.ingestClaudeBackgroundProgress(paneID, payload, metadata, binding, owned)
 	}
-	message := readClaudeTranscriptLastAssistantText(payload.TranscriptPath)
+	// Claude Code reports the finished turn's last assistant message in the
+	// Stop payload. The transcript tail can still end at the previous reply when
+	// the hook runs, so it is only the fallback for older Claude Code versions.
+	message := strings.TrimSpace(payload.LastAssistantMessage)
+	if message == "" {
+		message = readClaudeTranscriptLastAssistantText(payload.TranscriptPath)
+	}
 	body := formatClaudeStopNotifyBody(message)
 	return c.emitClaudeHookStatus(paneID, payload, action, attentionNotifyInput{
 		ID:        claudeStopNotifyID(payload),
@@ -643,25 +649,25 @@ func parseClaudeHookPayload(data []byte) (claudeHookPayload, error) {
 		return claudeHookPayload{}, fmt.Errorf("parse claude hook payload: %w", err)
 	}
 	payload := claudeHookPayload{
-		AgentID:          firstString(raw, "agent_id"),
-		AgentType:        firstString(raw, "agent_type"),
-		EventName:        firstString(raw, "hook_event_name", "event_name"),
-		SessionID:        firstString(raw, "session_id", "session-id"),
-		CWD:              firstString(raw, "cwd", "workspace", "project_dir"),
-		TranscriptPath:   firstString(raw, "transcript_path", "transcriptPath"),
+		AgentID:              firstString(raw, "agent_id"),
+		AgentType:            firstString(raw, "agent_type"),
+		EventName:            firstString(raw, "hook_event_name", "event_name"),
+		SessionID:            firstString(raw, "session_id", "session-id"),
+		CWD:                  firstString(raw, "cwd", "workspace", "project_dir"),
+		TranscriptPath:       firstString(raw, "transcript_path", "transcriptPath"),
 		LastAssistantMessage: firstString(raw, "last_assistant_message", "last-assistant-message"),
-		NotificationType: firstString(raw, "notification_type", "notificationType"),
-		Message:          firstString(raw, "message", "text"),
-		Prompt:           firstString(raw, "prompt", "user_prompt"),
-		ToolName:         firstString(raw, "tool_name", "toolName"),
-		ToolUseID:        firstString(raw, "tool_use_id", "toolUseID", "id"),
-		ErrorType:        firstString(raw, "error_type", "errorType", "failure_type", "failureType"),
-		ErrorMessage:     firstString(raw, "error_message", "errorMessage", "message", "reason"),
-		SubagentType:     firstString(raw, "subagent_type", "subagentType", "agent_type", "agentType"),
-		SubagentID:       firstString(raw, "subagent_id", "subagentId", "agent_id", "agentId"),
-		TeammateName:     firstString(raw, "teammate_name", "teammateName", "teammate"),
-		TeammateID:       firstString(raw, "teammate_id", "teammateId"),
-		TeammateContext:  firstString(raw, "teammate_context", "teammateContext", "context", "reason", "message"),
+		NotificationType:     firstString(raw, "notification_type", "notificationType"),
+		Message:              firstString(raw, "message", "text"),
+		Prompt:               firstString(raw, "prompt", "user_prompt"),
+		ToolName:             firstString(raw, "tool_name", "toolName"),
+		ToolUseID:            firstString(raw, "tool_use_id", "toolUseID", "id"),
+		ErrorType:            firstString(raw, "error_type", "errorType", "failure_type", "failureType"),
+		ErrorMessage:         firstString(raw, "error_message", "errorMessage", "message", "reason"),
+		SubagentType:         firstString(raw, "subagent_type", "subagentType", "agent_type", "agentType"),
+		SubagentID:           firstString(raw, "subagent_id", "subagentId", "agent_id", "agentId"),
+		TeammateName:         firstString(raw, "teammate_name", "teammateName", "teammate"),
+		TeammateID:           firstString(raw, "teammate_id", "teammateId"),
+		TeammateContext:      firstString(raw, "teammate_context", "teammateContext", "context", "reason", "message"),
 	}
 	if tasks, present := raw["background_tasks"]; present {
 		count := claudeBackgroundTasksInFlight(tasks)

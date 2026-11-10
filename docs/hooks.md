@@ -553,7 +553,7 @@ default install catalog is based on Claude Code 2.1.140 and represents the
 | `UserPromptSubmit` | marks the matched pane hook-active and sets AI state to thinking/busy; no notify queue entry is pushed |
 | `UserPromptExpansion` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
 | `SessionStart` | marks the matched pane hook-active and writes a quiet ingest diagnostic; for an exact managed initial-task binding it records `pending` startup readiness and opens the separately bounded acknowledgement window, but never acknowledges the task; no notify queue entry is pushed |
-| `Stop` | keeps busy without a completion row while `background_tasks` contains running/pending subagents or workflows; otherwise pushes a Claude completion row, using the last assistant transcript text when `transcript_path` is readable |
+| `Stop` | keeps busy without a completion row while `background_tasks` contains running/pending subagents or workflows; otherwise pushes a Claude completion row, using the payload's `last_assistant_message` when it is non-blank, else the last assistant transcript text when `transcript_path` is readable |
 | `StopFailure` | pushes a critical Claude error row with error type/message metadata when present |
 | `SubagentStart` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
 | `SubagentStop` | marks the pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
@@ -670,14 +670,18 @@ contents, commands, descriptions, prompts, and tool input are not retained in
 these fields. In-flight Stop and fallback records use `result=state` with an
 empty reason. See the upstream [Stop input contract](https://code.claude.com/docs/en/hooks#stop-input).
 
-`Stop` is the first transcript tail reader. It opens the `transcript_path` its
+`Stop` takes the completion row text from the payload's `last_assistant_message`
+(also read as `last-assistant-message`) when it is not blank. That field names the
+turn that just ended; the transcript tail can still end at the previous reply
+when the hook runs. Only without it (older Claude Code) is `Stop` the first
+transcript tail reader. It opens the `transcript_path` its
 own payload reports, reads at most the last 256 KiB, and keeps one string: the
 text of the last assistant line in that tail. That text becomes the completion
 row's text, so it goes wherever the row goes: the notify queue, the desktop
 notification (whose duplicate check keeps a normalized copy in a tmux pane
 option), and the `send-noti` payload. It is not written to the Registry or to
 the Agent session history, and nothing else the read saw is kept. With no
-readable path or no assistant text, the row text is `Ready`.
+usable field, readable path, or assistant text, the row text is `Ready`.
 
 Current Claude Code (2.1.277) sends no hook when the operator denies a
 permission dialog, so neither `PermissionDenied` nor `Stop` closes it and the

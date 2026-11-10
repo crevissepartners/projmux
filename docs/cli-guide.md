@@ -2720,7 +2720,8 @@ operations journal carries only the safe anomalous classification and watcher
 lifecycle described above; both diagnostic stores continue to run in parallel.
 See [legacy-diagnostics-inventory.md](legacy-diagnostics-inventory.md).
 
-For `Stop`, projmux reads `transcript_path` when present and extracts the last
+For `Stop`, projmux uses the payload's `last_assistant_message` when it is not
+blank; otherwise it reads `transcript_path` when present and extracts the last
 assistant text from the transcript tail; if that is unavailable, it falls back
 to a generic Claude completion row. `PermissionRequest` rows expose the tool
 name plus a concise input summary, preferring Bash commands, file paths, and
