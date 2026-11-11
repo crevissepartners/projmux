@@ -2,7 +2,7 @@ module github.com/crevissepartners/projmux
 
 go 1.25.0
 
-toolchain go1.26.10
+toolchain go1.26.11
 
 tool golang.org/x/tools/cmd/deadcode
 
