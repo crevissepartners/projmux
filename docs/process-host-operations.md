@@ -290,8 +290,8 @@ standard input), or use `agent stop` for an exact process Agent, install again, 
 `projmux delete agent <agent-ref>` also stops an owner, but it removes the
 Agent, which then cannot be resumed. An owner whose coordination version is
 unknown does not stop an install. A live owner is the recorded host process of
-a current process activation, matched by pid and start time, so owners the web
-server hosts are included.
+a current process activation, matched by pid and start time, so owners a long-lived
+external host runs are included.
 
 ## Stopping the Agent
 
@@ -388,7 +388,7 @@ plan without replacing it; when absent, it prepares the recorded configuration
 through the samehost planner and refuses implicit recipe drift. `Prepared` has no
 live lifetime to register. The first actual user input acquires the existing
 claim and uses the frozen resume engine. These are CORE producer contracts for
-a future consumer; they do not establish web UI support. Public relaunch defaults to foreground ownership, stdin/signal cancellation and
+a future consumer; they do not establish a user-interface surface. Public relaunch defaults to foreground ownership, stdin/signal cancellation and
 deferred peer waiting. Create, resume and process-destination relaunch support
 explicit `--detach` with verified startup and the same lifetime limits.
 

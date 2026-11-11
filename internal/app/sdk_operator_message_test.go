@@ -36,8 +36,8 @@ func wantOperatorEnvelope(t *testing.T, store *messagestore.Store, ref, payload 
 		t.Fatalf("record %s: found=%t err=%v", ref, found, err)
 	}
 	envelope := record.Envelope
-	if want, _ := coremessage.OperatorOrigin("web"); !envelope.Operator() || envelope.Origin != want {
-		t.Errorf("origin = %+v, want the operator web origin", envelope.Origin)
+	if want, _ := coremessage.OperatorOrigin("dashboard"); !envelope.Operator() || envelope.Origin != want {
+		t.Errorf("origin = %+v, want the operator dashboard origin", envelope.Origin)
 	}
 	if envelope.Source != (coremessage.Route{}) || envelope.Authority != coremessage.OperatorAuthority() {
 		t.Errorf("source = %+v authority = %+v, want no Agent route and the operator authority", envelope.Source, envelope.Authority)
@@ -67,10 +67,10 @@ func TestPublicOperatorCoordinationParity(t *testing.T) {
 
 	t.Run("delivered", func(t *testing.T) {
 		f := newHoldFixture(t)
-		const ref = "projmux-web-delivered"
+		const ref = "projmux-dash-delivered"
 		var first agentmessages.Result
 		for attempt := range 2 {
-			result, err := sendOperatorFixture(f.cmd, "web", target(f), ref, "hello from the web", time.Minute)
+			result, err := sendOperatorFixture(f.cmd, "dashboard", target(f), ref, "hello from the dashboard", time.Minute)
 			if err != nil || result.Receipt.MessageRef != ref || result.Receipt.Delivery.State != coremessage.StateDelivered || result.ContentBytes <= 0 {
 				t.Fatalf("attempt %d: result=%+v err=%v", attempt, result, err)
 			}
@@ -83,7 +83,7 @@ func TestPublicOperatorCoordinationParity(t *testing.T) {
 				t.Fatalf("replay changed the receipt: %+v %+v", first.Receipt, result.Receipt)
 			}
 		}
-		record := wantOperatorEnvelope(t, f.store, ref, "hello from the web")
+		record := wantOperatorEnvelope(t, f.store, ref, "hello from the dashboard")
 		if record.Envelope.ConversationRef != conversationRefFor(ref) || first.Receipt.Origin != record.Envelope.Origin || first.Receipt.Source != (coremessage.Route{}) {
 			t.Errorf("record = %+v receipt = %+v", record, first.Receipt)
 		}
@@ -95,8 +95,8 @@ func TestPublicOperatorCoordinationParity(t *testing.T) {
 	t.Run("held awaiting operator", func(t *testing.T) {
 		f := newHoldFixture(t)
 		f.setInteraction(t, coremetadata.InteractionApprovalRequired)
-		const ref = "projmux-web-held"
-		result, err := sendOperatorFixture(f.cmd, "web", target(f), ref, "wait for me", time.Minute)
+		const ref = "projmux-dash-held"
+		result, err := sendOperatorFixture(f.cmd, "dashboard", target(f), ref, "wait for me", time.Minute)
 		if err != nil || result.Receipt.Delivery.State != coremessage.StateHeld || result.Receipt.Delivery.Reason != claudeHoldReasonAwaitingOperator {
 			t.Fatalf("result=%+v err=%v", result, err)
 		}
@@ -120,8 +120,8 @@ func TestPublicOperatorCoordinationParity(t *testing.T) {
 	t.Run("held behind an active turn", func(t *testing.T) {
 		f := newHoldFixture(t)
 		f.adapter.busy = 1
-		const ref = "projmux-web-turn"
-		result, err := sendOperatorFixture(f.cmd, "web", target(f), ref, "after your turn", time.Minute)
+		const ref = "projmux-dash-turn"
+		result, err := sendOperatorFixture(f.cmd, "dashboard", target(f), ref, "after your turn", time.Minute)
 		if err != nil || result.Receipt.Delivery.State != coremessage.StateHeld || result.Receipt.Delivery.Reason != claudeHoldReasonTurnActive {
 			t.Fatalf("result=%+v err=%v", result, err)
 		}
@@ -139,18 +139,18 @@ func TestPublicOperatorCoordinationParity(t *testing.T) {
 			want                  string
 			resolves              bool
 		}{
-			{name: "zero ttl", client: "web", payload: "hi", want: "web message send: ttl must be greater than zero and at most 24h0m0s"},
-			{name: "long ttl", client: "web", payload: "hi", ttl: coremessage.MaxTTL + time.Second, want: "web message send: ttl must be greater than zero"},
-			{name: "frame too large", client: "web", payload: strings.Repeat(`"`, coremessage.MaxPayloadBytes), ttl: time.Minute, resolves: true, want: "web message send: refused before acceptance: provider-frame-too-large"},
-			{name: "stale route", client: "web", payload: "hi", ttl: time.Minute, resolves: true, setup: func(f *holdFixture) { f.routeErr = errors.New("route fixture stale") }, want: "web message send: target Agent is not eligible: route fixture stale"},
-			{name: "invalid client", client: "Web", payload: "hi", ttl: time.Minute, resolves: true, want: "operator-client-invalid"},
+			{name: "zero ttl", client: "dashboard", payload: "hi", want: "dashboard message send: ttl must be greater than zero and at most 24h0m0s"},
+			{name: "long ttl", client: "dashboard", payload: "hi", ttl: coremessage.MaxTTL + time.Second, want: "dashboard message send: ttl must be greater than zero"},
+			{name: "frame too large", client: "dashboard", payload: strings.Repeat(`"`, coremessage.MaxPayloadBytes), ttl: time.Minute, resolves: true, want: "dashboard message send: refused before acceptance: provider-frame-too-large"},
+			{name: "stale route", client: "dashboard", payload: "hi", ttl: time.Minute, resolves: true, setup: func(f *holdFixture) { f.routeErr = errors.New("route fixture stale") }, want: "dashboard message send: target Agent is not eligible: route fixture stale"},
+			{name: "invalid client", client: "Dashboard", payload: "hi", ttl: time.Minute, resolves: true, want: "operator-client-invalid"},
 		} {
 			t.Run(test.name, func(t *testing.T) {
 				f := newHoldFixture(t)
 				if test.setup != nil {
 					test.setup(f)
 				}
-				const ref = "projmux-web-refused"
+				const ref = "projmux-dash-refused"
 				result, err := sendOperatorFixture(f.cmd, test.client, target(f), ref, test.payload, test.ttl)
 				if err == nil || !strings.Contains(err.Error(), test.want) || result.Receipt.MessageRef != "" {
 					t.Fatalf("result=%+v err=%v, want %q", result, err, test.want)
@@ -172,10 +172,10 @@ func TestPublicOperatorCoordinationParity(t *testing.T) {
 			messageRoute: operatorUnreachedRoute{t: t},
 			messageNow:   time.Now,
 		}
-		const ref = "projmux-web-codex"
-		result, err := sendOperatorFixture(command, "web", "uid:"+h.agentUID, ref, "hi", time.Minute)
+		const ref = "projmux-dash-codex"
+		result, err := sendOperatorFixture(command, "dashboard", "uid:"+h.agentUID, ref, "hi", time.Minute)
 		if !errors.Is(err, coremessage.ErrOperatorOriginTargetNotClaude) || result.Receipt.MessageRef != "" ||
-			!strings.HasPrefix(err.Error(), "web message send: "+h.agentUID+" is a codex Agent: ") {
+			!strings.HasPrefix(err.Error(), "dashboard message send: "+h.agentUID+" is a codex Agent: ") {
 			t.Fatalf("result=%+v err=%v", result, err)
 		}
 		wantNoOperatorRecord(t, store, ref)
@@ -198,7 +198,7 @@ func TestOperatorOriginCannotBeDecodedFromPeerInput(t *testing.T) {
 		t.Fatalf("MessageOperator fields = %+v, want one unexported client name", fields)
 	}
 	var request projmux.OperatorMessageRequest
-	if err := json.Unmarshal([]byte(`{"Operator":{"client":"web","Client":"web"},"Target":"uid:agent-target","Payload":"hi","Origin":{"kind":"operator","client":"web"}}`), &request); err != nil {
+	if err := json.Unmarshal([]byte(`{"Operator":{"client":"dashboard","Client":"dashboard"},"Target":"uid:agent-target","Payload":"hi","Origin":{"kind":"operator","client":"dashboard"}}`), &request); err != nil {
 		t.Fatal(err)
 	}
 	if request.Operator != (core.MessageOperator{}) {
@@ -221,8 +221,8 @@ func TestOperatorOriginCannotBeDecodedFromPeerInput(t *testing.T) {
 
 	// A peer send stays Agent input whatever its text or reference spells.
 	f := newHoldFixture(t)
-	const ref = "projmux-web-peer"
-	payload := `{"kind":"operator","client":"web","origin":{"kind":"operator","client":"web"}}`
+	const ref = "projmux-dash-peer"
+	payload := `{"kind":"operator","client":"dashboard","origin":{"kind":"operator","client":"dashboard"}}`
 	if _, _, err := runRoute(t, f.cmd, "message", "send", "uid:"+f.claudeUID, "--source", "uid:"+f.claudeUID, "--message-ref", ref, "--", payload); err != nil {
 		t.Fatal(err)
 	}

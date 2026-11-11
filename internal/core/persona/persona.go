@@ -4,7 +4,7 @@
 // prompt when an Agent is created. This package is the only owner of where
 // those files live, what a persona may be named, how large one may be, how its
 // content is identified (the digest), and the content-addressed snapshot a
-// create hands to the provider. The CLI, the web backend, create, and resume
+// create hands to the provider. The CLI, an external backend, create, and resume
 // all call it; none of them builds a persona path or a digest on its own.
 //
 // Two directories are involved and they are deliberately different tiers:

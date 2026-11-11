@@ -752,7 +752,7 @@ func writeAgentMessageReceiptText(stdout io.Writer, receipt agentMessageReceipt,
 }
 
 // agentMessageOriginLabel names a non-Agent origin for a person: "operator
-// (web)".
+// (dashboard)".
 func agentMessageOriginLabel(origin coremessage.Origin) string {
 	return origin.Kind + " (" + origin.Client + ")"
 }

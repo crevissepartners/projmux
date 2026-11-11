@@ -30,13 +30,13 @@ func TestMarkProcessOwnerDecidesAndWritesInOneUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	res, err := MarkProcessOwner(ctx, s, binding, "web", false)
+	res, err := MarkProcessOwner(ctx, s, binding, "dashboard", false)
 	if err != nil || !res.Changed || res.Previous != "" {
 		t.Fatalf("%+v %v", res, err)
 	}
 	stale := binding
 	stale.Generation = "other-generation"
-	_, err = MarkProcessOwner(ctx, s, stale, "web", true)
+	_, err = MarkProcessOwner(ctx, s, stale, "dashboard", true)
 	var f *Failure
 	if !errors.As(err, &f) || f.Code != ProcessOwnerMarkStale || f.AgentUID != binding.AgentUID {
 		t.Fatalf("stale: %#v %v", f, err)
@@ -46,7 +46,7 @@ func TestMarkProcessOwnerDecidesAndWritesInOneUpdate(t *testing.T) {
 		t.Fatalf("foreign: %#v %v", f, err)
 	}
 	res, err = MarkProcessOwner(ctx, s, binding, "other", true)
-	if err != nil || !res.Changed || res.Previous != "web" {
+	if err != nil || !res.Changed || res.Previous != "dashboard" {
 		t.Fatalf("%+v %v", res, err)
 	}
 }

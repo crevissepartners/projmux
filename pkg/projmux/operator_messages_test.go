@@ -26,16 +26,16 @@ func TestPublicOperatorMessageRefusals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	web := core.NewMessageOperator("web")
+	dashboard := core.NewMessageOperator("dashboard")
 	for _, req := range []OperatorMessageRequest{
 		{Target: "uid:agent-target", Payload: "hi"},
-		{Operator: core.NewMessageOperator("Web"), Target: "uid:agent-target", Payload: "hi"},
-		{Operator: core.NewMessageOperator("1web"), Target: "uid:agent-target", Payload: "hi"},
+		{Operator: core.NewMessageOperator("Dashboard"), Target: "uid:agent-target", Payload: "hi"},
+		{Operator: core.NewMessageOperator("1dashboard"), Target: "uid:agent-target", Payload: "hi"},
 		{Operator: core.NewMessageOperator(strings.Repeat("a", 33)), Target: "uid:agent-target", Payload: "hi"},
-		{Operator: web, Payload: "hi"},
-		{Operator: web, Target: "uid:agent-target", Payload: "  "},
-		{Operator: web, Target: "uid:agent-target", Payload: "hi", TTL: -1},
-		{Operator: web, Target: "uid:agent-target", Payload: "hi", TTL: message.MaxTTL + time.Second},
+		{Operator: dashboard, Payload: "hi"},
+		{Operator: dashboard, Target: "uid:agent-target", Payload: "  "},
+		{Operator: dashboard, Target: "uid:agent-target", Payload: "hi", TTL: -1},
+		{Operator: dashboard, Target: "uid:agent-target", Payload: "hi", TTL: message.MaxTTL + time.Second},
 	} {
 		result, err := client.SendOperatorMessage(context.Background(), req)
 		var refusal *Refusal
@@ -45,7 +45,7 @@ func TestPublicOperatorMessageRefusals(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := client.SendOperatorMessage(ctx, OperatorMessageRequest{Operator: web, Target: "uid:agent-target", Payload: "hi"}); !errors.Is(err, context.Canceled) {
+	if _, err := client.SendOperatorMessage(ctx, OperatorMessageRequest{Operator: dashboard, Target: "uid:agent-target", Payload: "hi"}); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(state); !errors.Is(err, os.ErrNotExist) {
@@ -59,7 +59,7 @@ func TestPublicOperatorMessageRefusals(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		result, err := client.SendOperatorMessage(context.Background(), OperatorMessageRequest{Operator: web, Target: "uid:" + uid, Payload: "hi", MessageRef: "projmux-web-codex"})
+		result, err := client.SendOperatorMessage(context.Background(), OperatorMessageRequest{Operator: dashboard, Target: "uid:" + uid, Payload: "hi", MessageRef: "projmux-dash-codex"})
 		var refusal *Refusal
 		if !errors.As(err, &refusal) || refusal.Code != CodeOperatorOriginTargetNotClaude || !errors.Is(err, ErrOperatorOriginTargetNotClaude) || result != (OperatorMessageResult{}) {
 			t.Fatalf("result=%+v err=%v", result, err)
@@ -91,7 +91,7 @@ func TestPublicOperatorMessageRefusals(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		request := OperatorMessageRequest{Operator: web, Target: "uid:" + uid, Payload: "hi"}
+		request := OperatorMessageRequest{Operator: dashboard, Target: "uid:" + uid, Payload: "hi"}
 		client.projmuxExecutable = filepath.Join(t.TempDir(), "missing")
 		var refusal *Refusal
 		if result, err := client.SendOperatorMessage(context.Background(), request); !errors.As(err, &refusal) || refusal.Code != CodeMessageInvalidInput || result != (OperatorMessageResult{}) {
@@ -104,7 +104,7 @@ func TestPublicOperatorMessageRefusals(t *testing.T) {
 		}
 		result, err := client.SendOperatorMessage(context.Background(), request)
 		if !errors.As(err, &refusal) || refusal.Code != CodeMessageRouteUnavailable || result != (OperatorMessageResult{}) ||
-			!strings.HasPrefix(err.Error(), "web message send: target Agent") {
+			!strings.HasPrefix(err.Error(), "dashboard message send: target Agent") {
 			t.Fatalf("route admission: result=%+v err=%v", result, err)
 		}
 		after, err := os.ReadFile(storage.Path())

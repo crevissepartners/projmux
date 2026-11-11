@@ -268,7 +268,7 @@ func (c *projectLifecycleCommand) execute(
 //
 // Inside tmux that is the inherited server, read the way it always was. Outside
 // tmux there is no inherited server, and asking tmux without a socket would ask
-// the operator's default server -- not the app server a web request, a script,
+// the operator's default server -- not the app server a long-lived request handler, a script,
 // or an IDE terminal is driving. So `start` and `stop` resolve the same app
 // route their writes use (`-L projmux`, proven app-owned) and read the exact
 // session through its physical socket. That route is returned so `stop` can

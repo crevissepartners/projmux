@@ -75,7 +75,7 @@ type installProcessHostAlive func(coremetadata.ProcessIdentity) bool
 // whose recorded host process is still alive with the same birth identity.
 //
 // The Registry is the authority rather than the process table: an owner the
-// web server hosts runs inside an executable that is not this one, so no
+// long-lived server hosts runs inside an executable that is not this one, so no
 // census keyed on this executable's path could see it.
 func liveInstallProcessOwners(registry coremetadata.Registry, alive installProcessHostAlive, observe installProcessOwnerObserver) []installProcessOwner {
 	var owners []installProcessOwner

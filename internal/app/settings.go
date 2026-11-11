@@ -36,7 +36,7 @@ type settingsCommand struct {
 	runCommand   func(name string, args ...string) error
 	runOutput    func(name string, args ...string) ([]byte, error)
 	tmuxRunner   tmuxRunner
-	// reloadAppServer lets a caller that runs outside tmux, the web server,
+	// reloadAppServer lets a caller that runs outside tmux, a long-lived server,
 	// reload the app server after a save. The route is then resolved from the
 	// app-owned logical socket, never from an inherited TMUX.
 	reloadAppServer          bool

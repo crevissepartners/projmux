@@ -51,7 +51,7 @@ func aiEnabledAgentsContains(values []config.AIAgentProvider, provider config.AI
 	return slices.Contains(values, provider)
 }
 
-// The central settings are the settings every front (TUI, web, CLI) shares:
+// The central settings are the settings every front (TUI, external clients, CLI) shares:
 // `[ui] locale` in config.toml, the agent-question-answering file, and the
 // agent-question-window-seconds file, plus the resource, AI mode and status
 // bar defaults files. These functions read, validate, and

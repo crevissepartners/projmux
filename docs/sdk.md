@@ -509,7 +509,7 @@ keys/leaves return `CodeConfigKeyInvalid`; invalid values return
 preserves bytes, mode and mtime in explicit ConfigDir/StateDir. Admitted atomic
 writes finish without interrupting the replacement. They do not read or write
 TUI leaves or `web.toml`, reload tmux, start providers, or change the Registry.
-Valid TUI/web overrides continue to take priority over central visibility.
+Valid overrides in those files continue to take priority over central visibility.
 
 The CLI routes are `config resources [--set <on|off>]`,
 `config ai-default-mode [--set <mode>]`, and
@@ -1814,7 +1814,7 @@ and Write operations. New content receives every existing Write validation. If
 Write fails, the store restores only the original bytes captured by that call,
 without checking instructions or role claims again. A successful restoration
 returns the original Write error and a zero result; the original file mode is preserved, including 0600 and 0640.
-This intentionally changes the former web recovery behavior, which normalized
+This intentionally changes the former app recovery behavior, which normalized
 nonstandard original modes to 0600. A successful replacement uses Write's 0600 mode. Cancellation after admission
 does not interrupt restoration. A readable in-directory symlink follows the
 existing store behavior: Delete removes the link itself and restoration produces
@@ -1989,7 +1989,7 @@ write starts, the existing Store transaction completes.
 Protection is still evaluated by the existing delete policy: presence of the
 reserved key, including legacy values, protects deletion. After removing it,
 call `PreflightDelete` again before any deletion effects. Profiles may still
-protect an Agent. Setting the label grants no deletion permission. Web session
+protect an Agent. Setting the label grants no deletion permission. Session
 authorization and the consumer's `agent.protection` mutation lock remain the
 consumer's responsibility; this method supplies neither.
 
@@ -2005,7 +2005,7 @@ fixed; this is not a general label write.
 ```go
 result, err := client.MarkProcessOwner(ctx, core.MarkProcessOwnerRequest{
     Binding: binding,
-    Owner:   "web",
+    Owner:   "dashboard",
 })
 // Set ReplaceForeign: true to overwrite a different non-empty owner.
 ```
@@ -2748,7 +2748,7 @@ usage window takes its capability default, so Codex 5h is `off`. Unlike
 `GetConfig(core.ConfigStatusbarVisibility)`, which returns an empty value and
 the error, a ConfigDir that cannot be resolved and a central file that cannot
 be read or parsed also read as those defaults. This is the fallback the
-receiver-less app readers, and the web through them, have always used; the
+receiver-less app readers have always used; the
 error is not reported and no other value is normalized.
 
 The method reads only `statusbar-defaults.json` in the captured ConfigDir. It

@@ -352,8 +352,8 @@ func TestWindowIntentCreatorProvenance(t *testing.T) {
 	}{
 		{"none", core.WindowIntentAgent{Provider: "claude"}, map[string]string{}, ""},
 		{"declared", core.WindowIntentAgent{Provider: "claude", Creator: "uid:" + creator}, metadata.ExplicitCreatorAnnotations(creator), ""},
-		{"operator", core.WindowIntentAgent{Provider: "claude", Operator: core.NewOperatorCreator("web")}, metadata.OperatorCreatorAnnotations("web"), ""},
-		{"operator-over-declared", core.WindowIntentAgent{Provider: "claude", Creator: "uid:" + creator, Operator: core.NewOperatorCreator("web")}, metadata.OperatorCreatorAnnotations("web"), mutationruntime.CreatorDeclinedNotice(mutationruntime.CreatorDeclinedOperator, creator)},
+		{"operator", core.WindowIntentAgent{Provider: "claude", Operator: core.NewOperatorCreator("dashboard")}, metadata.OperatorCreatorAnnotations("dashboard"), ""},
+		{"operator-over-declared", core.WindowIntentAgent{Provider: "claude", Creator: "uid:" + creator, Operator: core.NewOperatorCreator("dashboard")}, metadata.OperatorCreatorAnnotations("dashboard"), mutationruntime.CreatorDeclinedNotice(mutationruntime.CreatorDeclinedOperator, creator)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			result, err := f.c.CreateWindowFromIntent(ctx, f.intent(&tc.agent))

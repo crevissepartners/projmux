@@ -20,7 +20,7 @@ var codexBrokerImage = currentCodexBrokerImage
 //
 // It reads the file at the path, not this process's running image: an install
 // replaces the file atomically, so a process that started before the install
-// -- a long-lived web server, an older shell -- still keys new bindings by the
+// -- a long-lived server, an older shell -- still keys new bindings by the
 // image the install published, and every caller that creates an Agent after an
 // install meets the same fresh runtime. The token is the file's identity
 // (device, inode, size, modification time), which an atomic replace always

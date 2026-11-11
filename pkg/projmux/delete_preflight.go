@@ -11,9 +11,11 @@ import (
 )
 
 // PreflightDelete checks Registry deletion protection without runtime access or
-// writes, including process Agents and Project graphs. A frontend must call it
-// before stopping a provider for deletion. It does not authorize later effects:
-// execution must recheck protection under its admission lock.
+// writes, including process Agents and Project graphs. It shares the Registry
+// deletion-protection check with the CLI `delete`; unlike the full CLI dry run,
+// it does no runtime preflight. Check it before stopping a provider for
+// deletion. It does not authorize later effects: execution must recheck
+// protection under its admission lock.
 func (c *Client) PreflightDelete(ctx context.Context, req core.DeleteRequest) (core.DeleteResult, error) {
 	out := core.DeleteResult{}
 	if err := ctx.Err(); err != nil {

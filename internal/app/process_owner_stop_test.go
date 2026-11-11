@@ -95,7 +95,7 @@ func TestProcessOwnerStopJournalFailureKeepsStderr(t *testing.T) {
 
 func TestProcessOwnerStopCauseSurvivesDetachedHandoff(t *testing.T) {
 	foreground, cancel := context.WithCancelCause(context.Background())
-	// A detached web owner shadows stdin lifetime and handoff detaches cancellation.
+	// A detached external owner shadows stdin lifetime and handoff detaches cancellation.
 	ctx := context.WithValue(foreground, processForegroundCauseKey{}, foreground)
 	ctx = (processOwnerLifetime{}).withContext(ctx)
 	detached, end := context.WithCancel(context.WithoutCancel(ctx))

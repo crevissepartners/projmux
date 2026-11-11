@@ -1583,7 +1583,7 @@ Project has at most one rule file, `<config dir>/project-links/<project-uid>.jso
 by the Project UID (`proj-...`) so renaming the Project or moving its root
 keeps its rules. The rules belong to the Project, and every surface shares
 them: a Claude Agent's system prompt shows them (see below), and a client that
-edits them, such as the web client, reads and writes this same file. There is
+edits them, such as an external client, reads and writes this same file. There is
 no CLI command that edits them. A missing file means the Project has no rules.
 
 ```json

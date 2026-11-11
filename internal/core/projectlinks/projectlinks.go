@@ -6,7 +6,7 @@
 // package is the only owner of that path, of the JSON format, of what a valid
 // rule set is, and of how a label resolves to a link. The rules belong to the
 // Project, and every surface shares them: a Claude Agent's system prompt shows
-// them, and a client that edits them, such as the web client, reads and writes
+// them, and a client that edits them, such as an external client, reads and writes
 // them through this package. The public link-rules commands and SDK use the
 // same management service.
 //

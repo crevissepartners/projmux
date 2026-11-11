@@ -487,7 +487,7 @@ type coordinationFrameOrigin struct {
 }
 
 // coordinationSelfAnchored reports whether a frame's source and target are the
-// same Agent, with the same predicate the web transcript reader applies.
+// same Agent, with the same predicate a transcript reader applies.
 func coordinationSelfAnchored(source, target coremessage.Route) bool {
 	uid := strings.TrimSpace(source.AgentUID)
 	return uid != "" && uid == strings.TrimSpace(target.AgentUID)

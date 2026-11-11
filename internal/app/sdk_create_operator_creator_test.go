@@ -219,7 +219,7 @@ func TestCreateAgentDeclaredCreatorCannotClaimOperator(t *testing.T) {
 	home := sdkAgentHome(t)
 	f := newSDKOperatorCreatorFixture(t, binary, home, t.TempDir())
 	before := projectRegistryBytes(t, f.state)
-	for _, creator := range []string{"web", "operator", "operator-client", "ui", "uid:web", "uid:operator", "uid:ui", "uid:" + sdkOperatorCreatorClient, "operator:web", "uid:operator:web"} {
+	for _, creator := range []string{"dashboard", "operator", "operator-client", "ui", "uid:dashboard", "uid:operator", "uid:ui", "uid:" + sdkOperatorCreatorClient, "operator:dashboard", "uid:operator:dashboard"} {
 		_, err := f.client.CreateAgent(context.Background(), core.CreateAgentRequest{Project: "sample", Window: "extra", Provider: "claude", Creator: creator})
 		var refusal *projmux.Refusal
 		if !errors.As(err, &refusal) || refusal.Code != projmux.CodeCreateCreatorInvalid {
@@ -229,7 +229,7 @@ func TestCreateAgentDeclaredCreatorCannotClaimOperator(t *testing.T) {
 			t.Fatalf("Creator %q refusal changed the Registry", creator)
 		}
 	}
-	for _, client := range []string{"Web", "2x", "a b", strings.Repeat("a", operatorclient.MaxBytes+1)} {
+	for _, client := range []string{"Dashboard", "2x", "a b", strings.Repeat("a", operatorclient.MaxBytes+1)} {
 		_, err := f.client.CreateAgent(context.Background(), core.CreateAgentRequest{Project: "sample", Window: "extra", Provider: "claude", Operator: core.NewOperatorCreator(client)})
 		var refusal *projmux.Refusal
 		if !errors.As(err, &refusal) || refusal.Code != projmux.CodeCreateCreatorInvalid || !errors.Is(err, operatorclient.ErrInvalid) {
