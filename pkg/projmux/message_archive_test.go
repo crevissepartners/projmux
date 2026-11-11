@@ -137,9 +137,6 @@ func TestMessageArchiveMissingAndEmptyShapesCreateNothing(t *testing.T) {
 				t.Fatal(err)
 			}
 			assertArchiveParity(t, want, got)
-			if _, err := c.MessageArchiveFiles(context.Background()); err != nil {
-				t.Fatal(err)
-			}
 			if !reflect.DeepEqual(before, centralTree(t, parent)) {
 				t.Fatal("created or changed state")
 			}
@@ -284,19 +281,11 @@ func TestMessageArchiveCancellationBoundaries(t *testing.T) {
 		if !errors.Is(err, cause) || !reflect.DeepEqual(got, core.MessageArchive{}) || ctx.calls != 2 {
 			t.Fatalf("archive boundary: %+v %v calls=%d", got, err, ctx.calls)
 		}
-		ctx = &archiveBoundaryContext{Context: context.Background(), err: cause}
-		files, err := c.MessageArchiveFiles(ctx)
-		if !errors.Is(err, cause) || files != nil || ctx.calls != 2 {
-			t.Fatalf("files boundary: %v %v calls=%d", files, err, ctx.calls)
-		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if got, err := c.ReadMessageArchive(ctx); !errors.Is(err, context.Canceled) || !reflect.DeepEqual(got, core.MessageArchive{}) {
 		t.Fatalf("pre-canceled: %+v %v", got, err)
-	}
-	if got, err := c.MessageArchiveFiles(ctx); !errors.Is(err, context.Canceled) || got != nil {
-		t.Fatalf("pre-canceled paths: %v %v", got, err)
 	}
 	if !reflect.DeepEqual(before, centralTree(t, root)) {
 		t.Fatal("canceled read changed fixture")
@@ -308,45 +297,5 @@ func TestMessageArchiveCancellationBoundaries(t *testing.T) {
 	boundary := &archiveBoundaryContext{Context: context.Background(), err: context.Canceled}
 	if _, err := c.ReadMessageArchive(boundary); !errors.Is(err, store.ErrMalformedStore) || boundary.calls != 1 {
 		t.Fatalf("reader error precedence: %v calls=%d", err, boundary.calls)
-	}
-}
-
-func TestMessageArchiveFilesAndCapturedStateDir(t *testing.T) {
-	root, c := archiveFixture(t)
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	paths, err := c.MessageArchiveFiles(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(paths, store.ArchiveFiles(root)) {
-		t.Fatal(paths)
-	}
-	paths[0] = "caller change"
-	path := filepath.Join(root, "agent-messages", "messages.json")
-	if err := os.WriteFile(path, []byte("malformed"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	before := centralTree(t, root)
-	paths, err = c.MessageArchiveFiles(context.Background())
-	if err != nil || !reflect.DeepEqual(paths, store.ArchiveFiles(root)) {
-		t.Fatalf("paths %v %v", paths, err)
-	}
-	if !reflect.DeepEqual(before, centralTree(t, root)) {
-		t.Fatal("path projection changed files")
-	}
-	if _, err := projmux.NewClient(projmux.Options{StateDir: "relative"}); err == nil || err.Error() != "StateDir must be absolute" {
-		t.Fatal(err)
-	}
-	// Default resolution is captured as well as explicit overrides.
-	stateHome := t.TempDir()
-	t.Setenv("XDG_STATE_HOME", stateHome)
-	defaults, err := projmux.NewClient(projmux.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	paths, err = defaults.MessageArchiveFiles(context.Background())
-	if err != nil || !reflect.DeepEqual(paths, store.ArchiveFiles(filepath.Join(stateHome, "projmux"))) {
-		t.Fatalf("captured defaults: %v %v", paths, err)
 	}
 }

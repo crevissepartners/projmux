@@ -7,7 +7,6 @@ import (
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	store "github.com/crevissepartners/projmux/internal/integrations/metadata"
-	"github.com/crevissepartners/projmux/internal/services/resources"
 	runtimeservice "github.com/crevissepartners/projmux/internal/services/runtime"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
 )
@@ -155,29 +154,6 @@ func internalProcessInventory(processes core.GraphProcessInventory) resourcegrap
 
 func internalProcessKey(key core.GraphProcessKey) resourcegraph.ProcessKey {
 	return resourcegraph.ProcessKey{Host: key.Host, Pane: key.Pane, Generation: key.Generation}
-}
-
-// ReadRegistryFileIdentity stats the Registry file without reading, locking,
-// or repairing it, and without runtime or provider contact. For the same file
-// state it equals ObserveResourceGraph's RegistryIdentity, so a caller can
-// decide cheaply whether a held graph's Registry read is still current. A
-// missing or unreadable file is a registry-unavailable refusal, never a zero
-// identity.
-func (c *Client) ReadRegistryFileIdentity(ctx context.Context) (core.RegistryFileIdentity, error) {
-	if err := ctx.Err(); err != nil {
-		return core.RegistryFileIdentity{}, err
-	}
-	if c.pathsErr != nil {
-		return core.RegistryFileIdentity{}, resourceRefusal(c.pathsErr)
-	}
-	identity, err := store.NewDefaultStore(c.paths).RegistryFileIdentity()
-	if err != nil {
-		return core.RegistryFileIdentity{}, resourceRefusal(&resources.Failure{Code: string(CodeRegistryUnavailable), Cause: err})
-	}
-	if err := ctx.Err(); err != nil {
-		return core.RegistryFileIdentity{}, err
-	}
-	return publicRegistryFileIdentity(identity), nil
 }
 
 // Explicit definitions rather than aliases keep internal types out of the

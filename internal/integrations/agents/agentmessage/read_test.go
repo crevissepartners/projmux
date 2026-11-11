@@ -500,20 +500,12 @@ func TestReadArchiveReadsALineWithoutAPayloadDigest(t *testing.T) {
 	}
 }
 
-func TestArchiveFilesNamesWhatReadArchiveReads(t *testing.T) {
+func TestReadArchiveReadsTheStoreThenEachLogGenerationInOrder(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "missing")
 	dir := filepath.Join(stateDir, storeDirName)
 	want := []string{filepath.Join(dir, storeFileName)}
 	for _, name := range historyReadOrder {
 		want = append(want, filepath.Join(dir, name))
-	}
-	files := ArchiveFiles(stateDir)
-	if !slices.Equal(files, want) {
-		t.Fatalf("ArchiveFiles = %v, want %v", files, want)
-	}
-	files[0] = "caller change"
-	if !slices.Equal(ArchiveFiles(stateDir), want) {
-		t.Fatal("caller mutation changed later result")
 	}
 	if _, err := os.Stat(stateDir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing directory changed: %v", err)

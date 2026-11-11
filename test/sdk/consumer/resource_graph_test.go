@@ -22,12 +22,7 @@ func TestExternalResourceGraphConsumer(t *testing.T) {
 	if err != nil || observed.Graph.Transport.Kind != "none" || len(observed.Graph.Unavailable) == 0 || observed.RegistryIdentity != nil {
 		t.Fatalf("%+v %v", observed, err)
 	}
-	var identity core.RegistryFileIdentity
-	identity, err = c.ReadRegistryFileIdentity(context.Background())
 	var refusal *projmux.Refusal
-	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeRegistryUnavailable || identity != (core.RegistryFileIdentity{}) {
-		t.Fatalf("%+v %v", identity, err)
-	}
 	_, err = c.ObserveResourceGraph(context.Background(), projmux.ResourceGraphRequest{SocketPath: "relative"})
 	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeRuntimeRequestInvalid {
 		t.Fatal(err)
