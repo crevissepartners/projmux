@@ -15,10 +15,6 @@
 // ResolvePaths returns the CLI-compatible config/state directories without file
 // access or environment changes. Its callbacks default to OS inputs;
 // ErrHomeDirRequired matches missing HOME fallback errors under errors.Is.
-// SettingsDirectories returns profiles/personas paths beneath an already resolved
-// config directory using filepath.Join lexical cleaning only. It performs no
-// environment, filesystem, Registry or tmux access and does not check existence
-// or permissions, expand variables or make relative inputs absolute.
 //
 // NewClient(Options{}) captures HOME/XDG_CONFIG_HOME/XDG_STATE_HOME defaults
 // exactly as the CLI does. Options{ConfigDir: "/absolute/path/projmux"} instead
@@ -35,8 +31,7 @@
 // from one effect-free Registry read, preserving row order and duplicate UIDs
 // with caller-owned values and no runtime observation. ObserveResourceGraph
 // joins one Registry read to one tmux and process observation with the CLI's
-// graph rules and reports that read's Registry file identity;
-// ReadRegistryFileIdentity stats the same file without reading it.
+// graph rules and reports that read's Registry file identity.
 // ReadRegistrySnapshotCached returns a snapshot with its read's file identity
 // and reuses a held one while the file is unchanged, and
 // ObserveResourceGraphFromSnapshot resolves a graph from a held snapshot and
@@ -51,8 +46,7 @@
 // plain relaunch would run with, without admitting that relaunch.
 // ReadAgentDisplaySettingsFromSnapshot resolves them for display from a held
 // snapshot's rows without reading the Registry, and reports per row whether
-// the result may be cached. SettingsInputPaths names the configuration inputs
-// that planning reads, and ReadProjectLinkRulesByUID reads one Project's link
+// the result may be cached. ReadProjectLinkRulesByUID reads one Project's link
 // rules and their file identity without the Registry.
 //
 // GetAISplitMode and SetAISplitMode preserve the synchronous legacy settings contract and take no context; they do not observe cancellation.
@@ -205,11 +199,6 @@
 // Options.DefaultShell overrides the CLI-compatible shell input. Neither
 // changes the environment or the configuration/state path defaults.
 //
-// ResolveProjectLabelLink resolves an actual label key/value from supplied public
-// rules and Project data using CORE placeholder, escaping and URL acceptance rules.
-// It returns ("", false) for missing/no-link inputs, leaves inputs unchanged and
-// accesses no files, environment, Registry, tmux or providers. It needs no Client.
-//
 // ReadProjectLinkRules, WriteProjectLinkRules and DeleteProjectLinkRules require an
 // explicit registered Project name or uid: ref and never contact tmux or providers.
 // The store format is ConfigDir/project-links/<uid>.json; result JSON includes
@@ -305,9 +294,8 @@
 // percentages are distinct; result pointers belong to the caller.
 
 // ReadMessageArchive supplies retained live bodies and reclaim-log history
-// through the existing read-only CORE reader; MessageArchiveFiles supplies its
-// three paths without opening or statting files. Both use captured StateDir,
-// create nothing, preserve caller ownership and check cancellation before and
+// through the existing read-only CORE reader. It uses the captured StateDir,
+// creates nothing, preserves caller ownership and checks cancellation before and
 // after successful synchronous work. Cross-file reads are not an atomic snapshot.
 // Payload access: 권한: 같은 사용자의 StateDir 읽기, 비밀 처리 없음.
 // Full live Payload text is exposed without redaction or secret filtering.

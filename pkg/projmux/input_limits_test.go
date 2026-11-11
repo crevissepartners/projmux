@@ -49,10 +49,8 @@ func TestPublicInputLimitsMatchValidators(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	inputs, err := projmux.SettingsInputPaths(paths.ConfigDir, uid)
-	if err != nil {
-		t.Fatal(err)
-	}
+	inputs := core.SettingsInputPaths{ProjectLinkRulesDir: filepath.Join(paths.ConfigDir, projectlinks.DirName)}
+	inputs.ProjectLinkRulesFile = filepath.Join(inputs.ProjectLinkRulesDir, uid+projectlinks.FileExt)
 	refused := func(err error, code projmux.Code) bool {
 		var refusal *projmux.Refusal
 		return errors.As(err, &refusal) && refusal.Code == code

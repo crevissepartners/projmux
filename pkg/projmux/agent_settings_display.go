@@ -41,8 +41,9 @@ import (
 // shares the agent guidance per provider and host and the label link rules per
 // provider and Project among the selected rows, and writes what every launch
 // plan writes: content-addressed snapshots and the guidance's one-time
-// first-use migration. Their result depends on the inputs SettingsInputPaths
-// names, the profiles and personas the rows' annotations name, and the
+// first-use migration. Their result depends on the agent guidance files, its
+// policy, fragments and migration receipt, the Project's guidance and label
+// link rules, the profiles and personas the rows' annotations name, and the
 // captured state directory those snapshots are written to.
 //
 // snapshot is only read. Results own their values; concurrent calls are

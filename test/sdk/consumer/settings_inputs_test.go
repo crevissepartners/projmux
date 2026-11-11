@@ -27,25 +27,18 @@ func TestExternalSettingsInputsAndLinkRulesByUID(t *testing.T) {
 	}
 
 	const project = "proj-eeeeeeeeeeeeeeeeeeeeeeeeee"
-	var paths core.SettingsInputPaths
-	paths, err = projmux.SettingsInputPaths(configDir, project)
-	if err != nil || paths.GuidanceFile != filepath.Join(configDir, "agent-guidance.md") || paths.ProjectLinkRulesFile != filepath.Join(configDir, "project-links", project+".json") {
-		t.Fatalf("%+v %v", paths, err)
-	}
+	linkRulesFile := filepath.Join(configDir, "project-links", project+".json")
 	var refusal *projmux.Refusal
-	if _, err = projmux.SettingsInputPaths(configDir, "uid:"+project); !errors.As(err, &refusal) || refusal.Code != projmux.CodeSelectorInvalid {
-		t.Fatal(err)
-	}
 
 	var rules core.ProjectLinkRulesRead
 	rules, err = c.ReadProjectLinkRulesByUID(ctx, project)
 	if err != nil || rules.FileIdentity != nil || rules.Rules.Links != nil {
 		t.Fatalf("%+v %v", rules, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(paths.ProjectLinkRulesFile), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(linkRulesFile), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(paths.ProjectLinkRulesFile, []byte(`{"links":[{"labelKey":"pr","template":"https://example.com/{value}"}]}`), 0600); err != nil {
+	if err := os.WriteFile(linkRulesFile, []byte(`{"links":[{"labelKey":"pr","template":"https://example.com/{value}"}]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	rules, err = c.ReadProjectLinkRulesByUID(ctx, project)
@@ -54,7 +47,7 @@ func TestExternalSettingsInputsAndLinkRulesByUID(t *testing.T) {
 	}
 	var identity core.FileIdentity = *rules.FileIdentity
 	_ = identity.ChangeTimeNanoseconds
-	if err := os.WriteFile(paths.ProjectLinkRulesFile, []byte("{"), 0600); err != nil {
+	if err := os.WriteFile(linkRulesFile, []byte("{"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = c.ReadProjectLinkRulesByUID(ctx, project); !errors.As(err, &refusal) || refusal.Code != projmux.CodeLinkRulesUnreadable {

@@ -68,27 +68,6 @@ func (c *Client) ReadMessageArchive(ctx context.Context) (core.MessageArchive, e
 	return out, nil
 }
 
-// MessageArchiveFiles returns the three paths ReadMessageArchive reads, in
-// order: StateDir/agent-messages/messages.json, history.jsonl, history.jsonl.1.
-// StateDir is captured at Client construction, including any explicit override.
-// It opens and stats nothing, even if archive contents are corrupt or missing,
-// and returns a caller-owned slice. Cancellation is checked before and after
-// projecting the paths. Callers may stat them for size/mtime change detection;
-// no cross-file atomic snapshot or replacement for file timestamps is supplied.
-func (c *Client) MessageArchiveFiles(ctx context.Context) ([]string, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if c.pathsErr != nil {
-		return nil, c.pathsErr
-	}
-	files := store.ArchiveFiles(c.paths.StateDir)
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	return files, nil
-}
-
 func archiveRoute(r message.Route) core.MessageRoute {
 	return core.MessageRoute{AgentUID: r.AgentUID, PaneUID: r.PaneUID, ActivationGeneration: r.ActivationGeneration, Provider: r.Provider, Incarnation: r.Incarnation}
 }

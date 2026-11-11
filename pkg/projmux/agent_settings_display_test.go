@@ -306,9 +306,12 @@ func TestReadAgentDisplaySettingsFromSnapshotCacheableFailures(t *testing.T) {
 	if got := readDisplay(t, c, snapshot, claude)[0]; !got.Cacheable {
 		t.Fatalf("clean %+v", got)
 	}
-	inputs, err := SettingsInputPaths(paths.ConfigDir, displayProjectUID)
-	if err != nil {
-		t.Fatal(err)
+	linkRulesDir := filepath.Join(paths.ConfigDir, projectlinks.DirName)
+	inputs := core.SettingsInputPaths{
+		GuidancePolicyFile:           filepath.Join(paths.ConfigDir, agentguidance.SettingsFileName),
+		GuidanceFragmentsDir:         filepath.Join(paths.ConfigDir, agentguidance.FragmentsDirName),
+		GuidanceMigrationReceiptFile: filepath.Join(paths.ConfigDir, agentguidance.MigrationFileName),
+		ProjectLinkRulesFile:         filepath.Join(linkRulesDir, displayProjectUID+projectlinks.FileExt),
 	}
 	expect := func(step string, cacheable bool) core.AgentSettingsResolution {
 		t.Helper()

@@ -54,9 +54,4 @@ func TestExternalMessageArchiveConsumer(t *testing.T) {
 	if !reflect.DeepEqual(archive, want) {
 		t.Fatalf("archive %+v, want %+v", archive, want)
 	}
-	var paths []string
-	paths, err = client.MessageArchiveFiles(context.Background())
-	if err != nil || !reflect.DeepEqual(paths, []string{filepath.Join(dir, "messages.json"), filepath.Join(dir, "history.jsonl"), filepath.Join(dir, "history.jsonl.1")}) {
-		t.Fatalf("paths %v %v", paths, err)
-	}
 }

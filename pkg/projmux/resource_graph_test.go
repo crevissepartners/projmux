@@ -280,34 +280,19 @@ func TestObserveResourceGraphOmitsIdentityWhenRegistryChanges(t *testing.T) {
 	}
 }
 
-func TestReadRegistryFileIdentityMatchesGraphIdentity(t *testing.T) {
+func TestObserveResourceGraphIdentityMatchesStoreIdentity(t *testing.T) {
 	ctx := context.Background()
 	c, paths := graphFixtureClient(t, graphFixtureRegistry(t))
 	got, err := c.ObserveResourceGraph(ctx, ResourceGraphRequest{})
 	if err != nil || got.RegistryIdentity == nil {
 		t.Fatalf("%+v %v", got.RegistryIdentity, err)
 	}
-	identity, err := c.ReadRegistryFileIdentity(ctx)
-	if err != nil || identity != *got.RegistryIdentity {
-		t.Fatalf("stat identity %+v differs from graph identity %+v: %v", identity, *got.RegistryIdentity, err)
-	}
 	internal, err := store.NewDefaultStore(paths).RegistryFileIdentity()
-	if err != nil || publicRegistryFileIdentity(internal) != identity {
-		t.Fatalf("%+v %+v %v", internal, identity, err)
-	}
-	if err := os.Remove(store.PathFor(paths.StateDir)); err != nil {
-		t.Fatal(err)
-	}
-	_, err = c.ReadRegistryFileIdentity(ctx)
-	var refusal *Refusal
-	if !errors.As(err, &refusal) || refusal.Code != CodeRegistryUnavailable {
-		t.Fatalf("missing Registry identity: %v", err)
+	if err != nil || publicRegistryFileIdentity(internal) != *got.RegistryIdentity {
+		t.Fatalf("%+v %+v %v", internal, *got.RegistryIdentity, err)
 	}
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := c.ReadRegistryFileIdentity(canceled); !errors.Is(err, context.Canceled) {
-		t.Fatal(err)
-	}
 	if _, err := c.ObserveResourceGraph(canceled, ResourceGraphRequest{}); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}

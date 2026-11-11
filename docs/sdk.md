@@ -45,31 +45,6 @@ or `HOME or an absolute XDG_STATE_HOME is required`, matching the public
 but both environment callbacks have already run. Every error returns zero Paths;
 wrapped callback errors retain their original cause.
 
-`SettingsDirectories(configDir)` returns `(profilesDir, personasDir)` beneath an
-already resolved projmux configuration directory, for example
-`projmux.SettingsDirectories(paths.ConfigDir)`. It uses the CLI's profile and
-persona directory names and `filepath.Join` lexical cleaning. Empty and relative
-inputs remain relative; environment variables and tilde are not expanded.
-The function accesses no environment, files, Registry, tmux or providers and
-creates nothing, including when the directories are missing. It does not check
-existence or access permissions or make paths absolute.
-
-`SettingsInputPaths(configDir, projectUID)` returns
-`core.SettingsInputPaths` beneath the same resolved configuration directory,
-with the same lexical cleaning and the same absence of effects: the agent
-guidance file (`GuidanceFile`), its policy (`GuidancePolicyFile`), its
-fragments directory (`GuidanceFragmentsDir`, whose `.md` files are read), the
-one-time migration receipt (`GuidanceMigrationReceiptFile`) and its backup
-(`GuidanceMigrationBackupFile`), the directory holding every Project's label
-link rules (`ProjectLinkRulesDir`), and, for a bare Project UID, that
-Project's guidance (`ProjectGuidanceFile`) and label link rules
-(`ProjectLinkRulesFile`, inside `ProjectLinkRulesDir`). An empty `projectUID`
-returns the five global paths and `ProjectLinkRulesDir` and leaves the two
-Project file fields empty; any other value that is not a bare Project UID is a
-`CodeSelectorInvalid` refusal with the zero result. Nothing says a path exists
-or can be read. The directories' entries and each fragment are for the caller
-to observe.
-
 `MaxProjectLinkRulesBytes` and `MaxAgentGuidanceBytes` are the byte limits the
 SDK's own validators enforce, defined by them rather than copied. A stored
 link rules file larger than `MaxProjectLinkRulesBytes` is a
@@ -576,14 +551,7 @@ Both functions read nothing, need no Client and never fail. The caller owns
 every returned value; changing it affects no later call
 (`TestUsageHUDProvidersAreCopiedPerCall`).
 
-### Message origin, payload digest and process Wait judgements
-
-`projmux.IsOperatorMessageOrigin(origin)` reports whether a `core.MessageOrigin`
-is the operator origin: kind `operator` with a valid client name (lowercase ASCII
-letters, digits and `-`, starting with a letter, at most 32 bytes). An Agent
-origin, an empty origin and an operator origin with an empty or invalid client
-are false; kind and client are not trimmed or case-folded. It is the judgement
-behind `Operator` on archive entries (`TestIsOperatorMessageOriginEqualsInternal`).
+### Claude approval request id judgement
 
 `projmux.IsClaudeApprovalRequestID(id)` reports whether `id` has the shape of a
 permission request id projmux mints for a Claude Agent: `permission-` followed
@@ -593,25 +561,7 @@ trimmed. `AnswerApproval` trims a Claude Agent's `RequestID` and refuses it with
 does not mean the request exists or is pending. It is the rule behind that
 refusal, not a second copy (`TestIsClaudeApprovalRequestIDEqualsInternal`).
 
-`projmux.MessagePayloadSHA256(payload)` returns the SHA-256 of the payload's
-exact bytes as 64 lowercase hex characters, the value a message history entry
-carries in `PayloadSHA256`
-(`TestMessagePayloadSHA256EqualsInternal`,
-`TestMessagePayloadSHA256EqualsArchiveEntry`).
-
-`projmux.MatchesProcessWait(binding, receipt)` reports whether a
-`*core.TerminationEvidence` is the exact supervisor Wait of the process
-generation a `core.ProcessBinding` names: source `supervisor`, an observation
-time, the binding's Pane, Agent, generation and operation, one exit code from 0
-to 255 or one signal (not both), and a classification that agrees with that
-status (`normal` is also accepted for any status, as the Registry accepts it).
-Host, Project and Window of the binding are not compared. A nil receipt is
-false. `ReadAgentHostLostFromPrepared` covers only an Agent whose host and child
-are gone while its activation remains; this check is for a Pane already Offline
-whose `LastTermination` must match its binding
-(`TestMatchesProcessWaitEqualsInternal`).
-
-All four read nothing, need no Client and never fail.
+It reads nothing, needs no Client and never fails.
 
 ### Owner-private socket listener
 
@@ -1579,15 +1529,9 @@ consumer. Slices are caller-owned, preserve nil/empty shape, and cannot change
 later calls. Reads create nothing and take no lock. A store read observes one
 complete renamed version, but there is no atomic snapshot across the three files.
 
-`Client.MessageArchiveFiles(ctx)` returns a caller-owned slice of exactly these
-three paths under `StateDir/agent-messages`, in the same order: `messages.json`,
-`history.jsonl`, `history.jsonl.1`. It opens and stats nothing and works even
-when contents are missing or corrupt. Consumers can stat size and mtime for
-change detection; the SDK does not replace file timestamps with the current time.
-
-Both methods check cancellation before admission and after a successful
-synchronous read or path projection. They cannot interrupt an ongoing file read;
-a reader error takes precedence over cancellation during that read. Cancellation
+`Client.ReadMessageArchive` checks cancellation before admission and after a
+successful synchronous read. It cannot interrupt an ongoing file read; a reader
+error takes precedence over cancellation during that read. Cancellation
 returns a context error and no partial result. Existing `SendMessage` and
 `MessageStatus` behavior is unchanged.
 
@@ -1883,23 +1827,6 @@ atomic save and permission policy. Deleting an absent file with its current
 revision succeeds. Context cancellation or deadline before writer admission is
 preserved without changing guidance; an admitted atomic mutation finishes.
 External editors that ignore the lock are outside this concurrency guarantee.
-
-## Resolve an actual Project label link
-
-`projmux.ResolveProjectLabelLink(rules core.ProjectLinkRules, project core.Project,
-key, value string) (string, bool)` uses CORE's resolver for actual label values:
-
-```go
-url, linked := projmux.ResolveProjectLabelLink(rules, project, "pr", "725")
-```
-
-It returns `(URL, true)` on success and `("", false)` for missing rules or
-variables, empty values, or expansions CORE rejects. Label values and Project
-UID/name/labels are path-escaped; URL placeholders lose trailing slashes.
-The function is deterministic, leaves its inputs unchanged, and accesses no
-files, environment, Registry, tmux or providers. It needs no Client, does not
-load or validate stored rules, and does not open the URL. Existing link-rule
-CRUD and result DTOs retain their behavior.
 
 ## Project link rules in a degraded Registry
 
@@ -2267,11 +2194,7 @@ with no `Graph.Unavailable` entry. Neither is an error.
 `RegistryIdentity` is the `core.RegistryFileIdentity` of the file the rows were
 read from. It is set only when both stats succeed and agree; a replacement in
 between, or a file that cannot be stat'ed, leaves it nil and the graph is still
-returned. `Client.ReadRegistryFileIdentity(ctx)` stats the same file without
-reading, locking, repairing it, or contacting tmux or providers, and for the
-same file state returns the same value. Use it to decide cheaply whether a held
-graph is still current; a missing file is a `CodeRegistryUnavailable` refusal,
-never a zero identity.
+returned.
 
 ```go
 observed, err := client.ObserveResourceGraph(ctx, projmux.ResourceGraphRequest{SocketName: "projmux"})
@@ -2280,12 +2203,6 @@ if err != nil {
 }
 for _, pane := range observed.Graph.Panes {
     fmt.Println(pane.Pane.Metadata.UID, pane.Class, pane.Status)
-}
-if observed.RegistryIdentity != nil {
-    current, err := client.ReadRegistryFileIdentity(ctx)
-    if err == nil && current == *observed.RegistryIdentity {
-        // The Registry has not been rewritten since this graph was read.
-    }
 }
 ```
 
@@ -2615,7 +2532,8 @@ including their JSON, are unchanged.
   `Unavailable` is set. An off part, or one omitted for a missing Project, is
   not a failure. It describes this call only; do not cache a false result.
   `ReadAgentSettings` leaves it false.
-- A result also depends on the files `SettingsInputPaths` names, the profiles
+- A result also depends on the agent guidance, its policy, fragments and
+  migration receipt, the Project's guidance and link rules, the profiles
   and personas the annotations name, the built-in guidance of this build and
   the captured state directory. Planning writes what every launch plan writes,
   content-addressed snapshots and the guidance's one-time first-use migration,
