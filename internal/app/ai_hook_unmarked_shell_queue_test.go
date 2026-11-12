@@ -197,9 +197,9 @@ func TestHookUnmarkedShellPaneUnknownIdentityQueuesNothing(t *testing.T) {
 // The manual attention toggle carries no hook provider, so an app-owned Pane
 // without a marker stays out of the queue exactly as before.
 func TestManualAttentionPushOnUnmarkedAppOwnedShellPaneQueuesNothing(t *testing.T) {
-	cmd, store := unmarkedShellCommand(t, "%7", unmarkedShellOptions{appMarker: "1", paneUID: "pane-shell"})
+	store := &stubNotifyStore{}
 	producer := &storeAttentionNotifyProducer{store: store}
-	producer.PushReplyReady(attentionNotifyInput{PaneID: "%7", Lookup: cmd.notifyLookup()})
+	producer.PushReplyReady(attentionNotifyInput{PaneID: "%7", Lookup: unmarkedAppPaneLookup{}})
 	if len(store.pushed) != 0 {
 		t.Fatalf("manual toggle queued %d entries", len(store.pushed))
 	}
@@ -258,4 +258,21 @@ func TestHookSharedAppServerRegisteredConversationStillQueues(t *testing.T) {
 	if len(store.pushed) != 1 || store.pushed[0].Target.Pane != "%7" || store.pushed[0].Target.Socket != "/tmp/app/socket" {
 		t.Fatalf("shared app-server hook queue = %+v, want one entry for %%7", store.pushed)
 	}
+}
+
+// unmarkedAppPaneLookup answers like a server that owns an unmarked shell Pane.
+type unmarkedAppPaneLookup struct{}
+
+func (unmarkedAppPaneLookup) PaneOption(string, string) string { return "" }
+
+func (unmarkedAppPaneLookup) PaneFormat(_, format string) string {
+	switch format {
+	case "#{@projmux_app}":
+		return "1"
+	case "#{@projmux_pane_uid}":
+		return "pane-shell"
+	case "#S":
+		return "workspace"
+	}
+	return ""
 }
