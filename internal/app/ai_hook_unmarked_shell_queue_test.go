@@ -214,3 +214,48 @@ func TestHookMarkedPaneStillQueuesUnderItsMarker(t *testing.T) {
 		t.Fatalf("marked pane queue pushes = %d, want 1", len(store.pushed))
 	}
 }
+
+// Shared app-server regression: a detached Codex hook (no TMUX, no --pane) for
+// a conversation the Registry records on a managed Pane still queues from the
+// Pane's own marker, on the app route, with the Registry-attributed target.
+func TestHookSharedAppServerRegisteredConversationStillQueues(t *testing.T) {
+	registry := conversationRegistry("pane-owned", "%7", &coremetadata.CodexActivationBinding{ThreadID: "owned"}, nil)
+	registry.Agents[0].Spec.Provider = "codex"
+	cmd := testAICommand(t.TempDir())
+	cmd.loadRegistry = func() (coremetadata.Registry, error) { return registry.Clone(), nil }
+	cmd.updateRegistry = func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
+		working := registry.Clone()
+		if err := fn(&working); err != nil {
+			return coremetadata.Registry{}, err
+		}
+		registry = working.Normalize()
+		return registry.Clone(), nil
+	}
+	store := &stubNotifyStore{}
+	cmd.producer = &storeAttentionNotifyProducer{store: store}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "tmux" {
+			return nil, os.ErrNotExist
+		}
+		if _, ok := testAIPaneRouteProbe(name, args); ok {
+			return codexHookDeliveryRouteRow("%7", "pane-owned"), nil
+		}
+		plain := stripRecordedTmuxRoute(args)
+		if len(plain) > 0 && plain[0] == "display-message" {
+			values := map[string]string{
+				"#{" + aiPaneAgentOption + "}": "codex",
+				"#S":                           "workspace", "#{window_id}": "@1",
+				"#{pane_id}": "%7", "#{socket_path}": "/tmp/app/socket",
+			}
+			return []byte(values[plain[len(plain)-1]]), nil
+		}
+		return nil, nil
+	}
+	cmd.stdin = strings.NewReader(`{"hook_event_name":"Stop","thread_id":"owned","turn_id":"t1","cwd":"/srv/alpha","last_assistant_message":"done"}`)
+	if err := cmd.Run([]string{"ingest", "codex-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.pushed) != 1 || store.pushed[0].Target.Pane != "%7" || store.pushed[0].Target.Socket != "/tmp/app/socket" {
+		t.Fatalf("shared app-server hook queue = %+v, want one entry for %%7", store.pushed)
+	}
+}
