@@ -386,6 +386,39 @@ func claudeApprovalFenced(markers aiHookPaneMarkers) bool {
 func (c *aiCommand) ingestClaudeSubagentApprovalAnswered(paneID string, payload claudeHookPayload, metadata map[string]string,
 	action aiHookActionResolution, markers aiHookPaneMarkers,
 ) (answered bool, err error) {
+	return c.settleClaudeSubagentApproval(paneID, payload, metadata, action, markers, aiIngestReasonSubagentApprovalAnswered)
+}
+
+// ingestClaudeSubagentApprovalAnsweredInProjmux is the same judgment for a
+// request projmux answered itself: the permission hook calls it once the
+// store settled the request as allowed or denied, so the badge does not wait
+// for the approved tool to finish. payload carries the request's agent_id,
+// agent_type and session_id; explicitPane is the hook's --pane. A request
+// that cannot be attributed to a Pane or to a subagent changes nothing.
+func (c *aiCommand) ingestClaudeSubagentApprovalAnsweredInProjmux(explicitPane string, payload claudeHookPayload) error {
+	if payload.AgentID == "" {
+		return nil
+	}
+	payload.EventName = "PermissionRequest"
+	identity, _ := c.matchAIHookPane(aiPaneMatchInput{
+		ExplicitPane: explicitPane,
+		Provider:     aiModeClaude,
+		SessionID:    payload.SessionID,
+	})
+	paneID := identity.paneID
+	if paneID == "" {
+		return nil
+	}
+	c = c.withAIHookPaneRoute(identity)
+	_, err := c.settleClaudeSubagentApproval(paneID, payload, payload.claudeMetadata(),
+		c.aiHookEffectiveAction(aiHookProviderClaude, payload.EventName), c.readAIHookPaneMarkers(paneID),
+		aiIngestReasonSubagentApprovalAnsweredInProjmux)
+	return err
+}
+
+func (c *aiCommand) settleClaudeSubagentApproval(paneID string, payload claudeHookPayload, metadata map[string]string,
+	action aiHookActionResolution, markers aiHookPaneMarkers, answeredReason aiIngestReason,
+) (answered bool, err error) {
 	if payload.AgentID == "" || (action.Action == aiHookActionQuiet && action.Source == aiHookActionSourceRuntime) {
 		return false, nil
 	}
@@ -445,7 +478,7 @@ func (c *aiCommand) ingestClaudeSubagentApprovalAnswered(paneID string, payload 
 			c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "quiet", aiIngestReasonSubagentApprovalFenced))
 			return
 		}
-		c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "state", aiIngestReasonSubagentApprovalAnswered))
+		c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "state", answeredReason))
 	})
 	if lockErr != nil {
 		c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "quiet", aiIngestReasonSubagentApprovalLocked))

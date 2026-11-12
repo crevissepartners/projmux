@@ -625,6 +625,28 @@ under a subagent the set does not hold keeps the badge, recorded as
 reach the operator-answer handling that would otherwise return an owned
 Agent to `in_progress`.
 
+When the answer is given in projmux, the badge does not wait for the approved
+tool to finish. With `agent-approval-answering` set to `projmux`, the
+`PermissionRequest` hook (`projmux internal claude-permission-hook`) prints its
+allow or deny decision for a subagent's request, and then runs the same
+judgment for that request's `agent_id`: the id leaves the set, and when the set
+is empty the projection returns to `in_progress` without a notification, state
+only. It takes the same per-Pane lock below and follows the same fence rules.
+The record is `result=state` with reason `subagent approval answered in projmux`,
+or `result=quiet` with reason `subagent approval still pending` while other
+subagents still wait. The tool's later `PostToolUse` then finds the Pane
+already busy and records nothing more. A main-thread request, and a hook that
+cannot reach the Pane, are not released this way. Known limit: an answer given
+in projmux to a request whose approval badge the ingest has not projected yet
+(an answer within milliseconds of the request) changes nothing, and that badge
+keeps its earlier behavior and clears when the tool finishes.
+
+An answer given in the terminal (Claude Code's own prompt, in either answering
+setting) tells projmux nothing: Claude Code has no hook event or notification
+for it. The badge then clears only when the approved tool finishes, through the
+`PostToolUse` or `PostToolUseFailure` described above, so a long-running tool
+keeps showing the approval badge for its whole run.
+
 Requests and answers change the set under a per-Pane lock in the state
 directory (`claude-approval-locks/`, one of 64 files chosen by the Pane's tmux
 route and id). Inside the lock the hook reads the badge and the set again, and
@@ -1102,6 +1124,10 @@ and with no store file it opens nothing. Known limit: an answer from projmux
 that the store records after the terminal "Yes" but before its `PostToolUse`
 is still accepted and printed. Claude Code has already run the tool by then
 and ignores the late output, but the audit log shows that projmux answer.
+
+A terminal "Yes" also leaves a subagent's approval badge until the approved
+tool finishes (see the subagent approval section above); only an answer given
+in projmux releases it at once.
 
 `--via` is reported by the caller and recorded as given; projmux does not
 verify it. Every event (`requested`, `allowed`, `denied`, `expired`, `closed`,

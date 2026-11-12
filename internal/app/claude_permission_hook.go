@@ -136,6 +136,10 @@ type claudePermissionHook struct {
 	readRecord   func(*agentapproval.Store, string) (agentapproval.Record, bool, error)
 	newID        func() (string, error)
 	now          func() time.Time
+	// answered runs after the hook printed an allow or deny decision for a
+	// subagent's request. The default releases the approval badge that request
+	// raised; a nil answered does nothing.
+	answered func(explicitPane string, payload claudeHookPayload)
 }
 
 func defaultClaudePermissionHook() claudePermissionHook {
@@ -154,7 +158,18 @@ func defaultClaudePermissionHook() claudePermissionHook {
 		giveUp:    claudePermissionGiveUp,
 		newID:     agentapproval.NewID,
 		now:       time.Now,
+		answered:  releaseClaudeSubagentApprovalBadge,
 	}
+}
+
+// releaseClaudeSubagentApprovalBadge returns the window badge a subagent's
+// request raised to busy once projmux has answered it, rather than when the
+// approved tool finishes. It reports nothing: the badge then simply keeps
+// waiting for the PostToolUse ingest, as it does for an answer given in the
+// terminal.
+func releaseClaudeSubagentApprovalBadge(explicitPane string, payload claudeHookPayload) {
+	defer func() { _ = recover() }()
+	_ = newAICommand().ingestClaudeSubagentApprovalAnsweredInProjmux(explicitPane, payload)
 }
 
 // runClaudePermissionHook is the process entry of the route. SIGTERM, which
@@ -289,6 +304,15 @@ func (h claudePermissionHook) run(ctx context.Context, args []string, stdin io.R
 		_, _ = stdout.Write(claudePermissionAllowDecision)
 	case agentapproval.StateDenied:
 		_, _ = stdout.Write(claudePermissionDenyDecision)
+	default:
+		return
+	}
+	// The decision is out: a subagent's request is answered now, and no later
+	// event tells Claude Code's status until the approved tool finishes.
+	if h.answered != nil && strings.TrimSpace(payload.AgentID) != "" {
+		h.answered(strings.TrimSpace(*paneRef), claudeHookPayload{
+			AgentID: strings.TrimSpace(payload.AgentID), AgentType: strings.TrimSpace(payload.AgentType), SessionID: payload.SessionID,
+		})
 	}
 }
 

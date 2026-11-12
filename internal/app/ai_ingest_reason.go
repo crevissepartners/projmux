@@ -107,10 +107,11 @@ const (
 	aiIngestReasonHighVolumeEvent aiIngestReason = "high-volume event"
 	aiIngestReasonInvocationStart aiIngestReason = "invocation started"
 
-	aiIngestReasonSubagentApprovalAnswered aiIngestReason = "subagent approval answered"
-	aiIngestReasonSubagentApprovalPending  aiIngestReason = "subagent approval still pending"
-	aiIngestReasonSubagentApprovalLocked   aiIngestReason = "subagent approval lock unavailable"
-	aiIngestReasonSubagentApprovalFenced   aiIngestReason = "subagent approval fenced"
+	aiIngestReasonSubagentApprovalAnswered          aiIngestReason = "subagent approval answered"
+	aiIngestReasonSubagentApprovalAnsweredInProjmux aiIngestReason = "subagent approval answered in projmux"
+	aiIngestReasonSubagentApprovalPending           aiIngestReason = "subagent approval still pending"
+	aiIngestReasonSubagentApprovalLocked            aiIngestReason = "subagent approval lock unavailable"
+	aiIngestReasonSubagentApprovalFenced            aiIngestReason = "subagent approval fenced"
 )
 
 // aiIngestReasonUnclassified is what a value outside the vocabulary becomes.
@@ -206,6 +207,7 @@ var aiIngestReasons = func() []aiIngestReason {
 		aiIngestReasonHighVolumeEvent,
 		aiIngestReasonInvocationStart,
 		aiIngestReasonSubagentApprovalAnswered,
+		aiIngestReasonSubagentApprovalAnsweredInProjmux,
 		aiIngestReasonSubagentApprovalPending,
 		aiIngestReasonSubagentApprovalLocked,
 		aiIngestReasonSubagentApprovalFenced,
