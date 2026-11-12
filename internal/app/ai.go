@@ -77,30 +77,30 @@ const (
 )
 
 type aiCommand struct {
-	processCreateContext          *mutationruntime.ProcessCreateContext
-	nativeObserverPaths           *mutationruntime.NativeObserverPaths
-	nativePicker                  intpicker.Runner
-	executable                    func() (string, error)
-	lookupEnv                     func(string) string
-	homeDir                       func() (string, error)
-	stdin                         io.Reader
-	readFile                      func(string) ([]byte, error)
-	writeFile                     func(string, []byte, os.FileMode) error
-	mkdirAll                      func(string, os.FileMode) error
-	runCommand                    func(ctx context.Context, name string, args ...string) error
-	readCommand                   func(ctx context.Context, name string, args ...string) ([]byte, error)
-	now                           func() time.Time
-	sleep                         func(time.Duration)
-	producer                      attentionNotifyProducer
-	notifyStore                   notifyStore
-	events                        notifyQueueRefreshEvents
-	notifyDiagnostics             *diagnostics.NotifyFocusRecorder
+	processCreateContext *mutationruntime.ProcessCreateContext
+	nativeObserverPaths  *mutationruntime.NativeObserverPaths
+	nativePicker         intpicker.Runner
+	executable           func() (string, error)
+	lookupEnv            func(string) string
+	homeDir              func() (string, error)
+	stdin                io.Reader
+	readFile             func(string) ([]byte, error)
+	writeFile            func(string, []byte, os.FileMode) error
+	mkdirAll             func(string, os.FileMode) error
+	runCommand           func(ctx context.Context, name string, args ...string) error
+	readCommand          func(ctx context.Context, name string, args ...string) ([]byte, error)
+	now                  func() time.Time
+	sleep                func(time.Duration)
+	producer             attentionNotifyProducer
+	notifyStore          notifyStore
+	events               notifyQueueRefreshEvents
+	notifyDiagnostics    *diagnostics.NotifyFocusRecorder
 
 	// hookNotifyProvider is set only on a hook invocation whose Pane identity
 	// is attributed. It is evaluated lazily, only when the producer finds the Pane
 	// unmarked, and answers a provider only for an exact identity (explicit UID,
 	// or the inherited server's own TMUX_PANE).
-	hookNotifyProvider func() string
+	hookNotifyProvider            func() string
 	operationalDiagnostics        *diagnostics.AIRecorder
 	openCodexCatalog              aisessions.OpenCodexCatalog
 	codexNative                   codexNativeThreadController
