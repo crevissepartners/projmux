@@ -1290,27 +1290,30 @@ state-only transitions, quiet high-volume events, and notify pushes. Raw hook
 payloads are not stored.
 
 A `notify` result means the hook asked for a notification, not that one was
-queued. When the hook reached the queue decision, the same record also carries
-`queue` and, when nothing was queued, `queue_reason`:
+queued. When the hook reached the queue decision, its `notify` record also
+carries `queue` and, when nothing was queued, `queue_reason`:
 
 | `queue` | `queue_reason` | Meaning |
 | --- | --- | --- |
-| `queued` | omitted | the hook created an entry in the internal notify queue |
+| `queued` | omitted | the queue accepted the hook's entry (a new entry, or a replacement of the entry with the same ID) |
 | `not_queued` | `not_app_owned` | the Pane has no provider marker and its server is not proven app-owned (foreign or standalone server) |
 | `not_queued` | `no_pane_uid` | the Pane is app-owned but the app never gave it a Pane UID |
 | `not_queued` | `no_provider` | the Pane has no provider marker and the caller supplied no hook provider |
-| `not_queued` | `no_pane` | no Pane was named |
 | `not_queued` | `no_session` | tmux answered no session for the Pane |
 | `not_queued` | `no_store` | the notify queue could not be opened |
 | `not_queued` | `push_failed` | the queue refused the entry |
 | `not_queued` | `visible_pane` | the Pane was already in front of the user and delivery was not forced |
-| `not_queued` | `state_only` | the event updates state and never queues |
 | `not_queued` | `observation_ignored` | the Registry ignored the observation before the queue decision |
 
-A record with no `queue` field never reached the queue decision. The fields are
-added to the record; `result` and every other field keep their meaning. The
-`queue_reason` tokens are diagnostic aids for `projmux diagnostics agent-hook`,
-not a public contract: do not script against them.
+The fields are attached to hook `notify` records only. A record without them
+did not get a queue result attached; that does not mean no queue decision was
+made. `state` and `error` records, for example, never carry the fields even
+when the same invocation reached the queue. State-only events are logged
+as `state` and so show no queue reason at all, and a hook that names no Pane is
+logged as `ignored`, so neither appears here. The fields are added to the record;
+`result` and every other field keep their meaning. The `queue_reason` tokens
+are diagnostic aids for `projmux diagnostics agent-hook`, not a public
+contract: do not script against them.
 
 Use `projmux diagnostics agent-hook` to inspect recent entries; the text form
 prints `queue=` and `queue_reason=` next to `reason=`:
