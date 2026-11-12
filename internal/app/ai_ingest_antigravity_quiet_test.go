@@ -330,6 +330,12 @@ func TestAntigravityHookOutcomeIsUnchangedByMarkingOnce(t *testing.T) {
 			Pane: antigravityQuietHookPane, CWD: antigravityQuietHookCWD, ThreadID: antigravityQuietHookConversation,
 		}}
 	}
+	// notQueued adds the queue decision the fixture's tmux answers produce: it
+	// answers no provider marker and no app marker, so the producer refuses.
+	notQueued := func(records []aiIngestLogEntry, why string) []aiIngestLogEntry {
+		records[0].Queue, records[0].QueueReason = "not_queued", why
+		return records
+	}
 	// markers is the hook marking of an owned Pane; every event leaves it.
 	markers := func(extra map[string]string) map[string]string {
 		options := map[string]string{
@@ -367,7 +373,7 @@ func TestAntigravityHookOutcomeIsUnchangedByMarkingOnce(t *testing.T) {
 			}),
 			SessionRef:      ref,
 			ActivationState: "acknowledged", ActivationSource: "provider-hook",
-			Records: record("Stop", "notify", ""),
+			Records: notQueued(record("Stop", "notify", ""), "no_provider"),
 		}},
 		{name: "Stop runtime state", event: "Stop", payload: stopPayload, action: aiHookActionState, want: antigravityQuietHookOutcome{
 			PaneOptions: markers(map[string]string{

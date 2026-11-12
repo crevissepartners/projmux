@@ -333,6 +333,12 @@ func TestClaudeHookOutcomeIsUnchangedByMarkingOnce(t *testing.T) {
 			Pane: claudeQuietHookPane, CWD: claudeQuietHookCWD, SessionID: claudeQuietHookSession,
 		}}
 	}
+	// notQueued adds the queue decision the fixture's tmux answers produce: it
+	// answers no provider marker and no app marker, so the producer refuses.
+	notQueued := func(records []aiIngestLogEntry, why string) []aiIngestLogEntry {
+		records[0].Queue, records[0].QueueReason = "not_queued", why
+		return records
+	}
 	// markers is the hook marking of an owned Pane; every event leaves it.
 	markers := func(extra map[string]string) map[string]string {
 		options := map[string]string{
@@ -397,7 +403,7 @@ func TestClaudeHookOutcomeIsUnchangedByMarkingOnce(t *testing.T) {
 			}),
 			SessionRef:      ref,
 			ActivationState: "acknowledged", ActivationSource: "provider-hook",
-			Records: record("Stop", "notify", ""),
+			Records: notQueued(record("Stop", "notify", ""), "not_app_owned"),
 		}},
 		{name: "unknown event", event: "ExperimentalEvent", want: claudeQuietHookOutcome{
 			PaneOptions: markers(nil), SessionRef: ref,

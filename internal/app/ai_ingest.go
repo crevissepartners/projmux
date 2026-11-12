@@ -112,6 +112,12 @@ type aiIngestLogEntry struct {
 	ThreadID                string                             `json:"thread_id,omitempty"`
 	SessionID               string                             `json:"session_id,omitempty"`
 	TurnID                  string                             `json:"turn_id,omitempty"`
+	// Queue says whether a hook's `notify` record created an entry in the
+	// internal notify queue ("queued") or did not ("not_queued"); QueueReason
+	// then names the guard that stopped it. Both are diagnostic additions: the
+	// result word is unchanged, and the tokens are not a public contract.
+	Queue       string `json:"queue,omitempty"`
+	QueueReason string `json:"queue_reason,omitempty"`
 	// Epoch is the observer epoch label a lifecycle transition belongs to. It
 	// is what makes two adjacent records comparable: the same label twice is
 	// one epoch reporting twice, a new label is a new connection.
@@ -402,6 +408,7 @@ func (c *aiCommand) ingestBell(paneID string) error {
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "tmux-bell", Event: "bell", Result: "error", Reason: aiIngestFailureReason(aiIngestReasonNotifyPushFailed, err), Pane: info.Pane})
 		return err
 	}
+	c.noteNotifyQueueOutcome(notifyQueueOutcome{Queued: true})
 	c.publishNotifyQueueRefreshBestEffort()
 	c.recordBellNotification(info.Pane)
 	c.appendAIIngestLog(aiIngestLogEntry{Source: "tmux-bell", Event: "bell", Result: "notify", Pane: info.Pane})
@@ -478,6 +485,7 @@ func (c *aiCommand) appendAIIngestLog(entry aiIngestLogEntry) {
 	// folded in first: a hook whose Pane writes did not land must not reach
 	// either of them still calling itself a delivery.
 	entry = c.honestAIIngestResult(entry)
+	entry = c.withNotifyQueueOutcome(entry)
 	// The legacy file remains the compatibility surface. Phase 5 projects only
 	// anomalous, closed classifications into the common journal independently
 	// of whether this best-effort legacy append succeeds.
@@ -570,6 +578,8 @@ func formatAIIngestLogEntry(entry aiIngestLogEntry) string {
 		{"agent_id", entry.AgentID},
 		{"agent_type", entry.AgentType},
 		{"reason", string(entry.Reason)},
+		{"queue", entry.Queue},
+		{"queue_reason", entry.QueueReason},
 	} {
 		if strings.TrimSpace(field.value) != "" {
 			parts = append(parts, field.key+"="+field.value)

@@ -26,6 +26,9 @@ var aiCommandGuardedIngestFields = []string{
 	"pendingCodexBindings",
 	"paneWriteMu",
 	"paneWriteFailure",
+	"notifyQueueMu",
+	"notifyQueue",
+	"notifyQueueRecorded",
 }
 
 type managedIngestMigrationAIBuilder struct {
@@ -112,6 +115,18 @@ func TestManagedIngestMigrationAIKeepsGuardedIngestStateSeparate(t *testing.T) {
 			t.Fatalf("original recorded the clone's pane write failure %q", got)
 		}
 	})
+
+	t.Run("queue outcome noted on the clone", func(t *testing.T) {
+		orig := &aiCommand{}
+		clone := (&tmuxCommand{ai: orig}).managedIngestMigrationAI()
+		clone.noteNotifyQueueOutcome(notifyQueueOutcome{Queued: true})
+		if _, ok := clone.takeNotifyQueueOutcome(); !ok {
+			t.Fatal("clone did not record its own queue outcome")
+		}
+		if _, ok := orig.takeNotifyQueueOutcome(); ok {
+			t.Fatal("original recorded the clone's queue outcome")
+		}
+	})
 }
 
 type cloneSeamPicker struct{ intpicker.Runner }
@@ -177,12 +192,16 @@ func fullyWiredAICommandFixture(t *testing.T) *aiCommand {
 		pendingAgentSessionRefs:      map[string]coremetadata.AgentSessionObservation{"%9": {Provider: "claude", SessionID: "orig"}},
 		pendingCodexBindings:         map[string]coremetadata.CodexActivationObservation{"%9": {ThreadID: "orig"}},
 		paneWriteFailure:             aiPaneWriteReasonMarkerUnavailable,
+		notifyQueue:                  notifyQueueOutcome{Reason: notifyQueueReasonNoPane},
+		notifyQueueRecorded:          true,
 	}
 	// A held lock is the non-zero state a value copy would carry over.
 	c.agentObservationMu.Lock()
 	t.Cleanup(c.agentObservationMu.Unlock)
 	c.paneWriteMu.Lock()
 	t.Cleanup(c.paneWriteMu.Unlock)
+	c.notifyQueueMu.Lock()
+	t.Cleanup(c.notifyQueueMu.Unlock)
 	return c
 }
 

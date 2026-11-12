@@ -25,7 +25,7 @@ const attentionNotifyTTL = 10 * time.Minute
 // best-effort: every queue or runner failure is swallowed so the
 // pane-attention state machine never blocks on disk IO.
 type attentionNotifyProducer interface {
-	PushReplyReady(in attentionNotifyInput)
+	PushReplyReady(in attentionNotifyInput) notifyQueueOutcome
 	AckReplyReady(in attentionNotifyInput)
 }
 
@@ -66,7 +66,9 @@ type attentionNotifyLookup interface {
 // it without nil checks.
 type noopAttentionNotifyProducer struct{}
 
-func (noopAttentionNotifyProducer) PushReplyReady(attentionNotifyInput) {}
+func (noopAttentionNotifyProducer) PushReplyReady(attentionNotifyInput) notifyQueueOutcome {
+	return notNotifyQueued(notifyQueueReasonNoStore)
+}
 
 func (noopAttentionNotifyProducer) AckReplyReady(attentionNotifyInput) {}
 
@@ -102,30 +104,35 @@ func newAttentionNotifyProducer(recorders ...*diagnostics.NotifyFocusRecorder) a
 	}
 }
 
-// PushReplyReady writes an `ai:<session>:<pane>` entry into the queue. The
-// guard is the AI agent option: if it is empty the pane was not driven by
-// the AI flow (a user manually toggled attention on a shell pane), so we do
-// not push.
-func (p *storeAttentionNotifyProducer) PushReplyReady(in attentionNotifyInput) {
+// PushReplyReady writes an `ai:<session>:<pane>` entry into the queue and
+// reports whether it did. The guard is the provider of the Pane: the Pane's own
+// agent marker wins; a Pane without one is attributed to the hook's provider
+// only when the server proves the Pane is app-owned and has a Pane UID. A Pane
+// with neither (a user manually toggling attention on a shell pane, or a foreign
+// server) is not pushed. The outcome carries the guard that stopped it so the
+// hook log can say why nothing was queued; it costs no read the guards did not
+// already make.
+func (p *storeAttentionNotifyProducer) PushReplyReady(in attentionNotifyInput) notifyQueueOutcome {
 	if p == nil || p.store == nil || in.Lookup == nil {
-		return
+		return notNotifyQueued(notifyQueueReasonNoStore)
 	}
 	paneID := strings.TrimSpace(in.PaneID)
 	if paneID == "" {
-		return
+		return notNotifyQueued(notifyQueueReasonNoPane)
 	}
 
 	agent := strings.TrimSpace(in.Lookup.PaneOption(paneID, aiPaneAgentOption))
 	if agent == "" {
-		agent = unmarkedAppPaneHookProvider(in, paneID)
-	}
-	if agent == "" {
-		return
+		var reason notifyQueueReason
+		agent, reason = unmarkedAppPaneHookProvider(in, paneID)
+		if agent == "" {
+			return notNotifyQueued(reason)
+		}
 	}
 
 	session := strings.TrimSpace(in.Lookup.PaneFormat(paneID, "#S"))
 	if session == "" {
-		return
+		return notNotifyQueued(notifyQueueReasonNoSession)
 	}
 	window := strings.TrimSpace(in.Lookup.PaneFormat(paneID, "#{window_id}"))
 	resolvedPane := strings.TrimSpace(in.Lookup.PaneFormat(paneID, "#{pane_id}"))
@@ -172,7 +179,7 @@ func (p *storeAttentionNotifyProducer) PushReplyReady(in attentionNotifyInput) {
 	entry, result, err := p.store.Push(pushInput)
 	if err != nil {
 		recordNotifyEnqueue(p.diagnostics, pushInput, result, err, started, false)
-		return
+		return notNotifyQueued(notifyQueueReasonPushFailed)
 	}
 	recordNotifyEnqueue(p.diagnostics, pushInput, result, nil, started, false)
 	if entry.Severity != notify.SeverityCritical {
@@ -194,25 +201,27 @@ func (p *storeAttentionNotifyProducer) PushReplyReady(in attentionNotifyInput) {
 			p.hooks.Dispatch(entry, meta)
 		}
 	}
+	return notifyQueueOutcome{Queued: true}
 }
 
 // unmarkedAppPaneHookProvider returns the hook's provider for a Pane without a
 // provider marker, only when the server proves the Pane is app-owned and has a
 // Pane UID. A foreign or standalone server, or a Pane the app never
-// materialized, answers nothing, so the notification is not queued.
-func unmarkedAppPaneHookProvider(in attentionNotifyInput, paneID string) string {
+// materialized, answers nothing, so the notification is not queued; the second
+// result names which guard said no.
+func unmarkedAppPaneHookProvider(in attentionNotifyInput, paneID string) (string, notifyQueueReason) {
 	provider := strings.TrimSpace(in.Provider)
 	if provider == "" {
-		return ""
+		return "", notifyQueueReasonNoProvider
 	}
 	marker := in.Lookup.PaneFormat(paneID, intmux.TmuxFormat(tmuxopts.AppGlobal))
 	if resourcegraph.HostModeFromAppMarker(marker) != resourcegraph.HostModeAppOwned {
-		return ""
+		return "", notifyQueueReasonNotAppOwned
 	}
 	if strings.TrimSpace(in.Lookup.PaneFormat(paneID, intmux.TmuxFormat(tmuxopts.PaneUID))) == "" {
-		return ""
+		return "", notifyQueueReasonNoPaneUID
 	}
-	return provider
+	return provider, ""
 }
 
 // AckReplyReady is kept for the attention state-machine seam, but it no
