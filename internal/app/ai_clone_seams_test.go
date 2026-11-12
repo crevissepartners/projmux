@@ -149,6 +149,7 @@ func fullyWiredAICommandFixture(t *testing.T) *aiCommand {
 		notifyStore:            &cloneSeamNotifyStore{},
 		events:                 &cloneSeamEvents{},
 		notifyDiagnostics:      &diagnostics.NotifyFocusRecorder{},
+		hookNotifyProvider:     "claude",
 		operationalDiagnostics: &diagnostics.AIRecorder{},
 		openCodexCatalog:       func(context.Context) (aisessions.CodexCatalog, error) { return nil, nil },
 		codexNative:            &cloneSeamCodexNative{},

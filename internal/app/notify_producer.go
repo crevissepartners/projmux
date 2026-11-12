@@ -8,7 +8,10 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
+	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
 // attentionNotifyTTL is the freshness window of a "reply ready" queue entry.
@@ -42,6 +45,10 @@ type attentionNotifyInput struct {
 	// long-lived caller may set it; a short-lived process would exit first.
 	AsyncHooks bool
 	BadgeKind  string
+	// Provider is set only by a hook whose Pane identity is exact. When the
+	// Pane carries no provider marker, an app-owned Pane with a Pane UID is
+	// still attributed to it. Manual attention toggles never set it.
+	Provider string
 }
 
 // attentionNotifyLookup is the minimal tmux read surface the producer needs.
@@ -109,6 +116,9 @@ func (p *storeAttentionNotifyProducer) PushReplyReady(in attentionNotifyInput) {
 	}
 
 	agent := strings.TrimSpace(in.Lookup.PaneOption(paneID, aiPaneAgentOption))
+	if agent == "" {
+		agent = unmarkedAppPaneHookProvider(in, paneID)
+	}
 	if agent == "" {
 		return
 	}
@@ -184,6 +194,25 @@ func (p *storeAttentionNotifyProducer) PushReplyReady(in attentionNotifyInput) {
 			p.hooks.Dispatch(entry, meta)
 		}
 	}
+}
+
+// unmarkedAppPaneHookProvider returns the hook's provider for a Pane without a
+// provider marker, only when the server proves the Pane is app-owned and has a
+// Pane UID. A foreign or standalone server, or a Pane the app never
+// materialized, answers nothing, so the notification is not queued.
+func unmarkedAppPaneHookProvider(in attentionNotifyInput, paneID string) string {
+	provider := strings.TrimSpace(in.Provider)
+	if provider == "" {
+		return ""
+	}
+	marker := in.Lookup.PaneFormat(paneID, intmux.TmuxFormat(tmuxopts.AppGlobal))
+	if resourcegraph.HostModeFromAppMarker(marker) != resourcegraph.HostModeAppOwned {
+		return ""
+	}
+	if strings.TrimSpace(in.Lookup.PaneFormat(paneID, intmux.TmuxFormat(tmuxopts.PaneUID))) == "" {
+		return ""
+	}
+	return provider
 }
 
 // AckReplyReady is kept for the attention state-machine seam, but it no

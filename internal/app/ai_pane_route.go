@@ -144,3 +144,13 @@ func (c *aiCommand) withAIHookPaneRoute(identity aiHookPaneIdentity) *aiCommand 
 	}
 	return clone
 }
+
+// exactHookNotifyProvider names the provider a hook may attribute its queue
+// entry to when the Pane carries no provider marker. It answers only for an
+// exact identity the ingest already resolved, so it reads nothing.
+func exactHookNotifyProvider(provider string, identity aiHookPaneIdentity) string {
+	if identity.paneID == "" || !identity.exact {
+		return ""
+	}
+	return provider
+}
