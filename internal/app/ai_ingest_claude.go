@@ -63,7 +63,7 @@ func (c *aiCommand) ingestClaudeHook(data []byte, explicitPane string) error {
 		c.appendAIIngestLog(claudeHookLogEntry("", payload, "ignored", aiIngestRecordReason(matchReason)))
 		return nil
 	}
-	hookProvider := c.exactHookNotifyProvider(aiModeClaude, explicitPane, identity)
+	hookProvider := exactHookNotifyProvider(aiModeClaude, identity)
 	c = c.withAIHookPaneRoute(identity)
 	c.hookNotifyProvider = hookProvider
 	defer c.flushPendingAgentSessionRef(paneID)

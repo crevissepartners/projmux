@@ -864,14 +864,36 @@ func (c *aiCommand) hasInheritedAIHookTransport() bool {
 type aiHookPaneIdentity struct {
 	paneID  string
 	paneUID string
+	// exact records that this very attribution was an exact Pane identity: the
+	// explicit UID resolved through the Registry, the inherited server's own
+	// TMUX_PANE, or a Registry conversation record. It costs no extra read, and
+	// a working-directory or inventory match never sets it.
+	exact bool
 }
 
 func (c *aiCommand) matchAIHookPane(in aiPaneMatchInput) (aiHookPaneIdentity, string) {
 	if !c.hasInheritedAIHookTransport() {
-		return c.matchDetachedAIHookPane(in)
+		identity, reason := c.matchDetachedAIHookPane(in)
+		identity.exact = identity.paneID != "" && identity.paneUID != ""
+		return identity, reason
+	}
+	if explicit := strings.TrimSpace(in.ExplicitPane); explicit != "" {
+		// The same first step matchAIPane takes, kept here so its resolved
+		// identity is the evidence and no second Registry read is needed.
+		identity, reason := c.resolveExplicitAIHookPane(in.Provider, explicit)
+		if identity.paneID != "" {
+			identity.exact = true
+			return identity, ""
+		}
+		if reason != aiPaneMatchReasonExplicitForeign {
+			return aiHookPaneIdentity{}, reason
+		}
+		paneID, reason := c.matchAIPaneAfterForeignExplicit(in)
+		return aiHookPaneIdentity{paneID: paneID}, reason
 	}
 	paneID, reason := c.matchAIPane(in)
-	return aiHookPaneIdentity{paneID: paneID}, reason
+	exact := paneID != "" && strings.TrimSpace(c.env("TMUX_PANE")) == paneID
+	return aiHookPaneIdentity{paneID: paneID, exact: exact}, reason
 }
 
 func (c *aiCommand) matchDetachedAIHookPane(in aiPaneMatchInput) (aiHookPaneIdentity, string) {

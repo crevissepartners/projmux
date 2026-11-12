@@ -58,9 +58,9 @@ func (c *aiCommand) ingestCodexHook(data []byte, explicitPane string) error {
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: aiIngestRecordReason(matchReason), CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 		return nil
 	}
-	var hookProvider func() string
+	hookProvider := ""
 	if !nativeRouted {
-		hookProvider = c.exactHookNotifyProvider(aiModeCodex, explicitPane, identity)
+		hookProvider = exactHookNotifyProvider(aiModeCodex, identity)
 	}
 	c = c.withAIHookPaneRoute(identity)
 	c.hookNotifyProvider = hookProvider
@@ -443,8 +443,8 @@ func (c *aiCommand) applyCodexHookSemanticDelivery(paneID string, interaction co
 		return nil
 	}
 	_ = c.notifyAIWithInput(paneID, input)
-	if input.ProviderFn == nil {
-		input.ProviderFn = c.hookNotifyProvider
+	if input.Provider == "" {
+		input.Provider = c.hookNotifyProvider
 	}
 	c.notifyProducer().PushReplyReady(input)
 	return nil

@@ -45,11 +45,10 @@ type attentionNotifyInput struct {
 	// long-lived caller may set it; a short-lived process would exit first.
 	AsyncHooks bool
 	BadgeKind  string
-	// ProviderFn is set only by a hook. When the Pane carries no provider
-	// marker, an app-owned Pane with a Pane UID is attributed to the provider
-	// it answers, which it does only for an exact Pane identity. Manual
-	// attention toggles never set it.
-	ProviderFn func() string
+	// Provider is set only by a hook whose Pane identity is exact. When the
+	// Pane carries no provider marker, an app-owned Pane with a Pane UID is
+	// still attributed to it. Manual attention toggles never set it.
+	Provider string
 }
 
 // attentionNotifyLookup is the minimal tmux read surface the producer needs.
@@ -202,7 +201,8 @@ func (p *storeAttentionNotifyProducer) PushReplyReady(in attentionNotifyInput) {
 // Pane UID. A foreign or standalone server, or a Pane the app never
 // materialized, answers nothing, so the notification is not queued.
 func unmarkedAppPaneHookProvider(in attentionNotifyInput, paneID string) string {
-	if in.ProviderFn == nil {
+	provider := strings.TrimSpace(in.Provider)
+	if provider == "" {
 		return ""
 	}
 	marker := in.Lookup.PaneFormat(paneID, intmux.TmuxFormat(tmuxopts.AppGlobal))
@@ -212,7 +212,7 @@ func unmarkedAppPaneHookProvider(in attentionNotifyInput, paneID string) string 
 	if strings.TrimSpace(in.Lookup.PaneFormat(paneID, intmux.TmuxFormat(tmuxopts.PaneUID))) == "" {
 		return ""
 	}
-	return strings.TrimSpace(in.ProviderFn())
+	return provider
 }
 
 // AckReplyReady is kept for the attention state-machine seam, but it no

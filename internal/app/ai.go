@@ -97,10 +97,8 @@ type aiCommand struct {
 	notifyDiagnostics    *diagnostics.NotifyFocusRecorder
 
 	// hookNotifyProvider is set only on a hook invocation whose Pane identity
-	// is attributed. It is evaluated lazily, only when the producer finds the Pane
-	// unmarked, and answers a provider only for an exact identity (explicit UID,
-	// or the inherited server's own TMUX_PANE).
-	hookNotifyProvider            func() string
+	// is exact. The producer uses it only for an unmarked app-owned shell Pane.
+	hookNotifyProvider            string
 	operationalDiagnostics        *diagnostics.AIRecorder
 	openCodexCatalog              aisessions.OpenCodexCatalog
 	codexNative                   codexNativeThreadController
@@ -474,8 +472,8 @@ func (c *aiCommand) applyAIStatusInternalWithActivationPolicy(state, paneID stri
 			if dispatchDesktop {
 				_ = c.notifyAIWithInput(paneID, notifyIn)
 			}
-			if notifyIn.ProviderFn == nil {
-				notifyIn.ProviderFn = c.hookNotifyProvider
+			if notifyIn.Provider == "" {
+				notifyIn.Provider = c.hookNotifyProvider
 			}
 			c.notifyProducer().PushReplyReady(notifyIn)
 		} else {
