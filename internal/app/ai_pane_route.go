@@ -144,3 +144,32 @@ func (c *aiCommand) withAIHookPaneRoute(identity aiHookPaneIdentity) *aiCommand 
 	}
 	return clone
 }
+
+// exactHookNotifyProvider names the provider a hook may attribute its queue
+// entry to when the Pane carries no provider marker. It answers only when the
+// hook's Pane identity is exact: the explicit UID resolved through the Registry
+// to this very Pane, the inherited server's own TMUX_PANE, or a Registry
+// conversation attribution. A working-directory or inventory match is a guess
+// and answers nothing. Attribution of a notification never authors an Agent.
+func (c *aiCommand) exactHookNotifyProvider(provider string, explicitPane string, identity aiHookPaneIdentity) string {
+	if identity.paneID == "" {
+		return ""
+	}
+	if explicit := strings.TrimSpace(explicitPane); explicit != "" {
+		resolved, _ := c.resolveExplicitAIHookPane(provider, explicit)
+		if resolved.paneID == identity.paneID && resolved.paneUID != "" {
+			return provider
+		}
+		return ""
+	}
+	if c.hasInheritedAIHookTransport() {
+		if strings.TrimSpace(c.env("TMUX_PANE")) == identity.paneID {
+			return provider
+		}
+		return ""
+	}
+	if identity.paneUID != "" {
+		return provider
+	}
+	return ""
+}

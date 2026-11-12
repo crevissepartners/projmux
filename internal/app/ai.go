@@ -95,6 +95,11 @@ type aiCommand struct {
 	notifyStore                   notifyStore
 	events                        notifyQueueRefreshEvents
 	notifyDiagnostics             *diagnostics.NotifyFocusRecorder
+
+	// hookNotifyProvider is set only on a hook invocation whose Pane identity
+	// is exact (explicit UID, or the inherited server's own TMUX_PANE). It lets
+	// the producer attribute a notification to an unmarked app-owned shell Pane.
+	hookNotifyProvider string
 	operationalDiagnostics        *diagnostics.AIRecorder
 	openCodexCatalog              aisessions.OpenCodexCatalog
 	codexNative                   codexNativeThreadController
@@ -206,6 +211,7 @@ func (c *aiCommand) cloneSeams() *aiCommand {
 		notifyStore:                   c.notifyStore,
 		events:                        c.events,
 		notifyDiagnostics:             c.notifyDiagnostics,
+		hookNotifyProvider:            c.hookNotifyProvider,
 		operationalDiagnostics:        c.operationalDiagnostics,
 		openCodexCatalog:              c.openCodexCatalog,
 		codexNative:                   c.codexNative,
@@ -466,6 +472,9 @@ func (c *aiCommand) applyAIStatusInternalWithActivationPolicy(state, paneID stri
 		if dispatchQueue && (notifyIn.Force || !visible) {
 			if dispatchDesktop {
 				_ = c.notifyAIWithInput(paneID, notifyIn)
+			}
+			if notifyIn.Provider == "" {
+				notifyIn.Provider = c.hookNotifyProvider
 			}
 			c.notifyProducer().PushReplyReady(notifyIn)
 		} else {
