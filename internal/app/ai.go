@@ -149,6 +149,12 @@ type aiCommand struct {
 	// later. See honestAIIngestResult.
 	paneWriteMu      sync.Mutex
 	paneWriteFailure string
+	// The queue decision of this invocation, kept for the same reason: the
+	// hook's `notify` record is written by a caller far from the decision.
+	// See withNotifyQueueOutcome.
+	notifyQueueMu       sync.Mutex
+	notifyQueue         notifyQueueOutcome
+	notifyQueueRecorded bool
 	// claudeApprovalLockHooks observes the pending subagent approval lock in
 	// tests; nil in production.
 	claudeApprovalLockHooks *claudeApprovalLockHooks
@@ -405,6 +411,7 @@ func (c *aiCommand) applyAIStatusInternalWithActivationPolicy(state, paneID stri
 	}
 	paneID = strings.TrimSpace(paneID)
 	if paneID == "" {
+		c.noteNotifyQueueOutcome(notNotifyQueued(notifyQueueReasonNoPane))
 		return nil
 	}
 	notifyIn.PaneID = paneID
@@ -420,6 +427,7 @@ func (c *aiCommand) applyAIStatusInternalWithActivationPolicy(state, paneID stri
 		committed, isManaged, err := c.persistManagedAgentInteractionWithActivationPolicy(paneID, kind, source, activationEligible, guard)
 		if err != nil {
 			if errors.Is(err, errManagedAgentObservationIgnored) {
+				c.noteNotifyQueueOutcome(notNotifyQueued(notifyQueueReasonObservationIgnored))
 				if guard != nil {
 					return errClaudeBackgroundProgressRejected
 				}
@@ -475,8 +483,13 @@ func (c *aiCommand) applyAIStatusInternalWithActivationPolicy(state, paneID stri
 			if notifyIn.Provider == "" {
 				notifyIn.Provider = c.hookNotifyProvider
 			}
-			c.notifyProducer().PushReplyReady(notifyIn)
+			c.noteNotifyQueueOutcome(c.notifyProducer().PushReplyReady(notifyIn))
 		} else {
+			if !dispatchQueue {
+				c.noteNotifyQueueOutcome(notNotifyQueued(notifyQueueReasonStateOnly))
+			} else {
+				c.noteNotifyQueueOutcome(notNotifyQueued(notifyQueueReasonVisiblePane))
+			}
 			if dispatchQueue && visible && !notifyIn.Force && c.notifyDiagnostics != nil {
 				labels := notifyLabels(notify.SourceAI, notifyIn.Metadata)
 				c.notifyDiagnostics.RecordNotify(diagnostics.TransitionNotifyDelivery, diagnostics.DispositionSuppressed, labels.provider, labels.category, diagnostics.RouteVisiblePane, "", c.now(), false)

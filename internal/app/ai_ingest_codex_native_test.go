@@ -34,8 +34,9 @@ type phase3StaticTmuxRunner struct{ output string }
 
 type codexNoticeCaptureProducer struct{ pushed []attentionNotifyInput }
 
-func (p *codexNoticeCaptureProducer) PushReplyReady(in attentionNotifyInput) {
+func (p *codexNoticeCaptureProducer) PushReplyReady(in attentionNotifyInput) notifyQueueOutcome {
 	p.pushed = append(p.pushed, in)
+	return notifyQueueOutcome{Queued: true}
 }
 
 func (*codexNoticeCaptureProducer) AckReplyReady(attentionNotifyInput) {}

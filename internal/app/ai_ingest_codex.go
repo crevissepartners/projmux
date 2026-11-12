@@ -446,7 +446,7 @@ func (c *aiCommand) applyCodexHookSemanticDelivery(paneID string, interaction co
 	if input.Provider == "" {
 		input.Provider = c.hookNotifyProvider
 	}
-	c.notifyProducer().PushReplyReady(input)
+	c.noteNotifyQueueOutcome(c.notifyProducer().PushReplyReady(input))
 	return nil
 }
 
