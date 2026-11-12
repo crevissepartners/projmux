@@ -1285,3 +1285,64 @@ func TestProcessClaudeApprovalBypassKeepsRecordChecks(t *testing.T) {
 		t.Fatalf("process bypass skipped record validation: %v", err)
 	}
 }
+
+type permissionAnsweredCall struct {
+	pane    string
+	payload claudeHookPayload
+}
+
+// The hook releases a subagent's approval badge only after it printed the
+// decision for a request projmux answered: not for a main-thread request, and
+// not for a wait that ended without an answer.
+func TestClaudePermissionHookReleasesTheSubagentBadgeOnlyForARequestProjmuxAnswered(t *testing.T) {
+	t.Parallel()
+
+	subagent := `"agent_id":"sub-1","agent_type":"Explore",`
+	cases := []struct {
+		name    string
+		extra   string
+		answer  string
+		window  time.Duration
+		wantOut func(string) bool
+		want    int
+	}{
+		{name: "subagent allowed", extra: subagent, answer: "--allow", window: time.Minute, wantOut: func(s string) bool { return s == string(claudePermissionAllowDecision) }, want: 1},
+		{name: "subagent denied", extra: subagent, answer: "--deny", window: time.Minute, wantOut: func(s string) bool { return s == string(claudePermissionDenyDecision) }, want: 1},
+		{name: "main thread allowed", answer: "--allow", window: time.Minute, wantOut: func(s string) bool { return s == string(claudePermissionAllowDecision) }},
+		{name: "subagent expired", extra: subagent, window: 200 * time.Millisecond, wantOut: func(s string) bool { return s == "" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fixture := newPermissionFixture(t, config.AgentApprovalAnsweringProjmux)
+			var mu sync.Mutex
+			var calls []permissionAnsweredCall
+			hook := fixture.hook(tc.window)
+			hook.answered = func(pane string, payload claudeHookPayload) {
+				mu.Lock()
+				defer mu.Unlock()
+				calls = append(calls, permissionAnsweredCall{pane: pane, payload: payload})
+			}
+			id, done := fixture.startPermissionHook(t, context.Background(), hook, permissionTestPayload("default", "Bash", permissionTestInput, tc.extra))
+			if tc.answer != "" {
+				if _, _, err := runRoute(t, fixture.command, "approval", "answer", "uid:"+questionTestAgent, id, tc.answer); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if out := waitHookOutput(t, done); !tc.wantOut(out) {
+				t.Fatalf("hook output = %q", out)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if len(calls) != tc.want {
+				t.Fatalf("answered calls = %+v, want %d", calls, tc.want)
+			}
+			if tc.want == 1 {
+				got := calls[0]
+				if got.pane != questionTestPane || got.payload.AgentID != "sub-1" || got.payload.AgentType != "Explore" || got.payload.SessionID != "sess-1" {
+					t.Fatalf("answered call = %+v", got)
+				}
+			}
+		})
+	}
+}

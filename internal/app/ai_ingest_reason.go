@@ -108,6 +108,7 @@ const (
 	aiIngestReasonInvocationStart aiIngestReason = "invocation started"
 
 	aiIngestReasonSubagentApprovalAnswered aiIngestReason = "subagent approval answered"
+	aiIngestReasonSubagentApprovalAnsweredInProjmux aiIngestReason = "subagent approval answered in projmux"
 	aiIngestReasonSubagentApprovalPending  aiIngestReason = "subagent approval still pending"
 	aiIngestReasonSubagentApprovalLocked   aiIngestReason = "subagent approval lock unavailable"
 	aiIngestReasonSubagentApprovalFenced   aiIngestReason = "subagent approval fenced"
@@ -206,6 +207,7 @@ var aiIngestReasons = func() []aiIngestReason {
 		aiIngestReasonHighVolumeEvent,
 		aiIngestReasonInvocationStart,
 		aiIngestReasonSubagentApprovalAnswered,
+		aiIngestReasonSubagentApprovalAnsweredInProjmux,
 		aiIngestReasonSubagentApprovalPending,
 		aiIngestReasonSubagentApprovalLocked,
 		aiIngestReasonSubagentApprovalFenced,

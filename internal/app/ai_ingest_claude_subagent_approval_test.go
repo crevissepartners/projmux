@@ -713,3 +713,130 @@ func TestClaudeSubagentPermissionOwnedBadgeStaysWhenTheLockedReadFails(t *testin
 		t.Fatalf("pending set = %q, want child-a", pending)
 	}
 }
+
+// claudeSubagentApprovalAnsweredInProjmux is what the permission hook does
+// once projmux settled a subagent's request, before the approved tool ran.
+func claudeSubagentApprovalAnsweredInProjmux(t *testing.T, f *claudeQuietHookFixture, agentID string) aiIngestLogEntry {
+	t.Helper()
+	payload := claudeHookPayload{AgentID: agentID, AgentType: "workflow-subagent", SessionID: claudeQuietHookSession}
+	if err := f.cmd.ingestClaudeSubagentApprovalAnsweredInProjmux(f.explicitPane, payload); err != nil {
+		t.Fatal(err)
+	}
+	records := claudeQuietHookLogRecords(t, f.cmd)
+	return records[len(records)-1]
+}
+
+// An answer projmux gave releases the badge before the approved tool finishes,
+// so a long tool no longer shows a request nobody is waiting on. The later
+// PostToolUse finds the Pane already busy and records nothing more.
+func TestClaudeSubagentPermissionAnsweredInProjmuxReturnsTheBadgeToBusyBeforeTheToolEnds(t *testing.T) {
+	for _, mode := range []string{"owned", "binding_miss", "unbound"} {
+		t.Run(mode, func(t *testing.T) {
+			f := claudeSubagentApprovalFixture(t, mode)
+			claudeSubagentApprovalRequest(t, f, claudeSubagentApprovalAgentID)
+			if got := claudeSubagentApprovalBadge(t, f); got != aiBadgeKindApprovalRequired {
+				t.Fatalf("badge after the request = %q, want %q", got, aiBadgeKindApprovalRequired)
+			}
+			entry := claudeSubagentApprovalAnsweredInProjmux(t, f, claudeSubagentApprovalAgentID)
+			if entry.Result != "state" || entry.Reason != aiIngestReasonSubagentApprovalAnsweredInProjmux {
+				t.Fatalf("answer record = %+v, want the projmux answer", entry)
+			}
+			if got := claudeSubagentApprovalBadge(t, f); got != aiBadgeKindInProgress {
+				t.Fatalf("badge before the tool ended = %q, want %q", got, aiBadgeKindInProgress)
+			}
+			if pending, ok := claudeSubagentApprovalPanes[f].pane.options[aiPaneApprovalAgentIDsOption]; ok {
+				t.Fatalf("pending set after the answer = %q", pending)
+			}
+			if mode == "owned" {
+				agent, _ := f.registry.Agent(f.agentUID)
+				if agent.Status.Interaction.Kind != coremetadata.InteractionInProgress {
+					t.Fatalf("interaction = %+v, want in_progress", agent.Status.Interaction)
+				}
+			}
+			// The tool ends later; its PostToolUse changes nothing.
+			claudeSubagentApprovalIngest(t, f, "PostToolUse", map[string]any{"agent_id": claudeSubagentApprovalAgentID, "tool_name": "Bash"})
+			if got := claudeSubagentApprovalBadge(t, f); got != aiBadgeKindInProgress {
+				t.Fatalf("badge after the tool ended = %q, want %q", got, aiBadgeKindInProgress)
+			}
+		})
+	}
+}
+
+// Another subagent still waiting keeps the badge: only the answered id leaves
+// the set, and the last answer returns the Pane to busy.
+func TestClaudeSubagentPermissionAnsweredInProjmuxKeepsTheBadgeWhileOthersWait(t *testing.T) {
+	f := claudeSubagentApprovalFixture(t, "owned")
+	claudeSubagentApprovalRequest(t, f, "child-a")
+	claudeSubagentApprovalRequest(t, f, "child-b")
+	entry := claudeSubagentApprovalAnsweredInProjmux(t, f, "child-a")
+	if entry.Result != "quiet" || entry.Reason != aiIngestReasonSubagentApprovalPending {
+		t.Fatalf("first answer record = %+v", entry)
+	}
+	if got := claudeSubagentApprovalBadge(t, f); got != aiBadgeKindApprovalRequired {
+		t.Fatalf("badge with child-b still waiting = %q", got)
+	}
+	if pending := claudeSubagentApprovalPanes[f].pane.options[aiPaneApprovalAgentIDsOption]; pending != "child-b" {
+		t.Fatalf("pending set = %q, want child-b", pending)
+	}
+	entry = claudeSubagentApprovalAnsweredInProjmux(t, f, "child-b")
+	if entry.Result != "state" || entry.Reason != aiIngestReasonSubagentApprovalAnsweredInProjmux {
+		t.Fatalf("last answer record = %+v", entry)
+	}
+	if got := claudeSubagentApprovalBadge(t, f); got != aiBadgeKindInProgress {
+		t.Fatalf("badge after the last answer = %q", got)
+	}
+}
+
+// A main-thread request is out of scope, and an answer for an id the Pane does
+// not hold, or for a Pane that no longer awaits approval, changes nothing.
+func TestClaudeSubagentPermissionAnsweredInProjmuxLeavesOtherWaitsAlone(t *testing.T) {
+	t.Run("main thread request", func(t *testing.T) {
+		f := claudeSubagentApprovalFixture(t, "owned")
+		claudeSubagentApprovalRequest(t, f, "")
+		if err := f.cmd.ingestClaudeSubagentApprovalAnsweredInProjmux(f.explicitPane, claudeHookPayload{SessionID: claudeQuietHookSession}); err != nil {
+			t.Fatal(err)
+		}
+		if got := claudeSubagentApprovalBadge(t, f); got != aiBadgeKindApprovalRequired {
+			t.Fatalf("badge = %q, want %q", got, aiBadgeKindApprovalRequired)
+		}
+	})
+	t.Run("id the set does not hold", func(t *testing.T) {
+		f := claudeSubagentApprovalFixture(t, "owned")
+		claudeSubagentApprovalRequest(t, f, "child-a")
+		entry := claudeSubagentApprovalAnsweredInProjmux(t, f, "stranger")
+		if entry.Reason != aiIngestReasonSubagentApprovalPending {
+			t.Fatalf("record = %+v, want the still-pending record", entry)
+		}
+		if got := claudeSubagentApprovalBadge(t, f); got != aiBadgeKindApprovalRequired {
+			t.Fatalf("badge = %q, want %q", got, aiBadgeKindApprovalRequired)
+		}
+	})
+	t.Run("pane not awaiting approval", func(t *testing.T) {
+		f := claudeSubagentApprovalFixture(t, "owned")
+		if err := f.cmd.ingestClaudeSubagentApprovalAnsweredInProjmux(f.explicitPane, claudeHookPayload{AgentID: "child-a", SessionID: claudeQuietHookSession}); err != nil {
+			t.Fatal(err)
+		}
+		if got := claudeSubagentApprovalBadge(t, f); got == aiBadgeKindApprovalRequired {
+			t.Fatalf("badge = %q, want no approval", got)
+		}
+	})
+}
+
+// An answer given in the terminal tells projmux nothing, so the badge stays
+// until the approved tool's PostToolUse: the limit docs/hooks.md states.
+func TestClaudeSubagentPermissionAnsweredInTheTerminalClearsOnlyWhenTheToolEnds(t *testing.T) {
+	f := claudeSubagentApprovalFixture(t, "owned")
+	claudeSubagentApprovalRequest(t, f, claudeSubagentApprovalAgentID)
+	claudeSubagentApprovalIngest(t, f, "Notification", map[string]any{"notification_type": "permission_prompt"})
+	claudeSubagentApprovalIngest(t, f, "PreToolUse", map[string]any{"agent_id": claudeSubagentApprovalAgentID})
+	if got := claudeSubagentApprovalBadge(t, f); got != aiBadgeKindApprovalRequired {
+		t.Fatalf("badge while the approved tool runs = %q, want %q", got, aiBadgeKindApprovalRequired)
+	}
+	entry := claudeSubagentApprovalToolRan(t, f, "PostToolUse", claudeSubagentApprovalAgentID)
+	if entry.Result != "state" || entry.Reason != aiIngestReasonSubagentApprovalAnswered {
+		t.Fatalf("answer record = %+v, want the subagent approval answer", entry)
+	}
+	if got := claudeSubagentApprovalBadge(t, f); got != aiBadgeKindInProgress {
+		t.Fatalf("badge after the tool ended = %q, want %q", got, aiBadgeKindInProgress)
+	}
+}
