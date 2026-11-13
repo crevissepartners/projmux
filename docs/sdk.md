@@ -901,11 +901,23 @@ on a process Pane, delete through the same executor and admission as the CLI.
 `DeleteResult.Processes` lists every member Agent that is stopped and removed
 with the Window, and `Plan.Affected` shows the cascade, including the virtual
 Window that goes with its last Pane. `Confirm` follows the CLI rule: a lone leaf
-Pane needs none, every other plan does. An Agent of a virtual process Window
-that has no process Pane, and a plan that mixes tmux and process resources (for
-example a tmux-anchored Window that holds a process Pane), are refused with
-`delete-process-unsupported`; the message names the uids involved and nothing is
-changed. Deleting a tmux Agent or a Registry-only Agent is supported as before.
+Pane needs none, every other plan does.
+
+An Offline or Failed Agent of a virtual process Window that has no Pane is
+deleted from the Registry only, when `Ref` is its exact `uid:`, exactly as the
+CLI does; the live tmux server on `SocketPath` must still answer. The same Agent
+Pending or Running, or addressed by name, is refused with the CLI's text.
+
+A Pane or Agent plan that mixes tmux and process resources (for example one
+`Ref` that names a tmux Pane and a process Pane) is refused with
+`delete-process-unsupported`. The message is the CLI's own refusal text, byte
+for byte, and nothing is changed. A Window plan that mixes a tmux Window with a
+process Window, or whose tmux Window holds a process Pane, is refused with the
+same code and a message naming the uids. The CLI deletes only the Registry
+records of such a Window and leaves the running process provider behind, so the
+SDK does not repeat that: delete the process Pane or Agent first, which stops
+its provider, then the Window. Deleting a tmux Agent or a Registry-only Agent is
+supported as before.
 
 CLI and SDK use the same delete executor and protected `delete-stop` owner
 admission. Protection and the exact cascade are rechecked before Stop or claim
