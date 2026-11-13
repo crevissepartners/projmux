@@ -3,7 +3,10 @@ package core
 // AttachAgentPersonaRequest selects an exact Claude Agent and a named persona.
 // DryRun has no effects; Confirm permits interrupting a busy conversation.
 // SocketPath is an absolute tmux socket path naming one live server. Empty
-// means the logical app socket "projmux", which is started when no server runs.
+// falls back to Options.SocketPath, and when that is empty too to the logical
+// app socket "projmux". A real resume of an Offline or Failed Agent starts the
+// app server when none runs; a dry run never does, and a Running Agent whose
+// server is gone is refused.
 type AttachAgentPersonaRequest struct {
 	Ref, Project, Window, Persona, SocketPath string
 	DryRun, Confirm                           bool
