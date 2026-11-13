@@ -183,6 +183,7 @@ Client.createProjection	Public v0 shell Window/Pane creation SDK entrypoint or i
 Client.createTmuxWindowFromIntent	Public v0 Window create intent SDK closure for external frontends: one transaction for a Window and its new Agent with CreateAgent's validator; covered by TestWindowIntentCLIParity, TestWindowIntentCreatorProvenance, TestWindowIntentRollbackAndActivationUnknown and TestWindowIntentPublicPreflight.
 Client.createWindow	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
 Client.createWindowFromIntent	Public v0 Window create intent SDK closure for external frontends: one transaction for a Window and its new Agent with CreateAgent's validator; covered by TestWindowIntentCLIParity, TestWindowIntentCreatorProvenance, TestWindowIntentRollbackAndActivationUnknown and TestWindowIntentPublicPreflight.
+Client.deleteOnTransport	Public v0 persona attach/detach SDK closure: closes a Running Agent Pane on the logical app socket the way the CLI does; verified by TestAgentPersonaSDKCLIAppSocketParity and the delete SDK/CLI parity tests.
 Client.deleteProcess	SDK process Agent Delete adapter retained for external consumer and shared CLI/SDK admission parity.
 Client.deleteWithRunner	Public v0 Window, Pane and Agent deletion SDK entrypoint or its exact selection/refusal adapter; verified by SDK/CLI parity, injected guards/rollback, public field coverage and external consumer tests.
 Client.guidance	Public v0 global guidance editing SDK entrypoint or adapter; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
@@ -201,6 +202,7 @@ Client.questionAgent	Public v0 Agent question SDK entrypoint/adapter or preserve
 Client.questionService	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
 Client.relaunchAgent	Public RelaunchAgent implementation for external SDK consumers; TestExternalRelaunchAgent and TestRelaunchAgentSDKCLIExecutionParity exercise admission and shared execution.
 Client.relaunchLiveness	Public RelaunchAgent failure-observation closure; TestRelaunchLivenessSelectsExactPane injects exact Registry/socket inventory and TestRelaunchAgentSDKStopFailureEvidence checks typed Stop cause, retained plan/recovery and no replay.
+Client.relaunchLivenessOn	Public v0 persona attach/detach SDK closure: observes the stopped Pane on the logical app socket; verified by TestAgentPersonaSDKCLIAppSocketParity and TestRelaunchLivenessSelectsExactPane.
 Client.relaunchProcessAgent	Public RelaunchAgent process/host closure; frozen-domain, claim, host-move and startup cancellation fixtures plus external caller-exit consumers preserve explicit routing and identity.
 Client.resolveAgentProcess	Public v0 process observation SDK closure for external frontends (ReadAgentProcess and ReadAgentProcessEvents); the binary does not import pkg/projmux, covered by TestPublicProcessObserverGenerationGapAndTerminal, TestPublicProcessObserverCancelDoesNotStop, TestPublicProcessFailureCodesAndCauses and TestPublicProcessObserverSettlesAndBoundsReads.
 Client.resumeAgent	Public v0 tmux Agent resume entrypoint or its external-only closure; SDK/CLI parity, refusal, rollback and boundary tests cover this path.
@@ -931,6 +933,7 @@ paneTarget.shared	Existing process runtime wiring fixture calls this CLI adapter
 pathWithin	Test-only installed qualification helper retained for tmux socket containment proof.
 personaResumePlan	Public persona facade resume planning closure; uses existing resume contracts without changing relaunch provenance.
 personaSDKRefusal	Public persona typed refusal closure; SDK admission and failure-state fixtures preserve causes and codes.
+personaSocketName	Public v0 persona attach/detach SDK helper: an empty SocketPath is the logical app socket; verified by TestAgentPersonaSDKCLIAppSocketParity and TestAgentPersonaSDKRefusesExplicitSocketPathWithoutServer.
 pickerOptionsFromCompatPicker	Compat picker option projection retained as the test seam over the live pickercompat.PickerOptions mapping.
 preparationRefusal	Public prepared Resume typed failure adapter; external consumer stale proof and cancellation fixtures preserve errors and identity.
 prepareReaper	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
