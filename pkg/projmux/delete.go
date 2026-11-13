@@ -31,8 +31,18 @@ const (
 )
 
 // Delete removes tmux Windows/Panes/Agents, one exact process Agent, and
-// process Windows or Panes (stopping their running providers first). A plan
-// that mixes tmux and process resources is refused with CodeDeleteProcessUnsupported.
+// process Windows or Panes (stopping their running providers first). An
+// Offline or Failed Agent of a process Window that has no Pane is deleted from
+// the Registry only, exactly as the CLI does, when addressed by exact uid.
+//
+// A plan that mixes tmux and process resources is refused with
+// CodeDeleteProcessUnsupported. For a Pane or Agent plan the refusal text is
+// the CLI's own, byte for byte, because the same live preflight produces it. A
+// tmux Window, or a process Window, that holds a process Pane is refused for
+// a different reason: the CLI removes only its Registry records and leaves the
+// running process provider behind, and the SDK does not repeat that, so the
+// plan is refused before any effect and the caller can delete the process Pane
+// or Agent itself, which stops its provider, and then the Window.
 // DryRun writes nothing. Confirm is required unless the CLI's leaf Pane rule
 // exempts the plan. Cancellation is effective before admission only; admitted
 // execution and compensation finish regardless of cancellation. Partial kill
@@ -135,8 +145,12 @@ func (c *Client) deleteWithRunner(ctx context.Context, req core.DeleteRequest, r
 	if mutationruntime.IsProcessAgentPlan(reg, plan) || mutationruntime.IsVirtualProcessPlan(reg, plan) {
 		return c.deleteProcess(ctx, req, reg, plan, out)
 	}
-	if err := deleteTmuxOnly(reg, plan); err != nil {
-		return out, err
+	// A Window plan is refused before any transport is needed. A Pane or Agent
+	// plan is refused by the live preflight below, with the CLI's own text.
+	if plan.Kind == metadata.KindWindow {
+		if err := deleteTmuxOnly(reg, plan, true); err != nil {
+			return out, err
+		}
 	}
 	socket := req.SocketPath
 	if socket == "" {
@@ -144,6 +158,9 @@ func (c *Client) deleteWithRunner(ctx context.Context, req core.DeleteRequest, r
 	}
 	target, err := mutationruntime.ResolveDeleteTarget("delete "+strings.ToLower(string(req.Kind)), "", socket, nil)
 	if err != nil {
+		if mixed := deleteTmuxOnly(reg, plan, true); mixed != nil {
+			return out, mixed
+		}
 		code := CodeDeleteTransportRequired
 		var f *mutations.Failure
 		if errors.As(err, &f) && f.Code == string(CodeRuntimeRequestInvalid) {
@@ -171,7 +188,14 @@ func (c *Client) deleteWithRunner(ctx context.Context, req core.DeleteRequest, r
 		paneLive, err = panes.Preflight(ctx, reg, plan)
 	}
 	if err != nil {
+		if deleteTmuxOnly(reg, plan, true) != nil {
+			// The CLI refuses this plan with exactly this text.
+			return out, &Refusal{Code: CodeDeleteProcessUnsupported, message: err.Error(), cause: err}
+		}
 		return out, deleteRefusal(CodeDeleteRuntimeRefused, err)
+	}
+	if err := deleteTmuxOnly(reg, plan, false); err != nil {
+		return out, err
 	}
 	if err := unregisterCopy(live.Targets, &out.Windows); err != nil {
 		return out, err
@@ -190,7 +214,7 @@ func (c *Client) deleteWithRunner(ctx context.Context, req core.DeleteRequest, r
 	}
 	s := mutations.NewStore(store.PathFor(c.paths.StateDir))
 	var warnings bytes.Buffer
-	e := mutationruntime.DeleteExecutor{Windows: windows, Panes: mutationruntime.PaneDeleteRuntime{Preflight: panes.Preflight, PrepareReplacements: panes.PrepareReplacements, RollbackReplacements: panes.RollbackReplacements, Kill: panes.Kill, KillAll: panes.KillAll}, Update: s.Update, Mutator: s.Mutator, Via: mutations.DeletionViaSDK, StateDir: func() (string, error) { return c.paths.StateDir, nil }, Warnings: &warnings, Allow: deleteTmuxOnly}
+	e := mutationruntime.DeleteExecutor{Windows: windows, Panes: mutationruntime.PaneDeleteRuntime{Preflight: panes.Preflight, PrepareReplacements: panes.PrepareReplacements, RollbackReplacements: panes.RollbackReplacements, Kill: panes.Kill, KillAll: panes.KillAll}, Update: s.Update, Mutator: s.Mutator, Via: mutations.DeletionViaSDK, StateDir: func() (string, error) { return c.paths.StateDir, nil }, Warnings: &warnings, Allow: func(r metadata.Registry, p mutationruntime.DeletePlan) error { return deleteTmuxOnly(r, p, false) }}
 	e.Mutate = func(kind metadata.Kind, uids []string, apply func(*metadata.Registry, metadata.Mutator) error) error {
 		_, err := s.Update(func(r *metadata.Registry) error {
 			for _, uid := range uids {
@@ -241,7 +265,12 @@ func deleteRefusal(code Code, err error) error {
 // deleteTmuxOnly refuses what reaches the tmux path with a process resource in
 // it. Process-only plans were routed to deleteProcess before this runs, so what
 // is left mixes tmux and process resources, or is an Agent with no process Pane.
-func deleteTmuxOnly(reg metadata.Registry, plan mutationruntime.DeletePlan) error {
+//
+// strict also refuses an Agent of a process Window. The caller sets it to
+// classify a plan, or to refuse before the live preflight can run. Unset, such
+// an Agent is left to the live preflight, which as in the CLI deletes it from
+// the Registry only when it is Offline or Failed and addressed by exact uid.
+func deleteTmuxOnly(reg metadata.Registry, plan mutationruntime.DeletePlan, strict bool) error {
 	for _, t := range plan.Targets {
 		uid := t.Match.UID
 		if plan.Kind == metadata.KindPane {
@@ -249,7 +278,7 @@ func deleteTmuxOnly(reg metadata.Registry, plan mutationruntime.DeletePlan) erro
 				return &Refusal{Code: CodeDeleteProcessUnsupported, message: fmt.Sprintf("Delete cannot remove process Pane uid:%s: the plan mixes tmux and process resources", uid)}
 			}
 		}
-		if plan.Kind == metadata.KindAgent {
+		if plan.Kind == metadata.KindAgent && strict {
 			if a, ok := reg.Agent(uid); ok && reg.IsVirtualWindow(a.Metadata.OwnerUID()) {
 				return &Refusal{Code: CodeDeleteProcessUnsupported, message: fmt.Sprintf("Delete cannot remove Agent uid:%s of process Window uid:%s: it has no process-only Pane to stop", uid, a.Metadata.OwnerUID())}
 			}
