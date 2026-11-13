@@ -355,6 +355,21 @@ type ProcessStopHold struct {
 	Release  func()
 	ctx      context.Context
 	stopped  map[string]bool
+	deleter  *ProcessAgentDeleter
+}
+
+// RemoveLaunches drops the frozen reservation launch of every deleted process
+// Agent once the Registry no longer names it, under the guard still held. A
+// failed removal is returned as a notice, not undone: the leftover file names
+// no Agent and cannot start anything.
+func (h *ProcessStopHold) RemoveLaunches() []string {
+	var notices []string
+	for _, target := range h.Targets {
+		if err := RemoveCreatedLaunch(h.deleter.RegistryPath, target.Agent); err != nil {
+			notices = append(notices, fmt.Sprintf("reservation launch of agent uid:%s was not removed: %v", target.Agent, err))
+		}
+	}
+	return notices
 }
 
 // Stopped reports how many Agents this hold stopped through their owner hosts.
@@ -468,7 +483,7 @@ func (d *ProcessAgentDeleter) stopTargets(ctx context.Context, plan DeletePlan, 
 		}
 	}
 	failed = false
-	return &ProcessStopHold{Targets: final, Approved: ProcessDeleteSignature(registry, plan), Release: release, ctx: ctx, stopped: stopped}, nil
+	return &ProcessStopHold{Targets: final, Approved: ProcessDeleteSignature(registry, plan), Release: release, ctx: ctx, stopped: stopped, deleter: d}, nil
 }
 
 // Execute stops every running target through its owner, waits for the exact
@@ -518,14 +533,9 @@ func (d *ProcessAgentDeleter) Execute(ctx context.Context, plan DeletePlan, Targ
 		}
 		return ProcessDeleteOutcome{}, err
 	}
-	// The Registry no longer names these Agents. Their frozen reservation launch
-	// goes with them, under the guard still held. A failed removal leaves a file
-	// that names no Agent and cannot start anything; it is reported, not undone.
-	for _, target := range final {
-		if err := RemoveCreatedLaunch(d.RegistryPath, target.Agent); err != nil {
-			outcome.Notices = append(outcome.Notices, fmt.Sprintf("reservation launch of agent uid:%s was not removed: %v", target.Agent, err))
-		}
-	}
+	// The Registry no longer names these Agents; their frozen reservation launch
+	// goes with them.
+	outcome.Notices = append(outcome.Notices, hold.RemoveLaunches()...)
 	return outcome, nil
 }
 

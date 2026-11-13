@@ -288,10 +288,13 @@ func (c *DeleteExecutor) Execute(ctx context.Context, spelling string, plan Dele
 
 	out.Affected = affected
 	if hold != nil {
+		// hold.Targets already carries the final classification: stopped only for
+		// an Agent whose exact Wait receipt was confirmed, never for a child-free
+		// claim release.
 		out.Process = hold.Targets
-		for i := range out.Process {
-			if hold.stopped[out.Process[i].Agent] {
-				out.Process[i].Runtime = processDeleteRuntimeStopped
+		for _, notice := range hold.RemoveLaunches() {
+			if c.Warnings != nil {
+				_, _ = fmt.Fprintln(c.Warnings, notice)
 			}
 		}
 	}

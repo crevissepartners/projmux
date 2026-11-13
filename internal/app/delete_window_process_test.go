@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strconv"
@@ -13,6 +15,7 @@ import (
 	"testing"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 // windowProcessCommand is a Window delete over the in-memory Registry with the
@@ -436,4 +439,42 @@ func TestDeleteWindowPlanChangedAfterStopIsRefused(t *testing.T) {
 		t.Fatal("Window was removed")
 	}
 	requireNoIntentLeft(t, reg)
+}
+
+// A Window delete drops the frozen reservation launch of the process Agent it
+// deleted, after the commit, and keeps the launch of an Agent it did not touch.
+func TestDeleteWindowRemovesReservedLaunchOfDeletedProcessAgentOnly(t *testing.T) {
+	reg, agent, pane := processDeleteFixture(t, aiModeClaude)
+	a, _ := reg.Agent(agent)
+	window := a.Metadata.OwnerUID()
+	probe := &processDeleteProbe{host: true, child: true}
+	probe.onStop = func() error {
+		recordFixtureWait(t, reg, pane)
+		probe.host, probe.child = false, false
+		return nil
+	}
+	deleter := probe.deleter(reg)
+	state := t.TempDir()
+	deleter.store.stateDir = func() (string, error) { return state, nil }
+	registryPath := deleter.shared().RegistryPath
+	own := mutationruntime.CreatedLaunchPath(registryPath, agent)
+	other := mutationruntime.CreatedLaunchPath(registryPath, "agent-unrelated-reservation")
+	for _, launch := range []string{own, other} {
+		if err := os.MkdirAll(filepath.Dir(launch), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(launch, []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cmd := windowProcessCommand(reg, deleter, newFixtureWindowDeleteRuntime())
+	if out, err := runWindowProcessDelete(cmd, "uid:"+window, "--yes"); err != nil {
+		t.Fatalf("delete: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(own); !os.IsNotExist(err) {
+		t.Fatalf("deleted Agent's reservation launch survived: %v", err)
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Fatalf("unrelated reservation launch was removed: %v", err)
+	}
 }
