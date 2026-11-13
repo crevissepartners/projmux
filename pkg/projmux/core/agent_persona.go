@@ -2,12 +2,15 @@ package core
 
 // AttachAgentPersonaRequest selects an exact Claude Agent and a named persona.
 // DryRun has no effects; Confirm permits interrupting a busy conversation.
+// SocketPath is an absolute tmux socket path naming one live server. Empty
+// means the logical app socket "projmux", which is started when no server runs.
 type AttachAgentPersonaRequest struct {
 	Ref, Project, Window, Persona, SocketPath string
 	DryRun, Confirm                           bool
 }
 
 // DetachAgentPersonaRequest selects an exact Claude Agent whose persona is cleared.
+// SocketPath has the meaning it has on AttachAgentPersonaRequest.
 type DetachAgentPersonaRequest struct {
 	Ref, Project, Window, SocketPath string
 	DryRun, Confirm                  bool

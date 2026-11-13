@@ -370,6 +370,12 @@ func validateRelaunchLayers(q core.RelaunchAgentRequest) error {
 }
 
 func (c *Client) relaunchLiveness(p runtime.AgentRestartPlan, socket string, runner runtime.TmuxCommandRunner) (runtime.AgentRestartLiveness, error) {
+	return c.relaunchLivenessOn(p, "", socket, runner)
+}
+
+// relaunchLivenessOn observes on the logical socket socketName when it is set,
+// the way the CLI's --socket <name> does, and on the absolute socket otherwise.
+func (c *Client) relaunchLivenessOn(p runtime.AgentRestartPlan, socketName, socket string, runner runtime.TmuxCommandRunner) (runtime.AgentRestartLiveness, error) {
 	reg, err := resources.Load(c.paths)
 	if err != nil {
 		return runtime.AgentRestartUnknown, err
@@ -384,7 +390,7 @@ func (c *Client) relaunchLiveness(p runtime.AgentRestartPlan, socket string, run
 	if _, ok := reg.Pane(p.PaneUID); !ok {
 		return runtime.AgentRestartClosed, nil
 	}
-	route, err := runtime.ResolveDeleteTarget("agent relaunch", "", socket, nil)
+	route, err := runtime.ResolveDeleteTarget("agent relaunch", socketName, socket, nil)
 	if err != nil {
 		return runtime.AgentRestartUnknown, err
 	}

@@ -146,7 +146,13 @@ func (c *Client) agentPersonaWithResume(ctx context.Context, q runtime.AgentPers
 			return observed
 		},
 		Execution: runtime.AgentRestartExecution{
-			ValidateTransport: func() error { _, err := runtime.ResolveDeleteTarget(q.Spelling, "", q.SocketPath, nil); return err },
+			ValidateTransport: func() error {
+				if q.SocketPath == "" {
+					return nil // the logical app socket, as CLI --socket projmux
+				}
+				_, err := runtime.ResolveDeleteTarget(q.Spelling, "", q.SocketPath, nil)
+				return err
+			},
 			BeforeStop: func() error {
 				if err := ctx.Err(); err != nil {
 					return err
@@ -161,10 +167,12 @@ func (c *Client) agentPersonaWithResume(ctx context.Context, q runtime.AgentPers
 				return nil
 			},
 			Stop: func() error {
-				_, err := c.deleteWithRunner(admitted, core.DeleteRequest{Kind: core.KindPane, Ref: "uid:" + planned.PaneUID, SocketPath: q.SocketPath, Confirm: true}, runner)
+				_, err := c.deleteOnTransport(admitted, core.DeleteRequest{Kind: core.KindPane, Ref: "uid:" + planned.PaneUID, SocketPath: q.SocketPath, Confirm: true}, personaSocketName(q.SocketPath), runner)
 				return err
 			},
-			Observe: func() (runtime.AgentRestartLiveness, error) { return c.relaunchLiveness(planned, q.SocketPath, runner) },
+			Observe: func() (runtime.AgentRestartLiveness, error) {
+				return c.relaunchLivenessOn(planned, personaSocketName(q.SocketPath), q.SocketPath, runner)
+			},
 			Resume: func(stopped runtime.StoppedAgentPane) error {
 				fresh, err := resources.Load(c.paths)
 				if err != nil {
@@ -198,6 +206,17 @@ func (c *Client) agentPersonaWithResume(ctx context.Context, q runtime.AgentPers
 	}
 	return out, nil
 }
+
+// personaSocketName is the logical tmux socket a Running Agent's Pane is closed
+// on when the request names no path: the app socket, as CLI --socket projmux.
+// An explicit path is that exact server and carries no name.
+func personaSocketName(socketPath string) string {
+	if socketPath != "" {
+		return ""
+	}
+	return runtime.DefaultAppSocket
+}
+
 func personaResumePlan(reg metadata.Registry, a *metadata.Agent) (runtime.AgentResumePlan, error) {
 	plan, err := runtime.BuildAgentResumePlan("agent resume", reg, a)
 	if err != nil {

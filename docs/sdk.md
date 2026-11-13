@@ -2592,7 +2592,13 @@ instructions source as `attach` and turn the system prompt snapshot off.
 
 Supply an exact UID or a name with explicit Project/Window scope. The SDK has no
 ambient caller Pane; the CLI additionally refuses its own Pane. `SocketPath` is
-an absolute tmux socket path; an empty value uses the Client's explicit route.
+an absolute tmux socket path and means that exact server, which must be live; a
+path with no server is refused: an Offline Agent's resume fails with
+`create-route-refused` (the CLI ignores `--socket-path` for an Offline Agent, so
+this differs on purpose). An empty value, with an empty `Options.SocketPath`,
+is the logical app socket `projmux`, as CLI `--socket projmux`: an Offline or
+Failed Agent is resumed on the app server, which is started when none runs, and
+a Running Agent's Pane is closed on the live app server and resumed there.
 `DryRun` writes no snapshots or Registry/runtime state. `Confirm` permits
 interrupting a busy or unknown interaction. Running Agents already using the
 same persona digest and resolved settings return `unchanged`.

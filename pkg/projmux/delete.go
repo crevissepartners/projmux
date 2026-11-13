@@ -102,6 +102,14 @@ func (e *deleteAgentTmuxError) Unwrap() error { return e.cause }
 func (e *deleteAgentTmuxError) CommandFailure() tmux.CommandFailure { return e.failure }
 
 func (c *Client) deleteWithRunner(ctx context.Context, req core.DeleteRequest, runner mutationruntime.TmuxCommandRunner) (core.DeleteResult, error) {
+	return c.deleteOnTransport(ctx, req, "", runner)
+}
+
+// deleteOnTransport is deleteWithRunner with an internal logical tmux socket
+// name. A non-empty socketName routes the delete the way the CLI's --socket
+// <name> does and replaces the Client's explicit route; it is never part of
+// DeleteRequest, so the public request type is unchanged.
+func (c *Client) deleteOnTransport(ctx context.Context, req core.DeleteRequest, socketName string, runner mutationruntime.TmuxCommandRunner) (core.DeleteResult, error) {
 	out := core.DeleteResult{}
 	if err := ctx.Err(); err != nil {
 		return out, err
@@ -156,10 +164,10 @@ func (c *Client) deleteWithRunner(ctx context.Context, req core.DeleteRequest, r
 		}
 	}
 	socket := req.SocketPath
-	if socket == "" {
+	if socket == "" && socketName == "" {
 		socket = c.runtimeSocketPath
 	}
-	target, err := mutationruntime.ResolveDeleteTarget("delete "+strings.ToLower(string(req.Kind)), "", socket, nil)
+	target, err := mutationruntime.ResolveDeleteTarget("delete "+strings.ToLower(string(req.Kind)), socketName, socket, nil)
 	if err != nil {
 		if mixed := deleteTmuxOnly(reg, plan, true); mixed != nil {
 			return out, mixed
