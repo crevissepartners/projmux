@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"strings"
 	"testing"
 
 	store "github.com/crevissepartners/projmux/internal/integrations/metadata"
@@ -13,10 +12,12 @@ import (
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
 )
 
-// A tmux-anchored Window that holds a process Pane mixes two runtimes, which one
-// Delete cannot stop and remove together. The refusal names both resources.
-func TestSDKDeleteRefusesMixedTmuxAndProcessWindow(t *testing.T) {
-	reg, agent, pane := processDeleteFixture(t, aiModeClaude)
+// A tmux-anchored Window that holds a process Pane is no longer refused as a
+// mix of runtimes: the executor stops the provider before it deletes. Without a
+// tmux transport the live half cannot run, so the request is refused for the
+// missing transport and nothing is changed.
+func TestSDKDeleteWindowHoldingProcessPaneNeedsTransport(t *testing.T) {
+	reg, agent, _ := processDeleteFixture(t, aiModeClaude)
 	a, _ := reg.Agent(agent)
 	window := a.Metadata.OwnerUID()
 	state, _, client := renameState(t, *reg)
@@ -27,14 +28,11 @@ func TestSDKDeleteRefusesMixedTmuxAndProcessWindow(t *testing.T) {
 	}
 	result, err := client.Delete(context.Background(), core.DeleteRequest{Kind: core.KindWindow, Ref: "uid:" + window, Confirm: true})
 	var refusal *projmux.Refusal
-	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeDeleteProcessUnsupported || result.Committed {
-		t.Fatalf("mixed Window: %+v %v", result, err)
-	}
-	if !strings.Contains(err.Error(), "uid:"+window) || !strings.Contains(err.Error(), "uid:"+pane) || !strings.Contains(err.Error(), "mixes") {
-		t.Fatalf("refusal does not name the resources: %v", err)
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeDeleteTransportRequired || result.Committed {
+		t.Fatalf("Window without transport: %+v %v", result, err)
 	}
 	after, err := os.ReadFile(path)
 	if err != nil || !bytes.Equal(before, after) {
-		t.Fatalf("mixed refusal changed the Registry: %v", err)
+		t.Fatalf("refusal changed the Registry: %v", err)
 	}
 }

@@ -326,8 +326,15 @@ func (c *deleteCommand) runKind(verb, token string, kind coremetadata.Kind, args
 		}
 	}
 
+	var processTargets []processDeleteTarget
+	if kind == coremetadata.KindWindow {
+		processTargets = c.windowProcessTargets(registry, plan)
+	}
 	if *dryRun {
-		return writeDeletePlan(stdout, spelling, plan, livePlan, panePlan, target, true, false)
+		if err := writeDeletePlan(stdout, spelling, plan, livePlan, panePlan, target, true, false); err != nil {
+			return err
+		}
+		return writeWindowProcessLines(stdout, processTargets)
 	}
 	needsConfirmation := mutationruntime.NeedsDeleteConfirmation(plan, panePlan)
 	if needsConfirmation {
@@ -336,6 +343,9 @@ func (c *deleteCommand) runKind(verb, token string, kind coremetadata.Kind, args
 		if kind == coremetadata.KindWindow {
 			prompt += fmt.Sprintf(", kill %d exact live tmux Window%s, and end %d managed root session%s",
 				len(livePlan.Targets), plural(len(livePlan.Targets)), livePlan.EndsSessions(), plural(livePlan.EndsSessions()))
+			if stops := runningProcessTargets(processTargets); stops > 0 {
+				prompt += fmt.Sprintf(", and stop %d running process Agent%s through %s owner host%s", stops, plural(stops), pronounTheir(stops), plural(stops))
+			}
 		} else {
 			prompt += fmt.Sprintf(", kill %d exact live tmux Pane%s, end %d Window%s, and end %d managed root session%s",
 				len(panePlan.Targets), plural(len(panePlan.Targets)), panePlan.EndsWindows(), plural(panePlan.EndsWindows()),
@@ -357,6 +367,9 @@ func (c *deleteCommand) runKind(verb, token string, kind coremetadata.Kind, args
 	selfTarget := result.SelfTarget
 	writeResult := func() error {
 		if err := writeDeletePlan(stdout, spelling, plan, livePlan, panePlan, target, false, selfTarget); err != nil {
+			return err
+		}
+		if err := writeWindowProcessLines(stdout, windowProcessOutcome(result.Process)); err != nil {
 			return err
 		}
 		return childDeleteReceipt(kind, plan, livePlan, panePlan, selfTarget).WriteHuman(stdout)
@@ -673,4 +686,49 @@ func projectUnregisterReceipt(plan deletePlan, deprecated bool) cli.OperationRec
 // transport detail, not a different outcome.
 func childDeleteReceipt(kind coremetadata.Kind, plan deletePlan, windows windowLiveDeletePlan, panes paneLiveDeletePlan, selfTarget bool) cli.OperationReceipt {
 	return cli.OperationReceipt(mutationruntime.ChildDeleteReceipt(kind, plan, windows, panes, selfTarget))
+}
+
+func runningProcessTargets(targets []processDeleteTarget) int {
+	n := 0
+	for _, t := range targets {
+		if t.Runtime == processDeleteRuntimeRunning {
+			n++
+		}
+	}
+	return n
+}
+
+func pronounTheir(n int) string {
+	if n == 1 {
+		return "its"
+	}
+	return "their"
+}
+
+func windowProcessOutcome(targets []mutationruntime.ProcessDeleteTarget) []processDeleteTarget {
+	out := make([]processDeleteTarget, len(targets))
+	for i, t := range targets {
+		out[i] = processDeleteTargetFromShared(t)
+	}
+	return out
+}
+
+// writeWindowProcessLines names what a Window delete does to the process
+// Agents of its plan, in the vocabulary of the process delete routes.
+func writeWindowProcessLines(stdout io.Writer, targets []processDeleteTarget) error {
+	for _, target := range targets {
+		var action string
+		switch target.Runtime {
+		case processDeleteRuntimeRunning:
+			action = fmt.Sprintf("would stop through owner host pid=%d and wait for its exact Wait receipt", target.HostPID)
+		case processDeleteRuntimeStopped:
+			action = "stopped through its owner host and confirmed its exact Wait receipt"
+		default:
+			action = "registry-only; no process was signaled"
+		}
+		if _, err := fmt.Fprintf(stdout, "  process-host agent uid=%s %s; runtime=%s evidence=%s owner-window=%s root=%s/%s\n", target.Agent, action, target.Runtime, target.Evidence, target.Window, strings.ToLower(string(target.RootKind)), target.RootUID); err != nil {
+			return err
+		}
+	}
+	return nil
 }

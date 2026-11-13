@@ -310,10 +310,14 @@ func (d *ProcessAgentDeleter) ClassifyPlan(registry coremetadata.Registry, plan 
 	if err := mutations.ValidateDeleteTargets(registry, plan.Kind, plan.Uids()); err != nil {
 		return nil, err
 	}
-	return d.classifyAdmittedPlan(registry, plan)
+	return d.classifyAdmittedPlan(registry, plan, true)
 }
-func (d *ProcessAgentDeleter) classifyAdmittedPlan(registry coremetadata.Registry, plan DeletePlan) ([]ProcessDeleteTarget, error) {
-	if plan.Kind == coremetadata.KindWindow {
+
+// classifyAdmittedPlan classifies the process Agents of a plan. A process only
+// plan (requireVirtual) holds virtual Windows alone; a Window plan that also
+// removes tmux Windows classifies just the process Agents it holds.
+func (d *ProcessAgentDeleter) classifyAdmittedPlan(registry coremetadata.Registry, plan DeletePlan, requireVirtual bool) ([]ProcessDeleteTarget, error) {
+	if plan.Kind == coremetadata.KindWindow && requireVirtual {
 		for _, target := range plan.Targets {
 			if !registry.IsVirtualWindow(target.Match.UID) {
 				return nil, ProcessDeleteRefusal(processDeleteRefusedToken, "", "Window uid %q is no longer virtual; nothing was deleted", target.Match.UID)
@@ -340,19 +344,68 @@ type ProcessDeleteOutcome struct {
 	Notices []string
 }
 
-// Execute stops every running target through its owner, waits for the exact
-// retirement, reclassifies outside the lock, and deletes the whole plan in one
-// transaction that must reproduce the reclassified Registry evidence.
-func (d *ProcessAgentDeleter) Execute(ctx context.Context, plan DeletePlan, Targets []ProcessDeleteTarget, Actor func(*coremetadata.Registry) mutations.DeletionActor) (ProcessDeleteOutcome, error) {
+// ProcessStopHold is a plan whose running process Agents were stopped and
+// reclassified. The claim guards stay held until Release, so a claimant cannot
+// start between the final classification and the Registry deletion that
+// follows. Approved is the Registry signature the locked deletion must
+// reproduce.
+type ProcessStopHold struct {
+	Targets  []ProcessDeleteTarget
+	Approved string
+	Release  func()
+	ctx      context.Context
+	stopped  map[string]bool
+	deleter  *ProcessAgentDeleter
+}
+
+// RemoveLaunches drops the frozen reservation launch of every deleted process
+// Agent once the Registry no longer names it, under the guard still held. A
+// failed removal is returned as a notice, not undone: the leftover file names
+// no Agent and cannot start anything.
+func (h *ProcessStopHold) RemoveLaunches() []string {
+	var notices []string
+	for _, target := range h.Targets {
+		if err := RemoveCreatedLaunch(h.deleter.RegistryPath, target.Agent); err != nil {
+			notices = append(notices, fmt.Sprintf("reservation launch of agent uid:%s was not removed: %v", target.Agent, err))
+		}
+	}
+	return notices
+}
+
+// Stopped reports how many Agents this hold stopped through their owner hosts.
+func (h *ProcessStopHold) Stopped() int { return len(h.stopped) }
+
+// StopPlan classifies the process Agents of a Window plan that may also remove
+// tmux Windows and stops every running one through its owner host, one at a
+// time. It returns nil when the plan holds no process Agent. A failure releases
+// everything it took and leaves the Registry as the owner hosts recorded it.
+func (d *ProcessAgentDeleter) StopPlan(ctx context.Context, plan DeletePlan) (*ProcessStopHold, error) {
+	registry, err := d.Load()
+	if err != nil {
+		return nil, d.mapError(err)
+	}
+	targets, err := d.classifyAdmittedPlan(registry, plan, false)
+	if err != nil {
+		return nil, err
+	}
+	if len(targets) == 0 {
+		return nil, nil
+	}
+	return d.stopTargets(ctx, plan, targets, false)
+}
+
+// stopTargets stops every running target, then reclassifies and signs the
+// evidence under the claim guards it returns still held.
+func (d *ProcessAgentDeleter) stopTargets(ctx context.Context, plan DeletePlan, Targets []ProcessDeleteTarget, requireVirtual bool) (*ProcessStopHold, error) {
 	if err := ctx.Err(); err != nil {
-		return ProcessDeleteOutcome{}, err
+		return nil, err
 	}
 	registryBeforeStop, err := d.Load()
 	if err != nil {
-		return ProcessDeleteOutcome{}, err
+		return nil, err
 	}
 	if err := mutations.ValidateDeleteTargets(registryBeforeStop, plan.Kind, plan.Uids()); err != nil {
-		return ProcessDeleteOutcome{}, err
+		return nil, err
 	}
 	ctx = context.WithValue(ctx, ProcessDeleteAdmissionKey{}, ProcessDeleteAdmission{Kind: plan.Kind, UIDs: plan.Uids(), Signature: plan.Signature()})
 	expected := map[string]ProcessDeleteTarget{}
@@ -366,7 +419,7 @@ func (d *ProcessAgentDeleter) Execute(ctx context.Context, plan DeletePlan, Targ
 			continue
 		}
 		if err := d.StopAndWait(ctx, target); err != nil {
-			return ProcessDeleteOutcome{}, err
+			return nil, err
 		}
 		stopped[target.Agent] = true
 		claims[target.Agent] = target.Claim
@@ -379,48 +432,70 @@ func (d *ProcessAgentDeleter) Execute(ctx context.Context, plan DeletePlan, Targ
 	// Registry binding. Hold it across final classification and deletion so a
 	// newly admitted claimant cannot escape an inactive Registry-only cleanup.
 	guardContext := ctx
+	cancelGuards := func() {}
 	if len(stopped) > 0 {
-		var cancelGuards context.CancelFunc
 		guardContext, cancelGuards = context.WithTimeout(context.WithoutCancel(ctx), d.WaitLimit)
-		defer cancelGuards()
 	}
 	releaseGuards, err := d.lockDeleteClaims(guardContext, Targets)
 	if err != nil {
-		return ProcessDeleteOutcome{}, err
+		cancelGuards()
+		return nil, err
 	}
-	defer releaseGuards()
+	release := func() {
+		releaseGuards()
+		cancelGuards()
+	}
+	failed := true
+	defer func() {
+		if failed {
+			release()
+		}
+	}()
 	registry, err := d.Load()
 	if err != nil {
-		return ProcessDeleteOutcome{}, d.mapError(err)
+		return nil, d.mapError(err)
 	}
 	if current := buildProcessDeletePlan(registry, plan.Kind, processResolutionOf(plan)).Signature(); current != plan.Signature() {
-		return ProcessDeleteOutcome{}, ProcessDeleteRefusal(processDeleteRefusedToken, "", "delete agent: the cascade plan changed before deletion; nothing was deleted")
+		return nil, ProcessDeleteRefusal(processDeleteRefusedToken, "", "delete agent: the cascade plan changed before deletion; nothing was deleted")
 	}
-	final, err := d.classifyAdmittedPlan(registry, plan)
+	final, err := d.classifyAdmittedPlan(registry, plan, requireVirtual)
 	if err != nil {
-		return ProcessDeleteOutcome{}, err
+		return nil, err
 	}
 	for i := range final {
 		original, found := expected[final[i].Agent]
 		if !found || original.Pane != final[i].Pane || original.Window != final[i].Window || original.RootKind != final[i].RootKind || original.RootUID != final[i].RootUID || original.Binding != final[i].Binding {
-			return ProcessDeleteOutcome{}, processDeleteEvidenceFailure(original, fmt.Errorf("expected binding %+v, observed %+v; prior delete-stop retired=%t: %w", original.Binding, final[i].Binding, stopped[final[i].Agent], processhost.ErrStale))
+			return nil, processDeleteEvidenceFailure(original, fmt.Errorf("expected binding %+v, observed %+v; prior delete-stop retired=%t: %w", original.Binding, final[i].Binding, stopped[final[i].Agent], processhost.ErrStale))
 		}
 		if final[i].Claim {
-			return ProcessDeleteOutcome{}, processDeleteEvidenceFailure(final[i], fmt.Errorf("expected released claim before Registry deletion; an exact claim is still present: %w", processhost.ErrStale))
+			return nil, processDeleteEvidenceFailure(final[i], fmt.Errorf("expected released claim before Registry deletion; an exact claim is still present: %w", processhost.ErrStale))
 		}
 		if final[i].Runtime == processDeleteRuntimeRunning {
-			return ProcessDeleteOutcome{}, ProcessDeleteRefusal(processDeleteRefusedToken, processDeleteRuntimeRunning,
+			return nil, ProcessDeleteRefusal(processDeleteRefusedToken, processDeleteRuntimeRunning,
 				"process Agent uid %q became live under owner host pid %d before deletion; nothing was deleted", final[i].Agent, final[i].HostPID)
 		}
 		if stopped[final[i].Agent] && !claims[final[i].Agent] {
 			if final[i].Runtime != processDeleteRuntimeOffline && !claims[final[i].Agent] {
-				return ProcessDeleteOutcome{}, ProcessDeleteRefusal(processDeleteStopUnconfirmedToken, final[i].Runtime,
+				return nil, ProcessDeleteRefusal(processDeleteStopUnconfirmedToken, final[i].Runtime,
 					"process Agent uid %q did not keep its exact Wait receipt after Stop; nothing was deleted", final[i].Agent)
 			}
 			final[i].Runtime = processDeleteRuntimeStopped
 		}
 	}
-	approved := ProcessDeleteSignature(registry, plan)
+	failed = false
+	return &ProcessStopHold{Targets: final, Approved: ProcessDeleteSignature(registry, plan), Release: release, ctx: ctx, stopped: stopped, deleter: d}, nil
+}
+
+// Execute stops every running target through its owner, waits for the exact
+// retirement, reclassifies outside the lock, and deletes the whole plan in one
+// transaction that must reproduce the reclassified Registry evidence.
+func (d *ProcessAgentDeleter) Execute(ctx context.Context, plan DeletePlan, Targets []ProcessDeleteTarget, Actor func(*coremetadata.Registry) mutations.DeletionActor) (ProcessDeleteOutcome, error) {
+	hold, err := d.stopTargets(ctx, plan, Targets, true)
+	if err != nil {
+		return ProcessDeleteOutcome{}, err
+	}
+	defer hold.Release()
+	ctx, final, stopped, approved := hold.ctx, hold.Targets, hold.stopped, hold.Approved
 	outcome := ProcessDeleteOutcome{Targets: final}
 	err = d.Mutate(plan.Kind, plan.Uids(), func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
 		if err := mutations.ValidateDeleteTargets(*working, plan.Kind, plan.Uids()); len(stopped) == 0 && err != nil {
@@ -458,14 +533,9 @@ func (d *ProcessAgentDeleter) Execute(ctx context.Context, plan DeletePlan, Targ
 		}
 		return ProcessDeleteOutcome{}, err
 	}
-	// The Registry no longer names these Agents. Their frozen reservation launch
-	// goes with them, under the guard still held. A failed removal leaves a file
-	// that names no Agent and cannot start anything; it is reported, not undone.
-	for _, target := range final {
-		if err := RemoveCreatedLaunch(d.RegistryPath, target.Agent); err != nil {
-			outcome.Notices = append(outcome.Notices, fmt.Sprintf("reservation launch of agent uid:%s was not removed: %v", target.Agent, err))
-		}
-	}
+	// The Registry no longer names these Agents; their frozen reservation launch
+	// goes with them.
+	outcome.Notices = append(outcome.Notices, hold.RemoveLaunches()...)
 	return outcome, nil
 }
 

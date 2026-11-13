@@ -2346,7 +2346,7 @@ Subcommands:
 | Route | Summary |
 | --- | --- |
 | [`projmux delete project`](#projmux-delete-project) | Deprecated alias of unregister project; unregisters Projects and Registry descendants while preserving roots, Git/worktrees, and runtime |
-| [`projmux delete window`](#projmux-delete-window) | Delete Registry Windows and every descendant Agent and Pane, killing an exact live tmux mirror when present; no selector inside tmux means the active Window, and --all means every Window in the registry |
+| [`projmux delete window`](#projmux-delete-window) | Delete Registry Windows and every descendant Agent and Pane, killing an exact live tmux mirror when present and first stopping any running process Agent of the plan through its owner host, as delete pane and delete agent do; no selector inside tmux means the active Window, and --all means every Window in the registry |
 | [`projmux delete pane`](#projmux-delete-pane) | Delete Panes; an Agent-owned current Pane leaves its Agent Offline; no selector inside tmux means the active Pane, and --all means every Pane in the registry |
 | [`projmux delete agent`](#projmux-delete-agent) | Delete Agents and their managed Panes; projmux.io/protected labels refuse deletion; no selector inside tmux means the active Agent, and --all means every Agent in the registry |
 | [`projmux delete notification`](#projmux-delete-notification) | Delete pending notification rows |
@@ -2380,7 +2380,7 @@ Canonical spelling: `projmux unregister project`
 
 ### `projmux delete window`
 
-Delete Registry Windows and every descendant Agent and Pane, killing an exact live tmux mirror when present; no selector inside tmux means the active Window, and --all means every Window in the registry
+Delete Registry Windows and every descendant Agent and Pane, killing an exact live tmux mirror when present and first stopping any running process Agent of the plan through its owner host, as delete pane and delete agent do; no selector inside tmux means the active Window, and --all means every Window in the registry
 
 Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 

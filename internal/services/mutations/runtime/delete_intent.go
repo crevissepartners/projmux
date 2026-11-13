@@ -39,7 +39,9 @@ func (c *DeleteExecutor) RecordIntentionalTermination(
 	if c == nil || c.Update == nil || c.Mutator == nil {
 		return nil, fmt.Errorf("%s: the resource registry store is not configured", spelling)
 	}
+	var recorded []string
 	_, err := c.Update(func(working *coremetadata.Registry) error {
+		recorded = recorded[:0]
 		if err := mutations.ValidateDeleteTargets(*working, plan.Kind, planUIDs(plan)); err != nil {
 			return err
 		}
@@ -57,9 +59,19 @@ func (c *DeleteExecutor) RecordIntentionalTermination(
 				// this commit is caught there with a full refusal. Recording
 				// intent for a resource that no longer exists would be the only
 				// thing that could go wrong here, so it is skipped rather than
-				// invented.
+				// invented. It stays in the returned set, as before, so a
+				// tmux-only plan returns exactly the Panes it always did.
+				recorded = append(recorded, paneUID)
 				continue
 			}
+			// A process Pane has no tmux half. Its provider is stopped through
+			// its owner host, which records the exact Wait receipt the stop is
+			// confirmed by; a sticky intentional receipt written here first would
+			// suppress that Wait and leave the stop unconfirmed.
+			if pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess {
+				continue
+			}
+			recorded = append(recorded, paneUID)
 			receipt := coremetadata.TerminationEvidence{
 				Source:         coremetadata.TerminationSourceControlAction,
 				Classification: coremetadata.TerminationIntentional,
@@ -80,7 +92,7 @@ func (c *DeleteExecutor) RecordIntentionalTermination(
 		return nil, fmt.Errorf("%s: intentional termination evidence was not made durable, so nothing live was touched: %w",
 			spelling, c.mapMetadataError(err))
 	}
-	return panes, nil
+	return recorded, nil
 }
 
 // WithdrawIntentionalTermination compensates a delete that recorded intent and

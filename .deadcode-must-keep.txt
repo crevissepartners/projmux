@@ -952,6 +952,7 @@ processWaitRetired	Metadata predicate adapter retained for exact owned process c
 profileRefusal	Public v0 profile SDK entrypoint or refusal adapter; exercised by CLI parity and GOWORK=off external consumer tests.
 profileSpec	Public SDK profile projection closure, covered by field graph and CLI JSON parity tests.
 projectClaudeCoordinationEligibilityAt	Existing CLI projection/probe test seam retained across shared SDK service extraction; existing capability and bounded helper fixture tests verify unchanged behavior.
+projectDeleteProcesses	Public v0 Window, Pane and Agent deletion SDK entrypoint adapter: copies only the CLI-visible fields of the classified process Agents into DeleteResult.Processes for the process Agent plan and the Window plan; verified by TestDeleteMixedWindowPlanSDKCLIParity and TestDeleteMixedPlanSDKCLIParity.
 projectPreservedAssets	The preserved-assets outcome helper is retained for project teardown authority proofs.
 projectRefusal	Public v0 Project registration refusal adapter; verified by typed refusal and CLI failure parity tests.
 publicAgentLaunchSettings	Public v0 admission-free Agent settings SDK entrypoint or its adapter (ReadAgentSettings); reachable from external consumers rather than the CLI binary; covered by CLI relaunch dry-run parity, single-read, admission-free, field coverage and GOWORK=off consumer tests.

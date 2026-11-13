@@ -48,6 +48,10 @@ type DeleteExecutor struct {
 	Warnings       io.Writer
 	MapError       func(error) error
 	Allow          func(coremetadata.Registry, DeletePlan) error
+	// Process stops the running process Agents a Window plan removes through
+	// their owner hosts before anything is killed or deleted. Nil keeps a
+	// Window delete free of process provider handling.
+	Process *ProcessAgentDeleter
 }
 
 type DeleteResult struct {
@@ -56,6 +60,9 @@ type DeleteResult struct {
 	SelfTarget  bool
 	Receipt     receipt.OperationReceipt
 	Affected    []mutations.DeletionAffected
+	// Process lists the process Agents of a Window plan, with the runtime each
+	// was found in or stopped to (stopped, offline, unknown).
+	Process []ProcessDeleteTarget
 }
 
 func (c *DeleteExecutor) Execute(ctx context.Context, spelling string, plan DeletePlan, resolution selector.Resolution, livePlan WindowLiveDeletePlan, panePlan PaneLiveDeletePlan) (DeleteResult, error) {
@@ -67,6 +74,27 @@ func (c *DeleteExecutor) Execute(ctx context.Context, spelling string, plan Dele
 	if c.Mutate == nil {
 		return out, errors.New("delete: resource registry store is not configured")
 	}
+	// A Window plan first stops its running process Agents through their owner
+	// hosts, one at a time, exactly as delete pane and delete agent do. The stop
+	// is not a tmux mutation: the owner host records its own exact Wait receipt,
+	// and a process Pane carries no intentional receipt (see
+	// RecordIntentionalTermination), so the stop precedes the intent without
+	// weakening it. The intent invariant below, that intent is durable before
+	// every tmux kill, is unchanged. A failed stop refuses with the existing
+	// process delete tokens before anything else is written; an Agent already
+	// stopped stays Offline and resumable.
+	var hold *ProcessStopHold
+	if kind == coremetadata.KindWindow && c.Process != nil {
+		var err error
+		hold, err = c.Process.StopPlan(ctx, plan)
+		if err != nil {
+			return out, err
+		}
+		if hold != nil {
+			defer hold.Release()
+		}
+	}
+
 	// Accepted changes finish independently of later caller cancellation.
 	// Intent is durable before the first live mutation. See
 	// recordIntentionalTermination: a failure here aborts with zero tmux
@@ -101,7 +129,10 @@ func (c *DeleteExecutor) Execute(ctx context.Context, spelling string, plan Dele
 	var actor mutations.DeletionActor
 	var affected []mutations.DeletionAffected
 	if err := c.Mutate(kind, resolution.UIDs(), func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
-		if err := mutations.ValidateDeleteTargets(*working, plan.Kind, planUIDs(plan)); len(recordedIntent) == 0 && err != nil {
+		// A process stop changes the Agents the validation judged, as in
+		// ProcessAgentDeleter.Execute; the signature check below covers them.
+		stoppedProcess := hold != nil && hold.Stopped() > 0
+		if err := mutations.ValidateDeleteTargets(*working, plan.Kind, planUIDs(plan)); len(recordedIntent) == 0 && !stoppedProcess && err != nil {
 			return err
 		}
 		if c.Allow != nil {
@@ -111,6 +142,9 @@ func (c *DeleteExecutor) Execute(ctx context.Context, spelling string, plan Dele
 		}
 		if current := mutations.BuildDeletePlan(*working, kind, resolution).Signature(); current != approved {
 			return fmt.Errorf("%s: the cascade plan changed between preflight and execution; nothing was deleted", spelling)
+		}
+		if hold != nil && ProcessDeleteSignature(*working, plan) != hold.Approved {
+			return ProcessDeleteRefusal(processDeleteRefusedToken, "", "%s: process Agent evidence changed between preflight and deletion; nothing was deleted", spelling)
 		}
 		// The actor is judged here, against the pre-commit Registry and before
 		// any kill: a delete can remove the actor's own Pane.
@@ -253,6 +287,17 @@ func (c *DeleteExecutor) Execute(ctx context.Context, spelling string, plan Dele
 		mutations.DeletionTargetsOf(mutations.DeletePlan(plan)), affected), c.Warnings)
 
 	out.Affected = affected
+	if hold != nil {
+		// hold.Targets already carries the final classification: stopped only for
+		// an Agent whose exact Wait receipt was confirmed, never for a child-free
+		// claim release.
+		out.Process = hold.Targets
+		for _, notice := range hold.RemoveLaunches() {
+			if c.Warnings != nil {
+				_, _ = fmt.Fprintln(c.Warnings, notice)
+			}
+		}
+	}
 	out.Committed = true
 	out.OperationID = operationID
 	out.SelfTarget = selfTarget
