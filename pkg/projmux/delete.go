@@ -37,12 +37,15 @@ const (
 //
 // A plan that mixes tmux and process resources is refused with
 // CodeDeleteProcessUnsupported. For a Pane or Agent plan the refusal text is
-// the CLI's own, byte for byte, because the same live preflight produces it. A
-// tmux Window, or a process Window, that holds a process Pane is refused for
-// a different reason: the CLI removes only its Registry records and leaves the
-// running process provider behind, and the SDK does not repeat that, so the
-// plan is refused before any effect and the caller can delete the process Pane
-// or Agent itself, which stops its provider, and then the Window.
+// the CLI's own, byte for byte, because the same live preflight produces it.
+// A Window plan that picks a tmux Window together with a process Window, and a
+// tmux Window that holds a process Pane, are refused for a different reason:
+// the CLI removes only their Registry records and leaves the running process
+// provider behind, and the SDK does not repeat that, so such a plan is refused
+// before any effect. The caller can delete the process Pane or Agent itself,
+// which stops its provider, and then the Window. A plan of process Windows
+// alone, or of process Panes alone, is not mixed and is deleted as described
+// above.
 // DryRun writes nothing. Confirm is required unless the CLI's leaf Pane rule
 // exempts the plan. Cancellation is effective before admission only; admitted
 // execution and compensation finish regardless of cancellation. Partial kill

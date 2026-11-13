@@ -241,9 +241,11 @@ func TestDeleteMixedPlanSDKCLIParity(t *testing.T) {
 	}
 }
 
-// The CLI deletes only the Registry records of a process Window or of a process
-// Pane under a tmux Window and leaves the running provider behind. The SDK
-// refuses both plans before any effect, with the code and text it always had.
+// The CLI deletes only the Registry records of a plan that picks a tmux Window
+// together with a process Window, or of a tmux Window that holds a process Pane,
+// and leaves the running provider behind. The SDK refuses these plans before
+// any effect, with the code and text it always had. A plan of process Windows
+// alone is not mixed and is not covered here.
 func TestSDKDeleteStillRefusesWindowsHoldingProcessResources(t *testing.T) {
 	liveguard.RequireActive(t)
 	requireRealTmux(t)
