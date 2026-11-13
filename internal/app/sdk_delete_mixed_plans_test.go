@@ -241,29 +241,46 @@ func TestDeleteMixedPlanSDKCLIParity(t *testing.T) {
 	}
 }
 
-// The CLI deletes only the Registry records of a plan that picks a tmux Window
-// together with a process Window, or of a tmux Window that holds a process Pane,
-// and leaves the running provider behind. The SDK refuses these plans before
-// any effect, with the code and text it always had. A plan of process Windows
-// alone is not mixed and is not covered here.
-func TestSDKDeleteStillRefusesWindowsHoldingProcessResources(t *testing.T) {
+// A plan that picks a tmux Window together with a process Window deletes like
+// the CLI: the shared executor stops the running process Agents first (none is
+// running in this fixture, so the process Agent is Registry-only) and then kills
+// the tmux Window and removes the Registry rows. The SDK and the CLI leave the
+// same Registry, deletion record and tmux server. Process-only plans are not
+// mixed and are not covered here.
+func TestDeleteMixedWindowPlanSDKCLIParity(t *testing.T) {
 	liveguard.RequireActive(t)
 	requireRealTmux(t)
 	t.Setenv("HOME", t.TempDir())
-	reg, _, _ := mixedDeleteRegistry(t, metadata.PhaseOffline)
-	state, _, c := renameState(t, reg)
-	socket, _ := mixedDeleteTmux(t, reg)
-	before, _ := os.ReadFile(store.PathFor(state))
-	for _, dry := range []bool{true, false} {
+	reg, _, processPane := mixedDeleteRegistry(t, metadata.PhaseOffline)
+	var snapshots []string
+	for _, sdk := range []bool{false, true} {
+		state, _, c := renameState(t, reg)
+		socket, run := mixedDeleteTmux(t, reg)
 		// Ref "main" names alpha's tmux Window and beta's process Window.
-		result, err := c.Delete(context.Background(), core.DeleteRequest{Kind: core.KindWindow, Ref: "main", SocketPath: socket, DryRun: dry, Confirm: !dry})
-		var refusal *projmux.Refusal
-		if !errors.As(err, &refusal) || refusal.Code != projmux.CodeDeleteProcessUnsupported || result.Committed ||
-			!strings.Contains(err.Error(), "Delete cannot remove process Window uid:") || !strings.Contains(err.Error(), "mixes tmux and process resources") {
-			t.Fatalf("dry=%v: %+v %v", dry, result, err)
+		req := core.DeleteRequest{Kind: core.KindWindow, Ref: "main", SocketPath: socket, Confirm: true}
+		if sdk {
+			result, err := c.Delete(context.Background(), req)
+			if err != nil || !result.Committed || len(result.Processes) != 1 || result.Processes[0].Runtime != "unknown" {
+				t.Fatalf("SDK %+v %v", result, err)
+			}
+		} else if out, warnings, err := sdkDeleteCLI(t, state, req); err != nil || warnings != "" {
+			t.Fatalf("CLI: %s %s %v", out, warnings, err)
 		}
-		if after, _ := os.ReadFile(store.PathFor(state)); !bytes.Equal(before, after) {
-			t.Fatal("a refused delete changed the Registry")
+		after := projectRegistry(t, state)
+		if err := after.Validate(); err != nil {
+			t.Fatal(err)
 		}
+		if _, ok := after.Pane(processPane); ok {
+			t.Fatal("the process Pane survived its Window delete")
+		}
+		data, _ := os.ReadFile(store.PathFor(state))
+		record, err := os.ReadFile(filepath.Join(state, mutations.DeletionRecordsFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshots = append(snapshots, normalizeProjectJSON(t, string(data)+run("list-windows", "-a", "-F", "#{session_name}|#{window_name}"), after)+normalizeDeletionRows(string(record)))
+	}
+	if snapshots[0] != snapshots[1] {
+		t.Fatalf("SDK/CLI differs:\n%s\n%s", snapshots[0], snapshots[1])
 	}
 }

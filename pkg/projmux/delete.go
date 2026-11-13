@@ -35,17 +35,16 @@ const (
 // Offline or Failed Agent of a process Window that has no Pane is deleted from
 // the Registry only, exactly as the CLI does, when addressed by exact uid.
 //
-// A plan that mixes tmux and process resources is refused with
-// CodeDeleteProcessUnsupported. For a Pane or Agent plan the refusal text is
-// the CLI's own, byte for byte, because the same live preflight produces it.
-// A Window plan that picks a tmux Window together with a process Window, and a
-// tmux Window that holds a process Pane, are refused for a different reason:
-// the CLI removes only their Registry records and leaves the running process
-// provider behind, and the SDK does not repeat that, so such a plan is refused
-// before any effect. The caller can delete the process Pane or Agent itself,
-// which stops its provider, and then the Window. A plan of process Windows
-// alone, or of process Panes alone, is not mixed and is deleted as described
-// above.
+// A Pane or Agent plan that mixes tmux and process resources is refused with
+// CodeDeleteProcessUnsupported; the refusal text is the CLI's own, byte for
+// byte, because the same live preflight produces it. A Window plan that picks a
+// tmux Window together with a process Window, or a tmux Window that holds a
+// process Pane, is deleted like the CLI does: the shared executor first stops
+// every running process Agent through its owner host, and refuses with the
+// existing process delete code when a stop cannot be confirmed, leaving tmux
+// and the Registry unchanged. A plan of process Windows alone, or of process
+// Panes alone, is deleted as described above.
+//
 // DryRun writes nothing. Confirm is required unless the CLI's leaf Pane rule
 // exempts the plan. Cancellation is effective before admission only; admitted
 // execution and compensation finish regardless of cancellation. Partial kill
@@ -156,13 +155,9 @@ func (c *Client) deleteOnTransport(ctx context.Context, req core.DeleteRequest, 
 	if mutationruntime.IsProcessAgentPlan(reg, plan) || mutationruntime.IsVirtualProcessPlan(reg, plan) {
 		return c.deleteProcess(ctx, req, reg, plan, out)
 	}
-	// A Window plan is refused before any transport is needed. A Pane or Agent
-	// plan is refused by the live preflight below, with the CLI's own text.
-	if plan.Kind == metadata.KindWindow {
-		if err := deleteTmuxOnly(reg, plan, true); err != nil {
-			return out, err
-		}
-	}
+	// A Pane or Agent plan that mixes tmux and process resources is refused by
+	// the live preflight below, with the CLI's own text. A Window plan is not:
+	// the executor stops the running process Agents it holds first.
 	socket := req.SocketPath
 	if socket == "" && socketName == "" {
 		socket = c.runtimeSocketPath
@@ -217,6 +212,18 @@ func (c *Client) deleteOnTransport(ctx context.Context, req core.DeleteRequest, 
 	if err := unregisterCopy(paneLive.RegistryOnly, &out.RegistryOnly); err != nil {
 		return out, err
 	}
+	if req.Kind == core.KindWindow {
+		// Like the CLI dry run, name the process Agents the Window plan stops.
+		// A classification that cannot be read is refused by the executor.
+		classifier := mutationruntime.NewProcessAgentDeleter(store.PathFor(c.paths.StateDir))
+		var held []mutationruntime.ProcessDeleteTarget
+		for _, uid := range mutationruntime.ProcessDeleteAgentUIDs(reg, plan) {
+			if t, err := classifier.Classify(reg, uid); err == nil {
+				held = append(held, t)
+			}
+		}
+		out.Processes = projectDeleteProcesses(held)
+	}
 	if req.DryRun {
 		return out, nil
 	}
@@ -226,6 +233,9 @@ func (c *Client) deleteOnTransport(ctx context.Context, req core.DeleteRequest, 
 	s := mutations.NewStore(store.PathFor(c.paths.StateDir))
 	var warnings bytes.Buffer
 	e := mutationruntime.DeleteExecutor{Windows: windows, Panes: mutationruntime.PaneDeleteRuntime{Preflight: panes.Preflight, PrepareReplacements: panes.PrepareReplacements, RollbackReplacements: panes.RollbackReplacements, Kill: panes.Kill, KillAll: panes.KillAll}, Update: s.Update, Mutator: s.Mutator, Via: mutations.DeletionViaSDK, StateDir: func() (string, error) { return c.paths.StateDir, nil }, Warnings: &warnings, Allow: func(r metadata.Registry, p mutationruntime.DeletePlan) error { return deleteTmuxOnly(r, p, false) }}
+	if req.Kind == core.KindWindow {
+		e.Process = mutationruntime.NewProcessAgentDeleter(store.PathFor(c.paths.StateDir))
+	}
 	e.Mutate = func(kind metadata.Kind, uids []string, apply func(*metadata.Registry, metadata.Mutator) error) error {
 		_, err := s.Update(func(r *metadata.Registry) error {
 			for _, uid := range uids {
@@ -246,6 +256,7 @@ func (c *Client) deleteOnTransport(ctx context.Context, req core.DeleteRequest, 
 		if e := unregisterCopy(result.Receipt, &out.Receipt); e != nil {
 			return out, e
 		}
+		out.Processes = projectDeleteProcesses(result.Process)
 	}
 	return out, deleteRefusal(CodeDeleteExecutionFailed, err)
 }
@@ -276,12 +287,19 @@ func deleteRefusal(code Code, err error) error {
 // deleteTmuxOnly refuses what reaches the tmux path with a process resource in
 // it. Process-only plans were routed to deleteProcess before this runs, so what
 // is left mixes tmux and process resources, or is an Agent with no process Pane.
+// Window plans are the exception below.
 //
 // strict also refuses an Agent of a process Window. The caller sets it to
 // classify a plan, or to refuse before the live preflight can run. Unset, such
 // an Agent is left to the live preflight, which as in the CLI deletes it from
 // the Registry only when it is Offline or Failed and addressed by exact uid.
 func deleteTmuxOnly(reg metadata.Registry, plan mutationruntime.DeletePlan, strict bool) error {
+	// A Window plan may hold process Windows and process Panes below tmux
+	// Windows. The shared executor stops their running providers through the
+	// owner hosts before it kills or deletes anything, as the CLI does.
+	if plan.Kind == metadata.KindWindow {
+		return nil
+	}
 	for _, t := range plan.Targets {
 		uid := t.Match.UID
 		if plan.Kind == metadata.KindPane {
@@ -325,23 +343,7 @@ func (c *Client) deleteProcess(ctx context.Context, req core.DeleteRequest, reg 
 	if err != nil {
 		return out, deleteRefusal(CodeDeleteRuntimeRefused, err)
 	}
-	// Classification also contains private owner credentials. Copy only the
-	// CLI-visible fields, rather than serializing the internal target wholesale.
-	projectProcesses := func(targets []mutationruntime.ProcessDeleteTarget) []core.DeleteProcess {
-		processes := make([]core.DeleteProcess, len(targets))
-		for i, t := range targets {
-			processes[i] = core.DeleteProcess{AgentUID: t.Agent, WindowUID: t.Window,
-				RootKind: core.Kind(t.RootKind), RootUID: t.RootUID,
-				Runtime: t.Runtime, Evidence: t.Evidence}
-			// The CLI only prints a PID for a running provider owner, never
-			// for the owner of a child-free deferred claim.
-			if t.Runtime == "running" {
-				processes[i].HostPID = t.HostPID
-			}
-		}
-		return processes
-	}
-	out.Processes = projectProcesses(targets)
+	out.Processes = projectDeleteProcesses(targets)
 	if req.DryRun {
 		return out, nil
 	}
@@ -357,7 +359,7 @@ func (c *Client) deleteProcess(ctx context.Context, req core.DeleteRequest, reg 
 		return out, deleteRefusal(CodeDeleteExecutionFailed, err)
 	}
 	out.Committed = true
-	out.Processes = projectProcesses(outcome.Targets)
+	out.Processes = projectDeleteProcesses(outcome.Targets)
 	out.OperationID = operation
 	if err = unregisterCopy(outcome.Affected, &out.Plan.Affected); err != nil {
 		return out, err
@@ -378,4 +380,22 @@ func (c *Client) deleteProcess(ctx context.Context, req core.DeleteRequest, reg 
 	}
 	out.Notice = strings.TrimSuffix(warnings.String(), "\n")
 	return out, nil
+}
+
+// projectDeleteProcesses copies only the CLI-visible fields of the classified
+// process Agents. Classification also contains private owner credentials, so
+// the internal target is never serialized wholesale.
+func projectDeleteProcesses(targets []mutationruntime.ProcessDeleteTarget) []core.DeleteProcess {
+	processes := make([]core.DeleteProcess, len(targets))
+	for i, t := range targets {
+		processes[i] = core.DeleteProcess{AgentUID: t.Agent, WindowUID: t.Window,
+			RootKind: core.Kind(t.RootKind), RootUID: t.RootUID,
+			Runtime: t.Runtime, Evidence: t.Evidence}
+		// The CLI only prints a PID for a running provider owner, never
+		// for the owner of a child-free deferred claim.
+		if t.Runtime == "running" {
+			processes[i].HostPID = t.HostPID
+		}
+	}
+	return processes
 }

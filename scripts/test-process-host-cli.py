@@ -53,6 +53,7 @@ FILES = (
     "sdk_reserve_operator_creator_cli_test.go",
     "sdk_preflight_create_agent_process_cli_test.go",
     "delete_agent_process_cli_test.go",
+    "delete_window_process_cli_test.go",
     "codex_process_binding_test.go",
     "codex_process_ownership_test.go",
     "process_attention_wiring_test.go",

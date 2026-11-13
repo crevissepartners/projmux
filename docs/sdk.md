@@ -911,13 +911,18 @@ Pending or Running, or addressed by name, is refused with the CLI's text.
 A Pane or Agent plan that mixes tmux and process resources (for example one
 `Ref` that names a tmux Pane and a process Pane) is refused with
 `delete-process-unsupported`. The message is the CLI's own refusal text, byte
-for byte, and nothing is changed. A Window plan that mixes a tmux Window with a
-process Window, or whose tmux Window holds a process Pane, is refused with the
-same code and a message naming the uids. The CLI deletes only the Registry
-records of such a Window and leaves the running process provider behind, so the
-SDK does not repeat that: delete the process Pane or Agent first, which stops
-its provider, then the Window. Deleting a tmux Agent or a Registry-only Agent is
-supported as before.
+for byte, and nothing is changed.
+
+A Window plan that mixes a tmux Window with a process Window, or whose tmux
+Window holds a process Pane, is deleted like the CLI does. The shared executor
+first stops every running process Agent of the plan through its owner host, one
+at a time, and waits for the exact Wait receipt; then it kills the tmux Window
+and deletes the Registry rows. `DeleteResult.Processes` lists those Agents with
+the runtime each ended in (`stopped`, `offline`, `unknown`). If an owner host
+cannot be reached or a stop is not confirmed, the call is refused with the
+existing process delete code, the tmux Window and the Registry are unchanged,
+and an Agent already stopped stays Offline and resumable. Deleting a tmux Agent
+or a Registry-only Agent is supported as before.
 
 CLI and SDK use the same delete executor and protected `delete-stop` owner
 admission. Protection and the exact cascade are rechecked before Stop or claim

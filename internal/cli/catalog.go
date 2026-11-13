@@ -1681,7 +1681,7 @@ var routes = []Route{
 				Effects:          deleteChildEffects(),
 				Name:             "window",
 				Invocation:       InvocationNatural,
-				Summary:          "Delete Registry Windows and every descendant Agent and Pane, killing an exact live tmux mirror when present; no selector inside tmux means the active Window, and --all means every Window in the registry",
+				Summary:          "Delete Registry Windows and every descendant Agent and Pane, killing an exact live tmux mirror when present and first stopping any running process Agent of the plan through its owner host, as delete pane and delete agent do; no selector inside tmux means the active Window, and --all means every Window in the registry",
 				CanonicalSummary: "Delete a Window and its descendants",
 				Aliases:          []string{"windows"},
 				Usage:            []string{"projmux delete window [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]"},
